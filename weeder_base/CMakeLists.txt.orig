@@ -1,0 +1,68 @@
+cmake_minimum_required(VERSION 3.8)
+project(weeder_base)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+
+# 通过 ament 定位 laser_weed_can（提供头文件和库）
+find_package(laser_weed_can REQUIRED)
+
+# 自己的头文件
+include_directories(include)
+
+# ✅ 关键修复：
+# colcon 构建时，laser_weed_can 的安装前缀就是当前 workspace 的 install 目录，
+# 所以 ${CMAKE_INSTALL_PREFIX}/include 就是 laser_weed_can 头文件的安装根：
+#   install/laser_weed_can/include/laser_weed_can/protocol/can_protocol.hpp
+# 把该目录加进 include 后，下面两种写法都能找到：
+#   #include <laser_weed_can/protocol/can_protocol.hpp>
+#   #include <can_protocol.hpp>
+# 我们用前者（规范、无歧义）。
+include_directories(${CMAKE_INSTALL_PREFIX}/include)
+
+# CAN 驱动库
+add_library(weeder_can_driver
+  src/can_driver.cpp
+)
+
+# 链接协议库
+target_link_libraries(weeder_can_driver
+  laser_weed_protocol
+)
+
+ament_target_dependencies(weeder_can_driver
+  rclcpp
+)
+
+# 底盘节点
+add_executable(chassis_node
+  src/chassis_node.cpp
+)
+
+target_link_libraries(chassis_node
+  weeder_can_driver
+  laser_weed_protocol
+)
+
+ament_target_dependencies(chassis_node
+  rclcpp
+  std_msgs
+  geometry_msgs
+  sensor_msgs
+)
+
+install(TARGETS chassis_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+ament_package()
+

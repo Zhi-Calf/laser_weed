@@ -1,0 +1,47 @@
+gnss_driver:
+  ros__parameters:
+    serial_port: "/dev/ttyUSB0"
+    baud_rate: 115200
+    frame_id: "gnss_link"
+    debug_giavp: false
+    status_log_interval: 500    # 状态日志条数间隔 (10Hz 下 500 条 = 50s 打印一次)
+    odom_log_interval: 10       # 里程计日志条数间隔 (10Hz 下 10 条 = 1s 打印一次)
+
+    # 航向: 左右天线安装且设备端配置 dualant=1 时, GIAVP 航向已是车辆真实航向
+    heading_std_deg: 0.2       # 人工标定: 1 m 基线下 0.2 deg (1-sigma)
+
+    # 各 GIAVP 解算状态对应的水平位置标准差 (m)
+    acc_rtk_fixed: 0.02        # 状态 4 (RTK 固定解)
+    acc_rtk_float: 0.3         # 状态 5 (RTK 浮点解)
+    acc_rtd: 1.0               # 状态 2 (RTD)
+    acc_spp: 1.5               # 状态 1 (人工标定: 单点定位 <= 1.5 m CEP)
+
+    calib_offset_x: 0.5            # 杆臂 x: 设备中心相对 base_link (m, 车体系: 前 +x, 出厂≈前方 0.5 m)
+    calib_offset_y: 0.0            # 杆臂 y: (m, 车体系: 左 +y)
+    calib_offset_heading: 0.0      # 航向安装偏角 (rad, 真实航向 = 原始测向 + 该值)
+    calib_offset_max_xy: 2.5       # calib_offset_x/y 范围上限 (m, 绝对杆臂长度)
+    calib_offset_max_heading: 0.6  # calib_offset_heading 范围上限 (rad, ≈34°)
+    # ⚠ 运行期**只有这三个 calib_offset_*** 会生效 (参数服务: 立即生效 + 写回 gnss_config_path);
+    #   本节点其它键运行期 set 是"接受但不生效" (参数服务器记新值, 节点仍用启动值 —— 改 yaml 后重启)。
+    #   calib_offset_* 的值必须是**有限数值**且在 ±上限 内: nan/inf 一律拒绝 —— 范围判断对 NaN 恒为假,
+    #   必须单独拦, 否则 NaN 杆臂会让 /gnss_driver/odom 的位置与航向整体变成 NaN (还会被写回 yaml)。
+
+    # 参数持久化写回目标: 动态更新标定/杆臂参数后, 逐行写回该 yaml。
+    # 空字符串则跳过写回 (仅内存更新)。建议指向 install 下运行时实际加载的
+    # gnss_driver.yaml, 或由 launch 注入。
+    gnss_config_path: ""
+
+    # 心跳判定:
+    #   startup_warmup_sec        启动宽限 (s): 从未收到过数据时, 超过该时长才判故障
+    #                             (上电后定位收敛需要时间, 此期间不出数据属正常)。
+    #   startup_data_timeout_sec  数据超时 (s): 收到过数据后, 断流超过该时长判故障
+    #                             (GIAVP 10Hz 下约 0.1s 一帧, 0.3s 即丢 3 帧, 应立即告警)。
+    startup_warmup_sec: 30.0
+    startup_data_timeout_sec: 0.3
+
+    # spdlog 滚动日志
+    log_dir: "/opt/agri/logs"   # 日志目录
+    log_file_size_mb: 5         # 单个日志文件大小上限 (MB)
+    log_file_count: 10          # 滚动保留的文件数量
+    log_enable_console: true    # 是否输出到终端
+    log_level: "info"           # 日志级别: trace, debug, info, warn, error, critical

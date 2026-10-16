@@ -1,0 +1,136 @@
+#include "weeder_base/can_driver.hpp"
+
+#include <rclcpp/rclcpp.hpp>
+#include <geometry_msgs/msg/twist.hpp>
+#include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/u_int8_multi_array.hpp>
+
+#include <cmath>
+#include <mutex>
+
+namespace weeder_base {
+
+class ChassisNode : public rclcpp::Node {
+public:
+  explicit ChassisNode(const std::string& name) : Node(name) {
+
+    // 参数
+    cmd_timeout_s_ = declare_parameter("cmd_timeout_s", 0.5);
+    vcu_timeout_s_ = declare_parameter("vcu_timeout_s", 1.0);
+
+    // CAN 驱动
+    can_driver_ = std::make_unique<CanDriver>(
+        declare_parameter("can_interface", "can0"));
+    can_driver_->setReceiveCallback(
+        [this](const CanFrame& frame) { onCanReceive(frame); });
+    can_driver_->startReceiveThread();
+
+    // 订阅 /cmd_vel
+    cmd_sub_ = create_subscription<geometry_msgs::msg::Twist>(
+        "/cmd_vel", 10,
+        [this](const geometry_msgs::msg::Twist::SharedPtr msg) {
+          onCmdVel(msg);
+        });
+
+    // 发布状态文本
+    state_pub_ = create_publisher<std_msgs::msg::String>(
+        "/weeder/chassis/state_text", 10);
+
+    // 20ms 发送定时器
+    send_timer_ = create_wall_timer(
+        std::chrono::milliseconds(20),
+        [this]() { sendCommand(); });
+
+    // 100ms 状态发布定时器
+    pub_timer_ = create_wall_timer(
+        std::chrono::milliseconds(100),
+        [this]() { publishState(); });
+
+    RCLCPP_INFO(get_logger(), "ChassisNode started");
+  }
+
+private:
+  void onCmdVel(const geometry_msgs::msg::Twist::SharedPtr msg) {
+    std::lock_guard<std::mutex> lock(cmd_mutex_);
+    last_cmd_time_ = this->now();
+
+    cmd01_.gear = 1;  // D 档
+    cmd01_.ctrl_mode= 1;  // 无人驾驶
+
+    // m/s -> mm/s, clamp 0~1.4
+    double v = std::clamp(msg->linear.x, 0.0, 1.4);
+    cmd01_.speed_raw = static_cast<uint16_t>(v * 1000.0);
+
+    // rad/s -> 0.1deg 粗略映射（临时，待换阿克曼）
+    double deg = msg->angular.z * 180.0 / M_PI;
+    deg = std::clamp(deg, -90.0, 90.0);
+    cmd01_.steer_angle = static_cast<int16_t>(deg * 10.0);
+  }
+
+  void sendCommand() {
+    // 安全看门狗：指令超时 -> 停车
+    double age = (this->now() - last_cmd_time_).seconds();
+    if (age > cmd_timeout_s_) {
+      cmd01_.speed_raw = 0;
+      cmd01_.steer_angle = 0;
+      cmd01_.estop = 1;
+    }
+
+    cmd01_.alive_counter = (cmd01_.alive_counter + 1) & 0xFF;
+
+    CanFrame f = CanProtocol::encodeAdcuCmd01(cmd01_);
+    can_driver_->send(f);
+  }
+
+  void onCanReceive(const CanFrame& frame) {
+    ChassisState01 s{};
+    if (CanProtocol::decodeState01(const_cast<CanFrame&>(frame), s)) {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      state01_ = s;
+      last_vcu_time_ = this->now();
+    }
+    // State_02~23 的 decode 同理，暂略
+  }
+
+  void publishState() {
+    std_msgs::msg::String msg;
+    msg.data = fmtState(state01_);
+    state_pub_->publish(msg);
+  }
+
+  static std::string fmtState(const ChassisState01& s) {
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+             "speed=%u mm/s gear=%u estop=%u  mode=%u",
+             s.speed_raw, s.gear, s.estop,
+              s.ctrl_mode);
+    return std::string(buf);
+  }
+
+  // ---- 成员 ----
+  std::unique_ptr<CanDriver> can_driver_;
+  AdcuCommand01 cmd01_{};
+
+  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
+  rclcpp::TimerBase::SharedPtr send_timer_;
+  rclcpp::TimerBase::SharedPtr pub_timer_;
+
+  ChassisState01 state01_{};
+  rclcpp::Time last_cmd_time_{0, RCL_ROS_TIME};
+rclcpp::Time last_vcu_time_{0, RCL_ROS_TIME};
+  std::mutex cmd_mutex_;
+  std::mutex state_mutex_;
+
+  double cmd_timeout_s_ = 0.5;
+  double vcu_timeout_s_ = 1.0;
+};
+
+}  // namespace weeder_base
+
+int main(int argc, char* argv[]) {
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<weeder_base::ChassisNode>("chassis_node"));
+  rclcpp::shutdown();
+  return 0;
+}

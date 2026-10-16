@@ -1,0 +1,35 @@
+# NTRIP 差分客户端节点配置
+# 外置 NTRIP 客户端: 上位机读接收机 GGA -> 连 NTRIP caster -> 收 RTCM 写回串口。
+# 适用于接收机本身无 4G/网络模块的场合。若接收机内置 4G NTRIP,
+# 用 startup_commands 的 `set ntrip ...`, 不启动本节点。
+ntrip_client_node:
+  ros__parameters:
+    # 串口 (接收机/外置差分设备的串口)
+    serial_port: "/dev/ttyUSB1"
+    serial_baud: 115200
+
+    # NTRIP caster
+    ntrip_host: "rtk.ntrip.qxwz.com"
+    ntrip_port: 8002
+    ntrip_user: ""
+    ntrip_password: ""
+    ntrip_mountpoint: "AUTO"
+
+    # 行为
+    gga_interval_sec: 1.0        # GGA 上传周期 (s)
+    reconnect_delay_sec: 1.0     # 断线重连延迟 (s)
+    first_rtcm_timeout_sec: 30.0 # 等待首帧 RTCM 超时 (s): 挂载点建立差分到首帧到达的容忍期
+    connect_fault_warmup_sec: 30.0  # NTRIP 连续连接失败故障容忍期 (s)
+    first_gga_timeout_sec: 30.0  # 等待首个 GGA 超时 (s): 接收机定位收敛 (手册 <35s)
+    serial_fault_warmup_sec: 15.0    # 串口打开失败容忍期 (s): 本地硬件, 与网络宽限分开
+    serial_write_fail_count: 10     # 串口写 RTCM 连续失败次数阈值, 达到才断开重连
+    data_timeout_sec: 10.0       # 数据超时 (s), 正常接收后持续无数据判异常
+    connect_timeout_sec: 10.0    # TCP 连接超时 (s)
+    header_timeout_sec: 15.0     # 响应头读取累计超时 (s)
+
+    # spdlog 滚动日志
+    log_dir: "/opt/agri/logs"   # 日志目录
+    log_file_size_mb: 5         # 单个日志文件大小上限 (MB)
+    log_file_count: 10          # 滚动保留的文件数量
+    log_enable_console: true    # 是否输出到终端
+    log_level: "info"           # 日志级别: trace, debug, info, warn, error, critical

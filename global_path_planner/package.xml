@@ -1,0 +1,69 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>global_path_planner</name>
+  <version>0.1.0</version>
+  <description>Bow-shaped global (coverage) path planner for tracked tractor: field polygon + ridge width -> /path</description>
+  <maintainer email="1067401059@qq.com">JunJun</maintainer>
+
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- rclcpp 与 sensor_msgs 是**直接依赖**, 不靠 tractor_monitor / nav_msgs 传递:
+       rclcpp/rclcpp.hpp 与 sensor_msgs/msg/nav_sat_fix.hpp 都在本包头文件里直接 include,
+       CMakeLists 也 find_package(rclcpp)。仓内其余 C++ 包 (tractor_base / gnss_localization /
+       path_controller / local_path_planner) 同样显式声明, 这里保持一致 —— 传递依赖能编过,
+       但 rosdep 装不齐、单包拷出构建就会缺件。 -->
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>spdlog_vendor</depend>
+  <!-- find_package(Eigen3) —— 多边形/几何适配 (eigen_boost_adaptor.hpp); rosdep 键 eigen -->
+  <depend>eigen</depend>
+  <!-- find_package(Boost) —— Boost.Geometry (bg::length / bg::line_interpolate / 段几何) 是
+       header-only, CMakeLists 用 find_package(Boost REQUIRED) 找它; rosdep 键 boost (libboost-dev)。
+       ⚠ 必须在这里声明: 开发机上系统装了 boost 所以只靠 colcon 也能过, 但干净机器上
+       rosdep install 不会装上它, 而本包支持"整目录单独拷出构建" (见 CMakeLists 顶部说明)。 -->
+  <depend>boost</depend>
+  <!-- GeographicLib (LocalCartesian): 经纬度 <-> ENU 平面; rosdep 键 geographiclib
+       (Jammy/Humble 是 libgeographic-dev, Noble/Jazzy 是 libgeographiclib-dev, 见 CMakeLists) -->
+  <depend>geographiclib</depend>
+  <!-- file 模式 (path_source=1) 的全覆盖路径文件是 JSON, 用 nlohmann/json 解析 (header-only,
+       jammy 的 nlohmann-json3-dev; rosdep 键 nlohmann-json-dev)。 -->
+  <depend>nlohmann-json-dev</depend>
+  <!-- 心跳: tractor_monitor 提供 heartbeat_publisher.hpp (header-only),
+       并带出 tractor_msgs。tractor_monitor 只依赖 rclcpp + tractor_msgs,
+       不依赖本包, 所以这条边不会造成循环。 -->
+  <depend>tractor_msgs</depend>
+  <depend>tractor_monitor</depend>
+  <exec_depend>rviz2</exec_depend>
+  <!-- 调试用: planner.launch.py 里的 static_transform_publisher (让 RViz 的 Fixed Frame
+       odom 存在)。正常运行时不用它 —— 真机的 odom 由 gnss_driver 广播。 -->
+  <exec_depend>tf2_ros</exec_depend>
+
+  <!-- No dependency on tractor_bringup, tractor_kpi, path_controller or
+       tractor_base. This package used to orchestrate all of them from
+       start.launch.py, which meant a planner depended on the chassis it was
+       planning for AND on tractor_bringup for the KPI wiring file — a cycle,
+       since tractor_bringup is the robot definition. That orchestration moved
+       to tractor_bringup/launch/bringup.launch.py; this package is the planner
+       and nothing else, and the arrows now point one way. -->
+
+  <!-- 构建骨架与 tractor_base / tractor_calibration 一致: 库 global_path_planner_lib
+       (规划内核 src/bow.cpp + 节点实现) + 薄可执行文件 global_path_planner_node (只有 main)。
+       头文件在 include/global_path_planner/, 随库一起安装并导出 (ament_export_libraries),
+       单测 (test_bow_planner) 直接链这个库 —— 算法只编一遍。 -->
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_test</test_depend>
+  <!-- 全覆盖路径规划的行为契约测试 (test/test_bow_planner.cpp) -->
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

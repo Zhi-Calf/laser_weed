@@ -1,0 +1,181 @@
+// 激光除草机协议结构体定义（补全省略的字段，确保 chassis_node.cpp 能编译）
+#pragma once
+
+#include "weeder_base/can_frame.hpp"   // CanFrame 定义（id, dlc, data[8], is_extended）
+#include <cstdint>
+
+namespace weeder_base {
+namespace can_id {
+
+// VCU -> ADCU
+constexpr uint32_t CHASSIS_STATE_01 = 0x18011CD0;
+constexpr uint32_t CHASSIS_STATE_02 = 0x18021CD0;
+constexpr uint32_t CHASSIS_STATE_03 = 0x18031CD0;
+constexpr uint32_t CHASSIS_STATE_04 = 0x18041CD0;
+constexpr uint32_t CHASSIS_STATE_05 = 0x18051CD0;
+constexpr uint32_t CHASSIS_STATE_06 = 0x18061CD0;
+constexpr uint32_t CHASSIS_STATE_07 = 0x18071CD0;
+constexpr uint32_t CHASSIS_STATE_08 = 0x18081CD0;
+constexpr uint32_t CHASSIS_STATE_09 = 0x18091CD0;
+constexpr uint32_t CHASSIS_STATE_10 = 0x180A1CD0;
+constexpr uint32_t CHASSIS_STATE_11 = 0x180B1CD0;
+constexpr uint32_t CHASSIS_STATE_21 = 0x18211CD0;
+constexpr uint32_t CHASSIS_STATE_22 = 0x18221CD0;
+constexpr uint32_t CHASSIS_STATE_23 = 0x18231CD0;
+
+// ADCU -> VCU
+constexpr uint32_t ADCU_TO_VCU_01 = 0x0C01D01C;
+
+}  // namespace can_id
+
+// ---- VCU -> ADCU 状态结构体 ----
+
+struct ChassisState01 {
+  // Byte0 位域
+  uint8_t  gear{0};
+  uint8_t  steer_mode{0};
+  uint8_t  radar_en{0};
+  uint8_t  estop{0};
+  uint8_t  reset{0};
+  uint8_t  release_brake{0};
+  uint8_t  ctrl_mode{0};
+  // Byte1-2
+  double   speed_m_s{0};        // 物理值 m/s（已换算）
+  // Byte3-4
+  double   steer_angle{0};      // 保留（State01 无转向角，State03 才有）
+  // Byte3
+  uint8_t  wheel_track_cm{0};
+  // Byte4 (bit32~38)
+  uint8_t  tri_color_sound{0};
+  uint8_t  tri_color_green{0};
+  uint8_t  tri_color_yellow{0};
+  uint8_t  tri_color_red{0};
+  uint8_t  running_light{0};
+  uint8_t  turn_left{0};
+  uint8_t  turn_right{0};
+  // Byte5 (bit39~42) 转向到位
+  uint8_t  steer_done_fl{0};
+  uint8_t  steer_done_fr{0};
+  uint8_t  steer_done_rl{0};
+  uint8_t  steer_done_rr{0};
+  // Byte5 (bit43~46)
+  uint8_t  protect_bar_signal{0};
+  uint8_t  bypass_switch{0};
+  uint8_t  battery_charging{0};
+  uint8_t  battery_full{0};
+  // Byte7
+  uint8_t  alive_counter{0};
+};
+
+struct ChassisState02 {
+  uint16_t motor_speed_fl{0};
+  uint16_t motor_speed_fr{0};
+  uint16_t motor_speed_rl{0};
+  uint16_t motor_speed_rr{0};
+};
+
+struct ChassisState03 {
+  double steer_angle_fl{0};  // 物理值，分辨率 0.1°
+  double steer_angle_fr{0};
+  double steer_angle_rl{0};
+  double steer_angle_rr{0};
+};
+
+struct MotorElecState {
+  uint8_t  bus_voltage{0};     // V
+  uint16_t out_current{0};     // A
+  uint8_t  motor_temp{0};      // ℃
+  uint16_t error_code{0};
+};
+
+struct ChassisState04 : MotorElecState {};  // 别名，结构相同
+struct ChassisState05 : MotorElecState {};
+struct ChassisState06 : MotorElecState {};
+struct ChassisState07 : MotorElecState {};
+
+struct ChassisState21 {
+  uint8_t  power_on{0};
+  uint8_t  heating_status{0};
+  uint8_t  charge_status{0};
+  uint8_t  soh{0};
+  uint16_t soc{0};             // 原始值（×0.1 = %）
+  uint16_t voltage{0};         // 原始值（×0.1 = V）
+  uint16_t current_raw{0};     // 原始值（×0.1 - 3200 = A）
+};
+
+struct ChassisState22 {
+  uint8_t  error_level{0};
+  uint8_t  error_code{0};
+  uint8_t  fault_num{0};
+  uint8_t  max_temp{0};        // raw（= ℃ + 40）
+  uint8_t  max_temp_pos{0};
+  uint8_t  min_temp{0};        // raw
+  uint8_t  min_temp_pos{0};
+};
+
+struct ChassisState23 {
+  uint16_t max_cell_voltage{0};
+  uint8_t  max_cell_pos{0};
+  uint16_t min_cell_voltage{0};
+  uint8_t  min_cell_pos{0};
+  uint16_t system_voltage{0};
+};
+
+// ---- ADCU -> VCU 指令结构体 ----
+
+struct AdcuCommand01 {
+  // Byte0
+  uint8_t  gear_cmd{0};
+  uint8_t  steer_mode_cmd{0};
+  uint8_t  release_brake_cmd{0};
+  uint8_t  estop_cmd{0};
+  uint8_t  reset_cmd{0};
+  uint8_t  ctrl_mode_cmd{0};
+  // Byte1-2
+  uint16_t veh_speed_cmd{0};       // raw, 1 count = 1 mm/s
+  // Byte3-4
+  int16_t  steer_angle_cmd{0};     // raw, 1 count = 0.1°
+  // Byte5
+  uint8_t  tri_color_sound{0};
+  uint8_t  tri_color_green{0};
+  uint8_t  tri_color_yellow{0};
+  uint8_t  tri_color_red{0};
+  uint8_t  running_light{0};
+  uint8_t  turn_left{0};
+  uint8_t  turn_right{0};
+  // Byte7
+  uint8_t  alive_counter{0};
+};
+
+// ---- 编解码接口 ----
+
+class CanProtocol {
+ public:
+  // 工具函数
+  static uint16_t readU16LE(const uint8_t* p);
+  static int16_t  readI16LE(const uint8_t* p);
+  static void     writeU16LE(uint8_t* p, uint16_t v);
+  static void     writeI16LE(uint8_t* p, int16_t v);
+
+  // 物理值 <-> raw
+  static uint16_t speedRawFromMps(double mps);
+  static int16_t  angleRawFromDeg(double deg);
+
+  // 编码 ADCU -> VCU
+  static CanFrame encodeAdcuCmd01(const AdcuCommand01& cmd);
+
+  // 解码 VCU -> ADCU
+  static bool decodeState01(CanFrame& f, ChassisState01& out);
+  static bool decodeState02(const CanFrame& f, ChassisState02& out);
+  static bool decodeState03(const CanFrame& f, ChassisState03& out);
+  static bool decodeMotorElec(const CanFrame& f, MotorElecState& out);
+  static bool decodeState04(const CanFrame& f, ChassisState04& out) { MotorElecState m; bool ok = decodeMotorElec(f, m); if (ok) static_cast<MotorElecState&>(out) = m; return ok; }
+  static bool decodeState05(const CanFrame& f, ChassisState05& out) { MotorElecState m; bool ok = decodeMotorElec(f, m); if (ok) static_cast<MotorElecState&>(out) = m; return ok; }
+  static bool decodeState06(const CanFrame& f, ChassisState06& out) { MotorElecState m; bool ok = decodeMotorElec(f, m); if (ok) static_cast<MotorElecState&>(out) = m; return ok; }
+  static bool decodeState07(const CanFrame& f, ChassisState07& out) { MotorElecState m; bool ok = decodeMotorElec(f, m); if (ok) static_cast<MotorElecState&>(out) = m; return ok; }
+  static bool decodeState21(const CanFrame& f, ChassisState21& out);
+  static bool decodeState22(const CanFrame& f, ChassisState22& out);
+  static bool decodeState23(const CanFrame& f, ChassisState23& out);
+};
+
+}  // namespace weeder_base

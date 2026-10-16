@@ -1,0 +1,33 @@
+# ExecutePath: drive the robot along a dense pre-planned path with optional
+# pre-rotate / post-rotate alignment, surfacing per-cycle telemetry from the
+# FtcController carrot follower.
+#
+# Goal
+nav_msgs/Path path
+float64 goal_distance_tolerance      # 0 = use node default
+float64 goal_angle_tolerance_deg     # 0 = use node default (post-rotate only)
+bool require_post_rotate             # spin to path[end].theta on completion
+---
+# Result
+uint8 SUCCESS=0
+uint8 ABORTED_TIMEOUT=1
+uint8 ABORTED_OFF_PATH=2
+uint8 ABORTED_PREEMPTED=3
+uint8 ABORTED_INTERNAL=4
+uint8 outcome
+string message
+---
+# Feedback
+# Phase encoding matches ExecPhase in tractor_control:
+#   0=IDLE 1=PRE_ROTATE 2=FOLLOWING 3=POST_ROTATE 4=SUCCEEDED 5=ABORTED
+#   6=APPROACH (drive toward path[0] when starting too far from the path).
+uint8 phase
+uint32 carrot_index
+uint32 path_size
+# active_law: 0=Stanley (WORK)  1=PID-turn  2=PID-transition
+uint8 active_law
+float64 distance_to_goal
+float64 cross_track_error
+float64 heading_error_deg
+float64 commanded_v
+float64 commanded_omega

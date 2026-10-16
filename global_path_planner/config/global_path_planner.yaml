@@ -1,0 +1,65 @@
+global_path_planner:
+  ros__parameters:
+    # spdlog 日志
+    log_dir: "/home/asd/logs"
+    log_file_size_mb: 50
+    log_file_count: 10
+    log_enable_console: true
+    log_level: "info"
+
+    origin_timeout_s: 3.0
+    origin_startup_grace_s: 60.0
+
+    require_manual_for_change: true
+    work_mode_timeout_s: 3.0
+    work_mode_startup_grace_s: 20.0
+
+    # 路径插值分辨率（单位：米）：/global_path_planner/path 的逐点间距
+    # ⚠ 这是**只读参数**: 只在启动时读一次 —— 运行期 `ros2 param set path_resolution 0.1` 会被 rclcpp
+    #   默认**接受但不生效** (参数服务器记新值, 本节点仍按启动值运行; 参数回调已删除, 也不再有 WARN 提示),
+    #   要改就改这里后重启, 或起节点时 -p path_resolution:=0.1。0 或负值会被夹到 0 (见 loadParameters),
+    #   生效值看启动日志。
+    path_resolution: 0.2
+
+    # ---- 首行余量（单位：米）：第一条垄距**内缩后区域边界**的距离; 之后各行间距恒为请求里的 ridge_width ----
+    # 只读参数: 启动时读一次, 之后**恒定** (不被夹取、也不随请求变)。但它与 set_source 请求里的 ridge_width
+    # **必须相容** —— 取值域 [kMinFirstRowMargin, 垄宽/2] = [0.001, 请求的 ridge_width/2] m:
+    #   * 值不在该区间内时, 那条 local 请求被**当场拒收** (accepted=false, reason 写明两者与取值域), 当前
+    #     来源/几何/路径都不变 —— 处理办法: 改这里后重启, 或把请求里的 ridge_width 改成相容的值;
+    #   * 下界 0.001 m 是 Clipper2 量化网格 (~1 mm) 的下限, 上界 垄宽/2 是因为首行贴得比机具半幅还近就
+    #     破掉了"近端覆盖"契约 (想细调田边盲带就改这里的值, 默认 0.005 m = 5 mm)。
+    # ⚠ 默认值 0.005 m 要求请求里的 ridge_width >= 0.01 m (更窄的垄宽配这个默认值会被拒收)。
+    first_row_margin: 0.005
+
+    # 边界内缩的拐角上限（无单位）：Clipper2 JoinType::Miter 的 miter_limit 语义 ——
+    # 拐角越锐, "斜接"尖点伸出越远; 伸出超过 miter_limit × field_margin 的拐角改用切角处理。
+    # 取值域 [1.0, +∞)：1.0 = join 分支一律切角, 越大越"尖"；小于 1.0 的值会被夹到 1.0 (生效值见启动日志)。
+    #
+    # ⚠ 实测 (随包的 Clipper2 1.5.4): 本规划器只做**向内**偏置, 凸地块的每个凸顶点在
+    # Clipper2 里都走"凹角"分支 (插 3 点 + 收尾 union 清理), 结果恒为**无上限的斜接尖点** ——
+    # 该参数取 1.0 / 2.0 / 20.0 时内缩结果逐位相同 (单测 MiterLimitDoesNotChangeInwardInset)。
+    # 也就是说: **改它不会改变路径**, 现场不必拿它调拐角覆盖 (拐角那 0.2~0.4% 的盲区是
+    # "路径离边界 >= field_margin"本身决定的, 见 docs/F2C_COVERAGE_BORROW.md §7 第 4 条)。
+    # 保留该参数是为对齐 Clipper2 语义、并让"内缩用的拐角上限"可观测 (启动日志会打印):
+    # 将来改用 JoinType::Bevel/Square 或增加向外偏置 (缓冲区/掉头包络) 时它就直接生效。
+    miter_limit: 2.0
+
+    # ---- 调试开关 (真机必须保持 false) ----
+    # 收不到 GNSS 原点 (/gnss_driver/origin) 时, 直接用**本次 set_source (local) 请求的第一个顶点**
+    # 作为 ENU 原点开始规划 —— 只有"只启动规划器看 RViz"时才需要开 (仍要先调一次 set_source 并带上
+    # 顶点: 来源没设置就不规划, 而顶点现在也只能由那个请求带来, 见文件开头"地块顶点"那一节)。
+    # **launch 不代开它**: planner.launch.py 只把这份配置交给节点; 要开就在启动时显式覆盖 (不必改本文件):
+    #   ros2 run global_path_planner global_path_planner_node --ros-args \
+    #       --params-file <本文件> -p debug_use_poly0_origin:=true
+    # ⚠ 它是**只读参数**: 运行期 `ros2 param set debug_use_poly0_origin true` 会被拒绝
+    #   (要生效就重启节点)。
+    # 开着就绕过了"等无人开启 + 首次 RTK 固定解"这道门, 可能在一个错误的原点上规划路径。
+    # ⚠ 注入时机也随之从"构造函数"变成"**受理带顶点的 local 请求**": 启动时手上一个顶点都没有, 构造
+    #   里没得可注 (见 onSetPathSource -> injectDebugPoly0Origin)。注入仍走 originLlhCallback ——
+    #   请求带来的顶点照样被投影 (它顺带做完这一批顶点的投影), "只跑规划器看 RViz 能看到路径"靠的就是
+    #   这条; 真原点到达时会照常按值覆盖这个假原点。
+    # ✅ 开着时 ENU 原点的超时判定 (origin_timeout_s / origin_startup_grace_s) **整体失效**: 这个原点
+    #    只在受理 local 请求时注入一次, 没有任何东西按 1 Hz 刷新它 —— 若不豁免, 开机 3 s 后就会被判
+    #    超时 (10410 + FAULT + 撤掉 /path), 而"只跑规划器看 RViz"正是它的唯一用途 (见 originState)。
+    # 随包默认 **false**: 这份配置直接上车时不允许用假原点 (单跑调试按上面的命令行覆盖)。
+    debug_use_poly0_origin: false

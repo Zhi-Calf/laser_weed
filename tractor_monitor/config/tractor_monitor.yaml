@@ -1,0 +1,94 @@
+tractor_monitor:
+  ros__parameters:
+    # ------------------------------------------------------------------
+    # 频率与时序
+    # ------------------------------------------------------------------
+    heartbeat_rate: 10.0        # 本节点心跳发布频率 (Hz) -> /monitor_heartbeat
+    check_rate: 10.0            # 心跳超时检查频率 (Hz)
+
+    # 启动宽限期 (s)。不是可有可无的调优项：各节点启动耗时数秒，
+    # 没有宽限期本节点会在每次开机时判定 FAULT 并让底盘急停。
+    startup_grace_s: 15.0
+
+    default_timeout_s: 1.0      # 未单独指定 timeout_s 时的默认心跳超时 (s)
+
+    # ------------------------------------------------------------------
+    # spdlog 滚动日志
+    # ------------------------------------------------------------------
+    log_dir: "/home/asd/logs"   # 日志目录
+    log_file_size_mb: 50        # 单个日志文件大小上限 (MB)
+    log_file_count: 10          # 滚动保留的文件数量
+    log_enable_console: true    # 是否输出到终端
+    log_level: "info"           # 日志级别: trace, debug, info, warn, error, critical
+
+    # 两条高频日志的节流间隔。原先是 RCLCPP_*_THROTTLE 里写死的 60s / 5s;
+    # spdlog 没有 throttle 宏, 改为手动限流后顺带做成参数。
+    unknown_node_log_interval_s: 60.0    # 未在监控列表中的节点心跳, 日志间隔 (s)
+    status_repeat_log_interval_s: 5.0    # 状态未变化时的重复告警间隔 (s)
+
+    # ------------------------------------------------------------------
+    # 监控列表
+    #
+    # 注意：绝不包含 tractor_base / chassis_interface。它是本节点裁决结果的
+    # 消费者；把它列进来等于让"停车条件"依赖于"被停的节点"。代码里也会强制
+    # 剔除并打 WARN。
+    #
+    # criticality:
+    #   critical  丢失/FAULT -> 整车停车并置急停
+    #   degraded  丢失/FAULT -> 仅上报，不停车
+    #   ignore    完全不参与裁决
+    #
+    # required:
+    #   true   必须在启动宽限期内出现，之后不得消失
+    #   false  出现过之后才监控 —— 本文件不再静态写 false，它只由
+    #          bringup.launch.py 在 control:=false / gnss:=false / planner:=false
+    #          时动态覆盖。没人启动的模块不该让整车停车；
+    #          但启动过又死掉的必须停。
+    # ------------------------------------------------------------------
+    monitored_nodes:
+      - "path_controller"
+      - "gnss_driver"
+      - "global_path_planner"
+      - "local_path_planner_node"
+      # GNSS 标定节点 (按需启动, 见 tractor_bringup/calibration.launch.py)
+      - "calibration_manager"
+
+    # --- bringup.launch.py 默认启动的三条腿：required ---
+
+    # 唯一的控制器。丢失 = 没有东西在转向。
+    path_controller.timeout_s: 0.5
+    path_controller.criticality: "critical"
+    path_controller.required: true
+
+    # RTK 定位。丢失 = 没有位姿，自动驾驶无从谈起。
+    gnss_driver.timeout_s: 1.0
+    gnss_driver.criticality: "critical"
+    gnss_driver.required: true
+
+    # 全局路径规划。
+    global_path_planner.timeout_s: 2.0
+    global_path_planner.criticality: "critical"
+    global_path_planner.required: true
+
+    # 局部路径规划 (截断 + 避停)。丢失 = 无局部路径, path_controller 无从跟踪。
+    local_path_planner_node.timeout_s: 1.0
+    local_path_planner_node.criticality: "critical"
+    local_path_planner_node.required: true
+
+    # GNSS 标定节点 (tractor_calibration/calibration_manager)。
+    #   required: false —— 整车 bringup 不启动它, 只有标定 launch 会按需拉起;
+    #                     若要求它出现, 每次整车启动在宽限期结束后都会判 FAULT
+    #                     并急停。标定期间它出现后才纳入监控。
+    #   criticality: degraded —— 标定不在驾驶链路里, 失联只上报不停车; 它中途
+    #                     死掉时, 底盘指令超时 (10001) 会兜底停车。
+    calibration_manager.timeout_s: 1.0
+    calibration_manager.criticality: "degraded"
+    calibration_manager.required: false
+
+    # 上面三项的 required 会被 bringup.launch.py 按腿的开关动态覆盖：
+    # control:=false / gnss:=false / planner:=false 时，对应节点本就不启动，
+    # bringup 会把它的 required 置为 false。所以这里写 true 是"完整栈"的语义，
+    # 而不是在跟 launch 参数打架。
+
+    # criticality 仍支持 "degraded"(仅上报) 与 "ignore"(完全不参与裁决),
+    # 目前三个被监控节点都是 critical, 没有模块用到它们。

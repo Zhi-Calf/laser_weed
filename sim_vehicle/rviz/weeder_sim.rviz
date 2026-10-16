@@ -1,0 +1,255 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 78
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /田块边界1
+        - /全覆盖路径1
+        - /仿真车1
+        - /跟踪目标点1
+      Splitter Ratio: 0.5
+    Tree Height: 620
+  - Class: rviz_common/Selection
+    Name: Selection
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Displays:
+    # ---- 地面网格：cell 5m × 20 = 100m 范围，够覆盖 50×30 的仿真田块 ----
+    - Alpha: 0.5
+      Cell Size: 5
+      Class: rviz_default_plugins/Grid
+      Color: 120; 120; 124
+      Enabled: true
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 20
+      Reference Frame: <Fixed Frame>
+      Value: true
+
+    # ---- TF：显示 odom -> base_link ----
+    - Class: rviz_default_plugins/TF
+      Enabled: false
+      Frame Timeout: 15
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Value: false
+
+    # ---- 田块外边界（规划器发的原始多边形）----
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: 田块边界
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_path_planner/boundary_points
+      Value: true
+
+    # ---- 内缩后的作业边界（field_margin 内缩量，实际作业范围）----
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: 内缩边界
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_path_planner/inner_boundary_points
+      Value: true
+
+    # ---- 地头掉头关键点（就是你截图里左下角那一坨橙点）----
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: 掉头关键点
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_path_planner/key_points
+      Value: true
+
+    # ---- 全覆盖弓字形路径。
+    # 注意 z 字段是段类型（0=作业段 1=掉头段）不是高度，所以路径看起来是平的。
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 25; 255; 0
+      Enabled: true
+      Head Diameter: 0.3
+      Head Length: 0.2
+      Length: 0.3
+      Line Style: Lines
+      Line Width: 0.03
+      Name: 全覆盖路径
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Radius: 0.03
+      Shaft Diameter: 0.1
+      Shaft Length: 0.1
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_path_planner/path
+      Value: true
+
+    # ---- 仿真车（绿色箭头，箭头方向 = 车头朝向）----
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: 仿真车
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /sim_vehicle/marker
+      Value: true
+
+    # ---- LQR 正在跟踪的目标点（橙色球）。
+    # 车动它就该跟着动；它不动说明目标点没推进（见 README 的指纹去重修复）。
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: 跟踪目标点
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /lqr_control/target_point
+      Value: true
+
+    # ---- RTK 里程计轨迹。
+    # ⚠️ Reliability 必须是 Best Effort：gnss_driver / sim_vehicle 都用
+    # SensorDataQoS 发布 odom，而 DDS 规则下 BEST_EFFORT 发布 + RELIABLE 订阅
+    # 是不兼容组合，用默认的 Reliable 会一条都收不到（这也是很多人以为
+    # "RViz 里 odom 显示不出来是话题名写错"的真实原因）。
+    - Angle Tolerance: 0.1
+      Class: rviz_default_plugins/Odometry
+      Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 1
+          Scale: 1
+          Value: false
+        Position:
+          Alpha: 0.3
+          Color: 204; 51; 204
+          Scale: 1
+          Value: true
+        Value: false
+      Enabled: false
+      Keep: 200
+      Name: RTK轨迹
+      Position Tolerance: 0.2
+      Shape:
+        Alpha: 1
+        Axes Length: 1
+        Axes Radius: 0.1
+        Color: 255; 25; 0
+        Head Length: 0.2
+        Head Radius: 0.1
+        Shaft Length: 0.5
+        Shaft Radius: 0.05
+        Value: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /gnss_driver/odom
+      Value: false
+
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: odom
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.06
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.01
+      # 正交俯视：田块 50m(东西) × 30m(南北)，Scale 70 能一次看全并留出掉头外扩余量
+      Scale: 70
+      Target Frame: <Fixed Frame>
+      Value: TopDownOrtho (rviz_default_plugins)
+      X: 0
+      Y: 0
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 900
+  Hide Left Dock: false
+  Hide Right Dock: true
+  Selection:
+    collapsed: false
+  Views:
+    collapsed: true
+  Width: 1500
+  X: 100
+  Y: 100

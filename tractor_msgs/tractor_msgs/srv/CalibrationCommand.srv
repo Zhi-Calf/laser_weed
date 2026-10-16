@@ -1,0 +1,34 @@
+# 标定指令。由 calibration_manager 在 /calibration_manager/command 提供服务
+# (节点内写作 `~/command`: 私有名形式, 解析结果带节点名 —— 节点改名后服务名跟着走)。
+#
+# 本服务是发起标定的唯一途径。它回答"这条指令是否被受理"(未被受理时给出原因),
+# 调用方不必去轮询话题判断按钮到底有没有生效。
+#
+# 标定流程本身的结果 —— 采集完成 / GPS 丢失中止 / 参数写回失败 —— 仍然发布在
+# /calibration_manager/status (CalibrationResult, latched), 那里是"当前生效标定值"的
+# 唯一权威来源。
+
+# 标定类型, 取 CALIB_* 之一。
+uint8 calibration_type
+uint8 CALIB_GNSS_FULL = 0   # 全流程: 先拟合航向, 再拟合杆臂
+
+# 要执行的动作, 取 ACTION_* 之一。
+uint8 action
+uint8 ACTION_START  = 0
+uint8 ACTION_CANCEL = 1
+uint8 ACTION_SAVE   = 3
+
+---
+# 指令是否被受理。注意这**不是**"标定成功": 前置条件满足即受理, 标定本身的结果
+# 之后由 /calibration_manager/status 上报。
+bool accepted
+
+# 调用返回后的标定状态, 取 STATE_* 之一。始终有值, 调用方可直接用它回答
+# "现在有没有标定在跑"。
+uint8 state
+uint8 STATE_IDLE    = 0
+uint8 STATE_RUNNING = 1
+
+# 指令被拒的原因, 或已受理指令做了什么 (例如 SAVE 无法给出参数写回结果 —— 写回是
+# 异步的, 那个结果看 /calibration_manager/status)。永不为空。
+string reason

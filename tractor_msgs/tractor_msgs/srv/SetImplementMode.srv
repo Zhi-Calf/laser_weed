@@ -1,0 +1,33 @@
+# Request a change of the implement operating mode.
+# Served by implement_controller_node at /implement/set_mode.
+#
+# The service is the ONLY way to change the mode; the result is published
+# on /implement/mode. A rejected request leaves the active mode untouched
+# and explains why in `reason`, so a caller never has to poll the topic to
+# find out whether it worked.
+
+# Requested mode, using the tractor_msgs/ImplementMode MODE_* constants.
+uint8 mode
+
+# Who is asking. Copied into ImplementMode.source when accepted. Optional,
+# but strongly encouraged -- an empty source shows up as "unknown" in the
+# field logs.
+string source
+
+# Skip the transition policy and force the mode. Reserved for operator
+# recovery from a state the policy will not leave on its own. Refusing a
+# transition is a safety feature, so this should be wired to a deliberate
+# operator action, never to an automated caller.
+bool force
+---
+# True iff `active_mode` now equals the requested mode.
+bool accepted
+
+# The mode in effect after the call -- the requested one when accepted,
+# the unchanged previous one when rejected. Always populated, so a caller
+# can treat this as the authoritative answer.
+uint8 active_mode
+
+# Why the request was rejected, or a short note on what the accepted
+# transition did. Never empty.
+string reason

@@ -1,0 +1,120 @@
+lqr_control:
+  ros__parameters:
+    # ============================================================
+    # 除草机底盘物理参数（必须按实车改，不是默认值能用的）
+    # ============================================================
+    # 等效轴距 (m)：前轮到后轮的距离。四轮转向底盘的等效轴距取决于转向模式，
+    # 见下方 steer_mode 说明。填错会直接导致横向跟踪振荡或收敛过慢。
+    wheelbase: 1.2
+
+    # 转向模式，对应 CAN 协议 ADCU_toVCU_01 的 SteerModeCmd：
+    #   0 = 单阿克曼（仅前轮转向）→ wheelbase 填真实前后轴距
+    #   1 = 双阿克曼（前后轮反向）  → wheelbase 填 L/2（转向增益翻倍）
+    #   2 = 平移                    → 本控制器不适用，需另写控制律
+    #   3 = 原地转向                  → 本控制器不适用，需另写控制律
+    # 除草机走全覆盖路径时建议用 0 或 1。模式 2/3 下阿克曼假设不成立，
+    # LQR 的 B 矩阵 v*dt/L 会失效。
+    steer_mode: 0
+
+    # 协议上限，勿超：车速 0~1400 mm/s，转向角 ±90°
+    max_speed_m_s: 1.4
+    max_steer_deg: 90.0
+
+    control_hz: 10.0
+    frame_id: odom
+
+    # ============================================================
+    # 话题名（与 gnss_localization / global_path_planner 对齐）
+    # ============================================================
+    odom_topic: /gnss_driver/odom
+    path_topic: /global_path_planner/path
+    work_mode_topic: /work_mode
+    cmd_vel_topic: /cmd_vel
+    steer_topic: /weeder/steer_cmd
+
+    # ============================================================
+    # LQR 权重与求解器
+    # 参数名沿用 MegaTrak path_controller.yaml，调参经验可迁移。
+    # 注意 R 的语义变了：履带项目里是"角速度代价"，这里是"转向角代价"，
+    # 所以同一组数值的表现会不同，需要重新标定（见 README 调参一节）。
+    # ============================================================
+    lqr_eps: 0.000001
+    lqr_max_iteration: 1000
+    lqr_Q_lateral: 50.0        # 横向误差权重
+    lqr_Q_heading: 25.0        # 航向误差权重
+    lqr_R_steer: 25.0          # 转向角控制代价
+    lqr_target_v: 0.5          # 目标线速度 (m/s)，建议从 0.3 起调
+    lqr_min_vel: 0.1           # 跟踪期间的全局速度下限 (m/s)
+
+    # 航向误差降速：大偏差时给转向留纠偏时间
+    lqr_heading_deadband: 0.1  # 死区 (rad)，低于此值不降速
+    lqr_heading_max: 1.0       # 上限 (rad)，达到此值降到最低
+    lqr_min_speed_factor: 0.3  # 最低速度比例
+
+    # 曲率前瞻降速：进弯前减速，不是进弯后
+    lqr_curvature_threshold: 0.2
+    lqr_curvature_span: 0.5
+    lqr_speed_scale: 0.4
+    lqr_lookahead_index: 30
+    lqr_lookback_start: 20
+
+    # ============================================================
+    # 安全门控
+    # ============================================================
+    # RTK 精度门限：取里程计位姿协方差对角项的最大值开方。
+    # gnss_driver 按 fix_type 填协方差（RTK固定/浮动/RTD/单点解），
+    # 0.05 m 大致对应固定解。非固定解时输出停车，避免用低质量定位除草
+    # （激光打偏的代价比停车高得多）。
+    rtk_max_sigma: 0.05
+
+    # 偏离距离门限 (m)：车与当前跟踪目标点的欧氏距离超过此值即停车，上报 10106。
+    #
+    # ⚠️ 这道门是**必需的**，不是可选优化。LQR 的状态量只有 [横向误差, 航向误差]，
+    # **没有沿路径方向的误差项**——车如果沿着路径自己的方向笔直冲过目标点，
+    # 两个误差都恰好为 0，控制器会认为"完美跟踪"并继续给全速零转角。
+    # 2026-10-15 仿真实测：目标点冻结在起点，车跑出 238 m，steer_cmd=2.4e-14，
+    # 全程没有任何告警。这道门是唯一能发现该情况的手段。
+    #
+    # 取值：要大于地头掉头时目标点与车的合法最大间距（默认 path_resolution=0.2m、
+    # snap_window=25 → 吸附范围 5m，所以 3.0m 是安全的），又要远小于"已经跑出田块"
+    # 的距离。代码强制下限 0.1m，防止手滑写 0 把这道保护关掉。
+    max_track_error_m: 3.0
+
+    # 目标点前向吸附窗口（路径点数，非米）。每拍在 [当前索引, 当前索引+窗口] 内
+    # 搜索离车最近的路径点并吸附过去，让目标点重新锚定到车的实际位置。
+    #
+    # 为什么需要：只靠弧长累积推进的话，目标点完全信任里程计——打滑、被推、
+    # 里程计跳变都会让它和车越走越远，且没有任何机制拉回来。
+    # 搜索**从当前索引开始**，所以索引单调不减，吸附永远不会把目标点拉回上一个
+    # 索引（否则弓字形作业会重跑已覆盖的垄）。
+    # 25 点 × path_resolution 0.2m = 5m。设 0 则完全禁用吸附，退回纯弧长累积。
+    snap_window: 25
+
+    odom_timeout_s: 1.0        # 定位超时 → 停车
+    path_timeout_s: 5.0        # 路径超时 → 停车
+
+    # 工作模式门控：与 global_path_planner、gnss_driver 共用同一条系统级
+    # /work_mode 总线（tractor_msgs/WorkMode，由 APP 或模式管理方以 latched QoS
+    # 发布）。只有 MODE_UNMANNED(1) 才接管底盘；手动(0)/标定(2) 或信号超时都停车。
+    # 发布端必须以 >= 1/work_mode_timeout_s Hz 持续发布；用 --once 发一次会在
+    # work_mode_timeout_s 后被判超时并停车。台架调试用：
+    #   ros2 topic pub -r 1 /work_mode tractor_msgs/msg/WorkMode \
+    #       "{mode: 1, mode_name: unmanned}"
+    require_unmanned: true
+    work_mode_timeout_s: 3.0
+    # 启动宽限 (s)：仅在"从未收到过 /work_mode"时生效，期间不把缺模式当故障上报
+    # （心跳保持正常），给 APP/链路上电重连留时间。宽限**只抑制上报，不放开运动**。
+    # 与 MegaTrak path_controller 的 work_mode_startup_grace_s 同义同量级。
+    work_mode_startup_grace_s: 20.0
+
+    # ============================================================
+    # 心跳（tractor_monitor 的 /heartbeat 总线）
+    # ============================================================
+    # 本节点以 5Hz 向 /heartbeat 发布 Heartbeat（node_name="lqr_control"），
+    # 由 tractor_monitor 汇总成 /monitor_heartbeat。故障码用 101xx 段，与 MegaTrak
+    # path_controller 同义：10101 无工作模式 / 10102 无 RTK 位姿 / 10103 无路径 /
+    # 10104 转向模式不兼容 / 10105 路径走完 / 10106 偏离目标过远。频率与故障码不可配
+    # （由库与代码约定），此处仅作说明。若整包移植了 tractor_monitor，务必同时起 monitor 节点，
+    # 否则没有汇总方，APP 看不到本节点健康状态。
+
+    viz: true

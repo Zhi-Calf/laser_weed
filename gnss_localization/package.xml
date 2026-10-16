@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>gnss_localization</name>
+  <version>1.0.0</version>
+  <description>Dual-antenna INS/GNSS localization driver + NTRIP client</description>
+  <maintainer email="nianxing@aginno.com.cn">nianxing</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>tractor_msgs</depend>
+  <depend>geographiclib</depend>
+  <depend>spdlog_vendor</depend>
+  <depend>tractor_monitor</depend>
+  <depend>yaml-cpp</depend>
+  <depend>eigen</depend>
+
+  <test_depend>ament_cmake_test</test_depend>
+  <!-- 参数写回 yaml 的契约测试 (test/test_yaml_persist.cpp, 与规划器同套用例) -->
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

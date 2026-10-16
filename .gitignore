@@ -3,3 +3,9 @@ __pycache__/
 build/
 install/
 log/
+__pycache__/
+*.py[cod]
+build/
+install/
+log/
+*.zip
