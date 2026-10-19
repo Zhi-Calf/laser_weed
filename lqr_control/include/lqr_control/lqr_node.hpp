@@ -15,13 +15,12 @@
 #include "lqr_control/lqr.hpp"
 #include "lqr_control/path_profile.hpp"
 
-#include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <std_msgs/msg/float64.hpp>
 #include <tractor_monitor/heartbeat_publisher.hpp>
-#include <tractor_msgs/msg/work_mode.hpp>
+#include <weeder_msgs/msg/chassis_cmd.hpp>
+#include <weeder_msgs/msg/work_mode.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
 #include <memory>
@@ -44,7 +43,7 @@ private:
 
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void pathCallback(const nav_msgs::msg::Path::SharedPtr msg);
-  void workModeCallback(const tractor_msgs::msg::WorkMode::SharedPtr msg);
+  void workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg);
 
   /// Publish the tracked goal point as an RViz marker.
   void publishViz(const TrajectoryPoint & target);
@@ -85,8 +84,7 @@ private:
   std::string odom_topic_{"/gnss_driver/odom"};
   std::string path_topic_{"/global_path_planner/path"};
   std::string work_mode_topic_{"/work_mode"};
-  std::string cmd_vel_topic_{"/cmd_vel"};
-  std::string steer_topic_{"/weeder/steer_cmd"};
+  std::string cmd_topic_{"/weeder/chassis/cmd"};
   bool viz_{true};
 
   // Core
@@ -98,9 +96,8 @@ private:
   // Subscriptions / publications
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
-  rclcpp::Subscription<tractor_msgs::msg::WorkMode>::SharedPtr work_mode_sub_;
-  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
-  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr steer_pub_;
+  rclcpp::Subscription<weeder_msgs::msg::WorkMode>::SharedPtr work_mode_sub_;
+  rclcpp::Publisher<weeder_msgs::msg::ChassisCmd>::SharedPtr cmd_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr viz_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 

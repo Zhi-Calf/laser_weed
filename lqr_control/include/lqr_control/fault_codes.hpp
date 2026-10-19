@@ -39,7 +39,7 @@ inline constexpr uint32_t kPathFinished = 10105;
 /// the goal along the path's own direction therefore reads as PERFECT tracking
 /// (both errors exactly zero) and keeps driving forever. Observed in simulation
 /// on 2026-10-15: goal frozen at the path start, robot 238 m downrange,
-/// steer_cmd = 2.4e-14, everything "nominal". This distance gate is the only
+/// steer_angle_rad = 2.4e-14, everything "nominal". This distance gate is the only
 /// thing that catches that failure mode.
 inline constexpr uint32_t kTrackErrorLost = 10106;
 

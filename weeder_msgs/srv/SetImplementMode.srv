@@ -6,7 +6,7 @@
 # and explains why in `reason`, so a caller never has to poll the topic to
 # find out whether it worked.
 
-# Requested mode, using the tractor_msgs/ImplementMode MODE_* constants.
+# Requested mode, using the weeder_msgs/ImplementMode MODE_* constants.
 uint8 mode
 
 # Who is asking. Copied into ImplementMode.source when accepted. Optional,

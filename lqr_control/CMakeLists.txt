@@ -13,10 +13,10 @@ find_package(std_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(Eigen3 REQUIRED)
-# tractor_msgs: WorkMode + Heartbeat. tractor_monitor: header-only heartbeat
+# weeder_msgs: WorkMode + Heartbeat. tractor_monitor: header-only heartbeat
 # publisher. Both come from MegaTrak (see README), so they must be present in
 # the workspace before this package can build.
-find_package(tractor_msgs REQUIRED)
+find_package(weeder_msgs REQUIRED)
 find_package(tractor_monitor REQUIRED)
 
 include_directories(include ${EIGEN3_INCLUDE_DIRS})
@@ -28,7 +28,7 @@ set(DEPS
   std_msgs
   visualization_msgs
   tf2
-  tractor_msgs
+  weeder_msgs
   tractor_monitor
 )
 

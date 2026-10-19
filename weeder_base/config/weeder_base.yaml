@@ -1,0 +1,27 @@
+weeder_chassis:
+  ros__parameters:
+    # CAN 总线
+    can_interface: "vcan0"        # vcan0 = 仿真/台架虚拟总线, can0 = 实车
+
+    # 发布周期
+    publish_hz: 20.0              # /weeder/chassis/state + state_text 发布频率 (Hz)
+
+    # 看门狗
+    cmd_topic: "/weeder/chassis/cmd"  # 速度 + 前轮转角合并指令 (weeder_msgs/ChassisCmd)
+    cmd_timeout_s: 0.5            # 底盘指令超时 (s) -> 停车 + 置急停
+    vcu_timeout_s: 1.0            # VCU 状态帧超时 (s) -> 停车 (不锁存, VCU 恢复即恢复)
+    watchdog_log_interval_s: 5.0  # 看门狗/发送失败告警的打印间隔 (s), 防 20ms 周期刷屏
+
+    # 指令安全限制 (有协议硬上限, 越界会被回退并告警)
+    max_speed_m_s: 1.4            # 最大前进速度 (m/s), 协议上限 1400 mm/s
+    max_steer_deg: 90.0           # 最大转向角 (deg), 协议上限 ±90.0°
+
+    steer_mode: 0                 # 0=单阿克曼 1=双阿克曼 2=平移 3=原地
+                                  # ⚠️ 必须与 lqr_control 的同名参数一致
+
+    # spdlog 滚动日志
+    log_dir: "/opt/agri/logs"     # 目录不可写时自动回退到 $ROS_HOME/logs
+    log_file_size_mb: 50          # 单个日志文件大小上限 (MB)
+    log_file_count: 10            # 滚动保留的文件数量
+    log_enable_console: true      # 是否同时输出到终端
+    log_level: "info"             # 日志级别: trace, debug, info, warn, error, critical

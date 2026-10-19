@@ -5,7 +5,7 @@
   /gnss_driver/fix        sensor_msgs/NavSatFix
   /gnss_driver/imu        sensor_msgs/Imu                        (ENU yaw)
   /gnss_driver/vel        geometry_msgs/TwistWithCovarianceStamped
-  /gnss_driver/status     tractor_msgs/GnssStatus
+  /gnss_driver/status     weeder_msgs/GnssStatus
   /odometry/global nav_msgs/Odometry
 
 用法:
@@ -30,8 +30,8 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Imu, NavSatFix
 
 try:
-    from tractor_msgs.msg import GnssStatus
-except ImportError:  # 未 source tractor_msgs 时降级运行
+    from weeder_msgs.msg import GnssStatus
+except ImportError:  # 未 source weeder_msgs 时降级运行
     GnssStatus = None
 
 # ---------------------------------------------------------------- ANSI
@@ -287,7 +287,7 @@ class GnssDashboard(Node):
         L = [BOLD + "▍解算状态" + RESET]
         st = self.status
         if st is None:
-            hint = "未收到 /gnss_driver/status" if GnssStatus else "tractor_msgs 未 source"
+            hint = "未收到 /gnss_driver/status" if GnssStatus else "weeder_msgs 未 source"
             L.append(f"  {GREY}{hint}{RESET}")
         else:
             name, color = FIX_NAMES.get(st.fix_type, (f"UNKNOWN({st.fix_type})", RED))

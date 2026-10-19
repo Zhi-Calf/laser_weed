@@ -1,9 +1,19 @@
-#include "can_protocol.hpp"
+#include "weeder_base/protocol/can_protocol.hpp"
 
 #include <algorithm>
 #include <cstring>
 
-namespace laser_weed {
+namespace weeder_base {
+namespace protocol {
+
+namespace {
+
+// 位提取只允许访问经典 CAN 帧的 64 个 bit。
+bool IsValidBitRange(const uint8_t* data, uint8_t start_bit, uint8_t len) {
+  return data != nullptr && len != 0 && len <= 32 && start_bit < 64 && static_cast<uint16_t>(start_bit) + len <= 64;
+}
+
+}   // namespace
 
 // ============================================================
 // 字节工具 (Intel / little-endian)
@@ -27,9 +37,12 @@ void CanProtocol::writeI16LE(uint8_t* p, int16_t v) {
 
 // 通用位提取 (Intel 格式: 起始bit所在字节的对应bit为最低位, 小端拼接)
 uint32_t CanProtocol::extractUnsigned(const uint8_t* data, uint8_t start_bit, uint8_t len) {
+  if (!IsValidBitRange(data, start_bit, len)) {
+    return 0;
+  }
   uint32_t raw = 0;
   for (uint8_t i = 0; i < len; ++i) {
-    uint8_t bit = start_bit + i;
+    uint8_t bit      = start_bit + i;
     uint8_t byte_idx = bit / 8;
     uint8_t bit_idx  = bit % 8;
     if (data[byte_idx] & (1u << bit_idx)) {
@@ -40,8 +53,14 @@ uint32_t CanProtocol::extractUnsigned(const uint8_t* data, uint8_t start_bit, ui
 }
 
 int32_t CanProtocol::extractSigned(const uint8_t* data, uint8_t start_bit, uint8_t len) {
+  if (!IsValidBitRange(data, start_bit, len)) {
+    return 0;
+  }
   uint32_t raw = extractUnsigned(data, start_bit, len);
   // 符号扩展
+  if (len == 32) {
+    return static_cast<int32_t>(raw);
+  }
   if (raw & (1u << (len - 1))) {
     raw |= ~((1u << len) - 1u);
     return static_cast<int32_t>(raw);
@@ -66,30 +85,25 @@ CanFrame CanProtocol::encodeAdcuCmd01(const AdcuCommand01& cmd) {
   // ⚠️ 与接收帧 State_01 的 bit4~6 顺序相反:
   //    State_01 是 bit4=EStop, bit5=Reset, bit6=ReleaseBrake
   f.data[0] = static_cast<uint8_t>(
-  (cmd.gear & 0x03) |
-  ((cmd.steer_mode & 0x03) << 2) |
-  ((cmd.release_brake & 0x01) << 4) |  // bit 4: ReleaseBrakeCmd
-  ((cmd.estop & 0x01) << 5) |          // bit 5: EStopCmd
-  ((cmd.reset & 0x01) << 6) |          // bit 6: ResetCmd
-  ((cmd.ctrl_mode & 0x01) << 7));      // bit 7: CtrlModeCmd
+    (cmd.gear & 0x03) | ((cmd.steer_mode & 0x03) << 2) | ((cmd.release_brake & 0x01) << 4) |   // bit 4: ReleaseBrakeCmd
+    ((cmd.estop & 0x01) << 5) |                                                                // bit 5: EStopCmd
+    ((cmd.reset & 0x01) << 6) |                                                                // bit 6: ResetCmd
+    ((cmd.ctrl_mode & 0x01) << 7));                                                            // bit 7: CtrlModeCmd
 
   // Byte1~2: 目标车速 (uint16, LE, start bit 8)
-  //    分辨率应为 1 mm/s, raw 范围 0~1400
-  writeU16LE(&f.data[1], cmd.speed_raw);
+  //    文档写 Value=0.001X 但 16bit 无法覆盖 0~1400 mm/s, 按 raw=mm/s 实现
+  const uint16_t speed_raw = cmd.speed_raw > limits::kMaxSpeedMmps ? limits::kMaxSpeedMmps : cmd.speed_raw;
+  writeU16LE(&f.data[1], speed_raw);
 
   // Byte3~4: 目标转向角 (int16, LE, start bit 24) 0.1°, 左正右负, ±90°
-  writeI16LE(&f.data[3], cmd.steer_angle);
+  const int16_t steer_raw = std::clamp(cmd.steer_angle, static_cast<int16_t>(-limits::kMaxSteerAngleRaw), static_cast<int16_t>(limits::kMaxSteerAngleRaw));
+  writeI16LE(&f.data[3], steer_raw);
 
   // Byte5 位域 (start bit 40, 占 bit40~46, 7个灯光信号):
   //   bit40=Sound bit41=Green bit42=Yellow bit43=Red
   //   bit44=Headlight bit45=TurnLeft bit46=TurnRight
   f.data[5] = static_cast<uint8_t>(
-    (cmd.sound & 0x01) |
-    ((cmd.light_green & 0x01) << 1) |
-    ((cmd.light_yellow & 0x01) << 2) |
-    ((cmd.light_red & 0x01) << 3) |
-    ((cmd.headlight & 0x01) << 4) |
-    ((cmd.turn_left & 0x01) << 5) |
+    (cmd.sound & 0x01) | ((cmd.light_green & 0x01) << 1) | ((cmd.light_yellow & 0x01) << 2) | ((cmd.light_red & 0x01) << 3) | ((cmd.headlight & 0x01) << 4) | ((cmd.turn_left & 0x01) << 5) |
     ((cmd.turn_right & 0x01) << 6));
 
   // Byte7: AliveCounter (start bit 56)
@@ -104,16 +118,17 @@ CanFrame CanProtocol::encodeAdcuCmd01(const AdcuCommand01& cmd) {
 
 // State_01: 20ms - 底盘主状态
 bool CanProtocol::decodeState01(const CanFrame& f, ChassisState01& out) {
-  if (f.id != can_id::CHASSIS_STATE_01 || f.dlc < 8) return false;
+  if (f.id != can_id::CHASSIS_STATE_01 || f.dlc < 8)
+    return false;
 
   // 以下严格按协议文档: 起始位置(bit) + 信号长度 + Intel 字节顺序
   // Byte0 位域 (start bit 0)
-  out.gear          = extractUnsigned(f.data, 0,  2);  // bit0~1
-  out.steer_mode    = extractUnsigned(f.data, 2,  2);  // bit2~3
-  out.estop         = extractUnsigned(f.data, 4,  1);  // bit4
-  out.reset         = extractUnsigned(f.data, 5,  1);  // bit5
-  out.release_brake = extractUnsigned(f.data, 6,  1);  // bit6
-  out.ctrl_mode     = extractUnsigned(f.data, 7,  1);  // bit7
+  out.gear          = extractUnsigned(f.data, 0, 2);   // bit0~1
+  out.steer_mode    = extractUnsigned(f.data, 2, 2);   // bit2~3
+  out.estop         = extractUnsigned(f.data, 4, 1);   // bit4
+  out.reset         = extractUnsigned(f.data, 5, 1);   // bit5
+  out.release_brake = extractUnsigned(f.data, 6, 1);   // bit6
+  out.ctrl_mode     = extractUnsigned(f.data, 7, 1);   // bit7
 
   // 车速 (start bit 8, 16bit, unsigned) → Byte1~2
   out.speed_raw = static_cast<uint16_t>(extractUnsigned(f.data, 8, 16));
@@ -152,32 +167,51 @@ bool CanProtocol::decodeState01(const CanFrame& f, ChassisState01& out) {
 
 // State_02: 100ms - 四轮电机转速 (各 uint16 LE, r/min)
 bool CanProtocol::decodeState02(const CanFrame& f, ChassisState02& out) {
-  if (f.id != can_id::CHASSIS_STATE_02 || f.dlc < 8) return false;
-  out.motor_speed_fl = readU16LE(&f.data[0]);  // bit0
-  out.motor_speed_fr = readU16LE(&f.data[2]);  // bit16
-  out.motor_speed_rl = readU16LE(&f.data[4]);  // bit32
-  out.motor_speed_rr = readU16LE(&f.data[6]);  // bit48
+  if (f.id != can_id::CHASSIS_STATE_02 || f.dlc < 8)
+    return false;
+  out.motor_speed_fl = readU16LE(&f.data[0]);   // bit0
+  out.motor_speed_fr = readU16LE(&f.data[2]);   // bit16
+  out.motor_speed_rl = readU16LE(&f.data[4]);   // bit32
+  out.motor_speed_rr = readU16LE(&f.data[6]);   // bit48
   return true;
 }
 
 // State_03: 100ms - 四轮转向角 (各 int16 LE, 0.1°, 左正右负)
 bool CanProtocol::decodeState03(const CanFrame& f, ChassisState03& out) {
-  if (f.id != can_id::CHASSIS_STATE_03 || f.dlc < 8) return false;
-  out.steer_angle_fl = readI16LE(&f.data[0]);  // bit0
-  out.steer_angle_fr = readI16LE(&f.data[2]);  // bit16
-  out.steer_angle_rl = readI16LE(&f.data[4]);  // bit32
-  out.steer_angle_rr = readI16LE(&f.data[6]);  // bit48
+  if (f.id != can_id::CHASSIS_STATE_03 || f.dlc < 8)
+    return false;
+  out.steer_angle_fl = readI16LE(&f.data[0]);   // bit0
+  out.steer_angle_fr = readI16LE(&f.data[2]);   // bit16
+  out.steer_angle_rl = readI16LE(&f.data[4]);   // bit32
+  out.steer_angle_rr = readI16LE(&f.data[6]);   // bit48
   return true;
 }
 
 // State_04~11: 500ms - 电机电参 (行走/转向电机, 结构相同)
 //   布局: Byte0=母线电压, Byte1~2=输出电流, Byte3=温度, Byte4~5=故障码
+bool CanProtocol::isMotorElecStateId(uint32_t id) {
+  switch (id) {
+    case can_id::CHASSIS_STATE_04:
+    case can_id::CHASSIS_STATE_05:
+    case can_id::CHASSIS_STATE_06:
+    case can_id::CHASSIS_STATE_07:
+    case can_id::CHASSIS_STATE_08:
+    case can_id::CHASSIS_STATE_09:
+    case can_id::CHASSIS_STATE_10:
+    case can_id::CHASSIS_STATE_11:
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool CanProtocol::decodeMotorElec(const CanFrame& f, MotorElecState& out) {
-  if (f.dlc < 8) return false;
-  out.bus_voltage  = f.data[0];              // bit0,  V
-  out.out_current  = readU16LE(&f.data[1]);  // bit8,  A
-  out.motor_temp   = f.data[3];              // bit24, ℃
-  out.error_code   = readU16LE(&f.data[4]);  // bit32
+  if (!isMotorElecStateId(f.id) || f.dlc < 8)
+    return false;
+  out.bus_voltage = f.data[0];               // bit0,  V
+  out.out_current = readU16LE(&f.data[1]);   // bit8,  A
+  out.motor_temp  = f.data[3];               // bit24, ℃
+  out.error_code  = readU16LE(&f.data[4]);   // bit32
   return true;
 }
 
@@ -189,14 +223,15 @@ bool CanProtocol::decodeMotorElec(const CanFrame& f, MotorElecState& out) {
 // ⚠️ 疑点见 can_protocol.hpp 中 ChassisState21 的说明:
 //    SOC 分辨率 1 疑为漏改; 电流无符号无偏移无法表示充电负电流
 bool CanProtocol::decodeState21(const CanFrame& f, ChassisState21& out) {
-  if (f.id != can_id::CHASSIS_STATE_21 || f.dlc < 8) return false;
-  out.soc_raw     = readU16LE(&f.data[0]);   // bit0
-  out.soc         = static_cast<float>(out.soc_raw);
-  out.voltage_raw = readU16LE(&f.data[2]);   // bit16
-  out.voltage     = out.voltage_raw * 0.01f;
-  out.current_raw = readU16LE(&f.data[4]);   // bit32
-  out.current     = out.current_raw * 0.01f;
-  out.full_charge_capacity_raw = readU16LE(&f.data[6]);  // bit48
+  if (f.id != can_id::CHASSIS_STATE_21 || f.dlc < 8)
+    return false;
+  out.soc_raw                  = readU16LE(&f.data[0]);   // bit0
+  out.soc                      = static_cast<float>(out.soc_raw);
+  out.voltage_raw              = readU16LE(&f.data[2]);   // bit16
+  out.voltage                  = out.voltage_raw * 0.01f;
+  out.current_raw              = readU16LE(&f.data[4]);   // bit32
+  out.current                  = out.current_raw * 0.01f;
+  out.full_charge_capacity_raw = readU16LE(&f.data[6]);   // bit48
   out.full_charge_capacity     = out.full_charge_capacity_raw * 0.01f;
   return true;
 }
@@ -207,11 +242,12 @@ bool CanProtocol::decodeState21(const CanFrame& f, ChassisState21& out) {
 //   bit32 = BMS_MaxVoltage      电芯最高电压, mV
 //   bit48 = System_Voltage      VCU 控制器电压, mV
 bool CanProtocol::decodeState22(const CanFrame& f, ChassisState22& out) {
-  if (f.id != can_id::CHASSIS_STATE_22 || f.dlc < 8) return false;
-  out.cycle_count      = readU16LE(&f.data[0]);  // bit0
-  out.error_code       = readU16LE(&f.data[2]);  // bit16
-  out.max_cell_voltage = readU16LE(&f.data[4]);  // bit32
-  out.system_voltage   = readU16LE(&f.data[6]);  // bit48
+  if (f.id != can_id::CHASSIS_STATE_22 || f.dlc < 8)
+    return false;
+  out.cycle_count      = readU16LE(&f.data[0]);   // bit0
+  out.error_code       = readU16LE(&f.data[2]);   // bit16
+  out.max_cell_voltage = readU16LE(&f.data[4]);   // bit32
+  out.system_voltage   = readU16LE(&f.data[6]);   // bit48
   return true;
 }
 
@@ -221,4 +257,5 @@ bool CanProtocol::decodeState22(const CanFrame& f, ChassisState22& out) {
 //   system_voltage   → State_22 的 System_Voltage
 //   min_cell_voltage / max_cell_pos / min_cell_pos → 无对应信号, 已丢失
 
-}  // namespace laser_weed
+}   // namespace protocol
+}   // namespace weeder_base

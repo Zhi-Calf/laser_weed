@@ -1,6 +1,6 @@
 // path_source 取值域的契约 (include/global_path_planner/global_path_planner.hpp)。
 //
-// path_source 是**对外接口**: 只在 tractor_msgs/srv/SetPathSource 的请求字段里出现 (本节点没有
+// path_source 是**对外接口**: 只在 weeder_msgs/srv/SetPathSource 的请求字段里出现 (本节点没有
 // 同名参数 —— 换来源走服务, 见 global_path_planner.hpp)。它一旦改号, App/MQTT/脚本与现场文档就
 // 会对不上, 所以这里把"哪个号是哪个模式"钉死:
 //   * 0 = local (本机弓形规划) / 1 = file (固定路径 JSON 文件), 与 global_path_planner.hpp 里的

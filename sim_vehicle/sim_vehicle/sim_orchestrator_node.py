@@ -24,7 +24,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool
-from tractor_msgs.srv import SetPathSource
+from weeder_msgs.srv import SetPathSource
 
 # 默认田块：以 sim_vehicle 的 origin(34.62N, 112.45E) 为中心的 50m(东西) x 30m(南北)
 # 矩形，顶点顺序 lat,lon,alt × 4（SW→SE→NE→NW）。算法见 RUN_SIM.md。

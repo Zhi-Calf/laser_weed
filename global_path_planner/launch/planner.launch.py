@@ -16,7 +16,7 @@
                                           两条路径都是二维: x/y 是 ENU, z 逐点放段类型 (0=作业/1=掉头)
 
 服务 (切换/加载路径来源的**唯一入口** —— 本节点**没有** path_source 参数):
-    /global_path_planner/set_source  类型 tractor_msgs/srv/SetPathSource
+    /global_path_planner/set_source  类型 weeder_msgs/srv/SetPathSource
                                           请求有 path_source (0=local / 1=file), 以及**两种来源各自的
                                           输入** (都在这个请求里, 节点没有对应参数):
                                             * path_file —— file 要加载的 JSON 文件**绝对路径**
@@ -59,7 +59,7 @@
 ⚠ 参数回调已删除, 这种 set **不再有** WARN/reason 提示, 生效值只能看启动日志)。
 曾经唯一可改的参数 in_row_resolution 已随几何参数 (ridge_width / field_margin) 改成**由 set_source
 请求携带** —— 改它就再调一次服务 (只改这个值时复用上次的结构路径重采, 不重跑偏置/扫描线):
-    ros2 service call /global_path_planner/set_source tractor_msgs/srv/SetPathSource \
+    ros2 service call /global_path_planner/set_source weeder_msgs/srv/SetPathSource \
       "{path_source: 0, ridge_width: 2.5, field_margin: 0.5, in_row_resolution: 2.0, \
         poly_count: 4, poly: [...]}"
 受理后**下一个定时周期** (<=100 ms) 内重采样并发布 (⚠ 同样要等 ENU 原点就绪: 原点未就绪期间只有
@@ -77,7 +77,7 @@
       /path, 但要报 10410 ENU 原点超时, 见原因 2);
      单跑调试先设来源 (**local 要带上地块顶点与几何参数** —— 它们只能从这里给, 配置里没有):
          ros2 service call /global_path_planner/set_source \
-           tractor_msgs/srv/SetPathSource \
+           weeder_msgs/srv/SetPathSource \
            "{path_source: 0, ridge_width: 2.5, field_margin: 0.5, in_row_resolution: 1.0, \
              poly_count: 4, poly: [34.70316078, 112.39118753, 102.0, \
                                    34.70316002, 112.39133512, 202.0, \
@@ -101,7 +101,7 @@
      请求带来), 所以单跑调试是**两步**:
          ros2 run global_path_planner global_path_planner_node --ros-args \
              --params-file <配置> -p debug_use_poly0_origin:=true -p require_manual_for_change:=false
-         ros2 service call /global_path_planner/set_source tractor_msgs/srv/SetPathSource \
+         ros2 service call /global_path_planner/set_source weeder_msgs/srv/SetPathSource \
              "{path_source: 0, ridge_width: 2.5, field_margin: 0.5, in_row_resolution: 1.0, \
                poly_count: 4, poly: [34.70316078, 112.39118753, 102.0, ...]}"
      (随包配置里它是 false; 运行期 `ros2 param set` 改不动它 —— 只读参数, 会被接受但不生效。) 本 launch

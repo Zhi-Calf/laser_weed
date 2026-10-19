@@ -1,351 +1,640 @@
-// 底盘 ROS2 节点：/cmd_vel -> encode -> CAN 发送；CAN 接收 -> decode -> 状态话题
+// 底盘 ROS2 节点实现。
 //
-// 依赖：weeder_base/can_driver.hpp（内部 include can_bridge.hpp，
-//       由桥接层引入 laser_weed 命名空间的协议符号）
+// 下行: /weeder/chassis/cmd (速度 + 转角) -> ADCU_toVCU_01 (20ms 周期)
+// 上行: VCU Chassis_State_01~11/21/22 -> /weeder/chassis/state
 //
-// 已修复（相对重构后的上一版）：
-//   1. rclcpp::Time 时钟源统一为 RCL_ROS_TIME，消除 "can't subtract times with
-//      different time sources" 异常导致的 terminate
-//   2. 时间基准在构造函数中对齐到启动时刻，避免 epoch 0 被判定为超时
-//   3. onCmdVel 收到新指令时清除 estop，避免超时急停永久锁死
-//   4. 实现 VCU 心跳超时看门狗（原先 vcu_timeout_s_ 只声明不使用）
-//   5. publishState()/sendCommand() 补锁，消除与 CAN 接收线程的数据竞争
-//   6. 新增析构函数：先停接收线程再销毁成员，避免回调悬空 this
-//   7. 调用 open() 并检查返回值；send() 失败有日志（原先返回值全部丢弃）
-//   8. max_speed_m_s / max_steer_deg / publish_hz 三个 launch 参数真正生效
-//   9. 去掉多余 const_cast；补齐 <algorithm> <cstdio> 等头文件
-//  10. 转向指令改由 /weeder/steer_cmd (std_msgs/Float64, 弧度, 左正) 提供，与
-//      lqr_control 直接对接。原 angular.z -> steer_angle 的量纲不严谨映射降级为
-//      **可选回退**（steer_fallback_to_cmd_vel，默认 true），保留手动遥控能力：
-//      键盘/手柄只发 /cmd_vel，自动作业时 lqr_control 两个话题都发，steer_cmd 优先。
-//  11. steer_mode 提为参数（默认 0 单阿克曼，与改动前行为一致）。原先硬编码为
-//      结构体默认值 0，无法与 lqr_control 的 steer_mode 对齐；若控制器按双阿克曼
-//      (等效轴距 L/2) 计算而底盘按单阿克曼执行，转角会差一倍。
-//
-// 仍未实现（不属本次修复范围）：
-//   - State_02~23 解码与发布（含 README 承诺的 /weeder/bms/state_raw）
-//   - 倒车（gear 固定 D 档，linear.x < 0 被截断为 0）
+// 时钟约定 (踩过的坑, 别改回去):
+//   - 全部时间戳用 this->now() (RCL_ROS_TIME)。跨时钟源相减会抛
+//     std::runtime_error, 异常从定时器回调冒出会直接 terminate 进程。
+//   - 所有"上次时刻"在构造函数里对齐到启动时刻。停在 epoch 0 的话, 启动后第一个
+//     20ms 周期的 age 就是十亿秒级, 必然立刻进入超时分支 -> 一启动就锁急停。
+#include "weeder_base/chassis_node.hpp"
 
-#include "weeder_base/can_driver.hpp"
-
-#include <rclcpp/rclcpp.hpp>
-#include <geometry_msgs/msg/twist.hpp>
-#include <std_msgs/msg/float64.hpp>
-#include <std_msgs/msg/string.hpp>
+#include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
+#include <unistd.h>
 
 #include <algorithm>
-#include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <memory>
-#include <mutex>
+#include <cstdlib>
+#include <filesystem>
 #include <stdexcept>
-#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+using namespace std::chrono_literals;
+
+namespace {
+
+// 协议硬上限 (见 weeder_base/protocol/can_protocol.hpp 的 ADCU_toVCU_01):
+//   speed_raw   uint16, mm/s, 协议范围 0~1400
+//   steer_angle int16,  0.1°, 协议范围 ±90.0°
+constexpr double kMaxSpeedLimitMps = 1.4;
+constexpr double kMaxSteerLimitDeg = 90.0;
+
+// 默认值 (与 config/weeder_base.yaml 保持一致, 改一边记得改另一边)
+constexpr double kDefaultPublishHz            = 20.0;
+constexpr double kDefaultCmdTimeoutS          = 0.5;
+constexpr double kDefaultVcuTimeoutS          = 1.0;
+constexpr double kDefaultWatchdogLogIntervalS = 5.0;
+constexpr const char* kDefaultCmdTopic        = "/weeder/chassis/cmd";
+
+}   // namespace
+
+namespace detail {
+
+// 扩展路径中的环境变量 (~ 与 $VAR)
+std::string ExpandPath(std::string path) {
+  if (path.rfind("~/", 0) == 0) {
+    const char* home = std::getenv("HOME");
+    if (home)
+      path = std::string(home) + path.substr(1);
+  }
+  std::string out;
+  for (size_t i = 0; i < path.size(); ++i) {
+    if (path[i] != '$') {
+      out += path[i];
+      continue;
+    }
+    size_t j = i + 1;
+    while (j < path.size() && (std::isalnum(static_cast<unsigned char>(path[j])) || path[j] == '_'))
+      ++j;
+    const std::string name = path.substr(i + 1, j - i - 1);
+    const char* val        = name.empty() ? nullptr : std::getenv(name.c_str());
+    if (val)
+      out += val;
+    i = j - 1;
+  }
+  return out;
+}
+
+// 解析日志目录: 优先用配置的, 不可写则回退到 $ROS_HOME/logs 或 ~/.ros/logs
+std::string ResolveLogDir(const std::string& configured) {
+  std::error_code ec;
+  const std::string preferred = ExpandPath(configured);
+  if (!preferred.empty()) {
+    std::filesystem::create_directories(preferred, ec);
+    if (!ec && access(preferred.c_str(), W_OK) == 0)
+      return preferred;
+  }
+
+  const char* ros_home = std::getenv("ROS_HOME");
+  const char* home     = std::getenv("HOME");
+  std::string fallback;
+  if (ros_home && *ros_home)
+    fallback = std::string(ros_home) + "/logs";
+  else if (home && *home)
+    fallback = std::string(home) + "/.ros/logs";
+  else
+    return "";
+
+  std::filesystem::create_directories(fallback, ec);
+  if (ec || access(fallback.c_str(), W_OK) != 0)
+    return "";
+  return fallback;
+}
+
+// 配置 spdlog 滚动文件输出 (与 tractor_base 同一套配置)
+void ConfigureLogger(const std::string& log_dir, size_t max_file_size_bytes, size_t max_file_count, bool enable_console, const std::string& log_level) {
+  constexpr const char* kLogPattern = "[%Y-%m-%d %H:%M:%S.%e] [%l] [%s:%#] %v";
+  const std::string dir             = ResolveLogDir(log_dir);
+  if (dir.empty()) {
+    throw std::runtime_error("no writable log directory (tried \"" + log_dir + "\")");
+  }
+
+  std::vector<spdlog::sink_ptr> sinks;
+  sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>((std::filesystem::path(dir) / "weeder_base.log").string(), max_file_size_bytes, max_file_count));
+  if (enable_console) {
+    sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+  }
+
+  auto logger = std::make_shared<spdlog::logger>("weeder_base", sinks.begin(), sinks.end());
+  logger->set_pattern(kLogPattern);
+  // spdlog::level::from_str 区分大小写, 认不出级别名时返回 off —— 也就是 yaml 里写错一个
+  // 字母 ("Info"/"warning") 就会把全部日志静默关掉, 现场表现为"日志文件不再增长"。
+  // 这里兜底回退到 info 并告警。
+  const spdlog::level::level_enum level = spdlog::level::from_str(log_level);
+  if (level == spdlog::level::off && log_level != "off") {
+    logger->set_level(spdlog::level::info);
+    SPDLOG_WARN("无法识别的日志级别 \"{}\", 已回退到 info", log_level);
+  } else {
+    logger->set_level(level);
+  }
+  spdlog::set_default_logger(logger);
+  if (dir != ExpandPath(log_dir)) {
+    SPDLOG_WARN("日志目录 \"{}\" 不可写, 已回退到 \"{}\"", log_dir, dir);
+  }
+  spdlog::flush_on(spdlog::level::warn);
+  spdlog::flush_every(3s);
+}
+
+}   // namespace detail
 
 namespace weeder_base {
 
-class ChassisNode : public rclcpp::Node {
-public:
-  explicit ChassisNode(const std::string& name) : Node(name) {
-    // ---- 参数：全部声明并使用，避免 launch 里改了不生效 ----
-    cmd_timeout_s_ = declare_parameter("cmd_timeout_s", 0.5);
-    vcu_timeout_s_ = declare_parameter("vcu_timeout_s", 1.0);
-    max_speed_m_s_ = declare_parameter("max_speed_m_s", 1.4);
-    max_steer_deg_ = declare_parameter("max_steer_deg", 90.0);
-    publish_hz_    = declare_parameter("publish_hz", 20.0);
-    const std::string can_interface =
-        declare_parameter("can_interface", std::string("can0"));
+ChassisNode::ChassisNode(const rclcpp::NodeOptions& options) : Node("weeder_chassis", options) {
 
-    // ---- 转向指令来源参数 ----
-    steer_cmd_topic_ = declare_parameter(
-        "steer_cmd_topic", std::string("/weeder/steer_cmd"));
-    // 与 cmd_timeout_s_ 同量级：lqr_control 默认 10Hz 发布，0.5s 容忍丢 5 帧
-    steer_timeout_s_ = declare_parameter("steer_timeout_s", 0.5);
-    // steer_cmd 超时后是否退回 angular.z 映射（保留手动遥控）。false = 严格模式：
-    // 只认 /weeder/steer_cmd，超时即回正。实车自动作业建议 false，台架/遥控调试用 true。
-    steer_fallback_to_cmd_vel_ =
-        declare_parameter("steer_fallback_to_cmd_vel", true);
-    // 0=单阿克曼 1=双阿克曼 2=平移 3=原地转向。必须与 lqr_control 的 steer_mode 一致。
-    // declare_parameter 返回 int64_t，显式接住再 static_cast，避免窄化转换告警。
-    const int64_t steer_mode_param = declare_parameter("steer_mode", 0);
-    if (steer_mode_param < 0 || steer_mode_param > 3) {
-      RCLCPP_WARN(get_logger(), "steer_mode=%ld 非法（取值 0~3），回退为 0",
-                  static_cast<long>(steer_mode_param));
-      steer_mode_ = 0;
-    } else {
-      steer_mode_ = static_cast<uint8_t>(steer_mode_param);
-    }
+  loadLogParameters();
 
-    if (publish_hz_ <= 0.0) {
-      RCLCPP_WARN(get_logger(), "publish_hz=%.3f 非法，回退为 20.0 Hz", publish_hz_);
-      publish_hz_ = 20.0;
-    }
-
-    // ---- CAN 驱动：必须 open()，失败显式抛错，不能静默"正常运行" ----
-    can_driver_ = std::make_unique<CanDriver>(can_interface);
-    if (!can_driver_->open()) {
-      throw std::runtime_error("无法打开 CAN 接口: " + can_interface);
-    }
-    can_driver_->setReceiveCallback(
-        [this](const CanFrame& frame) { onCanReceive(frame); });
-    can_driver_->startReceiveThread();
-
-    // ---- 时间基准 ----
-    // 必须与 this->now() 同为 RCL_ROS_TIME：跨时钟源相减会抛 std::runtime_error，
-    // 异常从定时器回调冒出会直接 terminate 进程。
-    // 同时对齐到启动时刻：否则 last_cmd_time_ 停留在 epoch 0，
-    // 启动后第一个 20ms 周期的 age 就是十亿秒级，必然立即进入超时分支。
-    const rclcpp::Time now = this->now();
-    last_cmd_time_ = now;
-    last_steer_time_ = now;  // 同理：不对齐会让启动瞬间 steer_age 巨大
-    last_vcu_ns_.store(now.nanoseconds(), std::memory_order_relaxed);
-
-    // ---- 订阅 /cmd_vel（线速度；angular.z 仅作转向回退来源）----
-    cmd_sub_ = create_subscription<geometry_msgs::msg::Twist>(
-        "/cmd_vel", 10,
-        [this](const geometry_msgs::msg::Twist::SharedPtr msg) {
-          onCmdVel(msg);
-        });
-
-    // ---- 订阅 /weeder/steer_cmd（权威转向角，来自 lqr_control）----
-    // std_msgs/Float64，单位弧度，左转（逆时针）为正 —— 与协议 ADCU_toVCU_01 的
-    // 转向角符号同向，因此**不取反**，只做 弧度 -> 0.1 度 换算。
-    steer_sub_ = create_subscription<std_msgs::msg::Float64>(
-        steer_cmd_topic_, 10,
-        [this](const std_msgs::msg::Float64::SharedPtr msg) {
-          onSteerCmd(msg);
-        });
-
-    // ---- 发布状态文本 ----
-    state_pub_ = create_publisher<std_msgs::msg::String>(
-        "/weeder/chassis/state_text", 10);
-
-    // ---- 20ms 发送定时器 ----
-    send_timer_ = create_wall_timer(
-        std::chrono::milliseconds(20),
-        [this]() { sendCommand(); });
-
-    // ---- 状态发布定时器（周期由 publish_hz 决定）----
-    const auto pub_period = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::duration<double>(1.0 / publish_hz_));
-    pub_timer_ = create_wall_timer(pub_period, [this]() { publishState(); });
-
-    RCLCPP_INFO(get_logger(),
-        "ChassisNode started: interface=%s cmd_timeout=%.2fs vcu_timeout=%.2fs "
-        "max_speed=%.2f m/s max_steer=%.1f deg publish=%.1f Hz",
-        can_interface.c_str(), cmd_timeout_s_, vcu_timeout_s_,
-        max_speed_m_s_, max_steer_deg_, publish_hz_);
-    RCLCPP_INFO(get_logger(),
-        "转向来源: %s (超时 %.2fs, angular.z 回退=%s) steer_mode=%u",
-        steer_cmd_topic_.c_str(), steer_timeout_s_,
-        steer_fallback_to_cmd_vel_ ? "开" : "关",
-        static_cast<unsigned>(steer_mode_));
-  }
-
-  ~ChassisNode() override {
-    // 析构体在成员销毁之前执行：先取消定时器，再停接收线程并注销回调，
-    // 避免 CAN 线程在 this 已销毁后回调 onCanReceive()。
-    send_timer_.reset();
-    pub_timer_.reset();
-    cmd_sub_.reset();
-    steer_sub_.reset();
-    if (can_driver_) {
-      can_driver_->stopReceiveThread();
-      can_driver_->setReceiveCallback(nullptr);
-      can_driver_->close();
-    }
-  }
-
-private:
-  void onCmdVel(const geometry_msgs::msg::Twist::SharedPtr msg) {
-    std::lock_guard<std::mutex> lock(cmd_mutex_);
-    last_cmd_time_ = this->now();
-
-    cmd01_.gear      = 1;  // D 档
-    cmd01_.ctrl_mode = 1;  // 无人驾驶
-    // 收到新指令 -> 解除超时看门狗锁存的急停。
-    // 不清零的话，一旦超时置位就没有任何代码路径能恢复，车辆永久停在急停态。
-    // 只由 /cmd_vel 清除（不由 onSteerCmd 清）：速度指令才是权威的"允许走"信号，
-    // 单有转向指令不应能解除急停。
-    cmd01_.estop     = 0;
-
-    // m/s -> mm/s（分辨率按 1 mm/s 实现，见 README 待确认项）
-    const double v = std::clamp(msg->linear.x, 0.0, max_speed_m_s_);
-    cmd01_.speed_raw = static_cast<uint16_t>(std::llround(v * 1000.0));
-
-    // angular.z -> 度：仅作**回退来源**缓存，不直接写 cmd01_。
-    // 量纲上不严谨（把 rad/s 当角度用），但保留它是为了不破坏手动遥控
-    // —— 键盘/手柄只发 /cmd_vel。自动作业时 lqr_control 同时发
-    // /weeder/steer_cmd，在 sendCommand() 里优先级更高，此值不生效。
-    steer_from_cmd_vel_deg_ = std::clamp(msg->angular.z * 180.0 / M_PI,
-                                         -max_steer_deg_, max_steer_deg_);
-
-    // 注意：linear.x < 0 被 clamp 到 0，即当前不支持倒车（gear 固定 D 档）。
-    // 若需要 R 档，应在协议确认后按 linear.x 符号切换 gear。
-  }
-
-  void onSteerCmd(const std_msgs::msg::Float64::SharedPtr msg) {
-    std::lock_guard<std::mutex> lock(cmd_mutex_);
-    last_steer_time_ = this->now();
-    // 弧度 -> 度。左正右负与协议同向，不取反。
-    const double deg = msg->data * 180.0 / M_PI;
-    steer_cmd_deg_ = std::clamp(deg, -max_steer_deg_, max_steer_deg_);
-    // 只缓存，不在这里写 cmd01_.steer_angle：两个来源的优先级必须在
-    // sendCommand() 里按新鲜度统一裁决，否则后到的回调会覆盖看门狗的回正。
-  }
-
-  void sendCommand() {
-    AdcuCommand01 out_cmd{};
-    {
-      std::lock_guard<std::mutex> lock(cmd_mutex_);
-      const rclcpp::Time now = this->now();
-      const double cmd_age = (now - last_cmd_time_).seconds();
-      const double steer_age = (now - last_steer_time_).seconds();
-      const double vcu_age =
-          static_cast<double>(now.nanoseconds() -
-              last_vcu_ns_.load(std::memory_order_relaxed)) * 1e-9;
-
-      // motion_inhibit：任一看门狗触发即禁止运动，转向强制回正。
-      // 集中在一处裁决，避免看门狗置 0 后又被下面的来源选择覆盖。
-      bool motion_inhibit = false;
-
-      // 看门狗 1：指令超时 -> 停车 + 急停（可由新的 /cmd_vel 解除）
-      if (cmd_age > cmd_timeout_s_) {
-        cmd01_.speed_raw = 0;
-        cmd01_.estop     = 1;
-        motion_inhibit   = true;
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
-            "cmd_vel 超时 %.2fs > %.2fs，已停车并置急停", cmd_age, cmd_timeout_s_);
-      }
-
-      // 看门狗 2：VCU 心跳超时 -> 停车。
-      // 不锁存 estop：VCU 恢复上报后自动回到正常控制，无需人工干预。
-      if (vcu_age > vcu_timeout_s_) {
-        cmd01_.speed_raw = 0;
-        motion_inhibit   = true;
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
-            "VCU 状态帧超时 %.2fs > %.2fs，已停车", vcu_age, vcu_timeout_s_);
-      }
-
-      // ---- 转向角裁决 ----
-      if (motion_inhibit) {
-        // 看门狗触发：回正。这是安全侧，不给任何来源翻盘的机会。
-        cmd01_.steer_angle = 0;
-      } else if (steer_age <= steer_timeout_s_) {
-        // 来源 1（权威）：新鲜的 /weeder/steer_cmd，lqr_control 算出的前轮转角
-        cmd01_.steer_angle =
-            static_cast<int16_t>(std::llround(steer_cmd_deg_ * 10.0));
-      } else if (steer_fallback_to_cmd_vel_) {
-        // 来源 2（回退）：/cmd_vel 的 angular.z 映射，供手动遥控使用
-        cmd01_.steer_angle =
-            static_cast<int16_t>(std::llround(steer_from_cmd_vel_deg_ * 10.0));
-      } else {
-        // 严格模式：没有新鲜 steer_cmd 就回正
-        cmd01_.steer_angle = 0;
-      }
-
-      // 转向模式：必须与 lqr_control 的 steer_mode 一致，否则等效轴距对不上
-      cmd01_.steer_mode = steer_mode_;
-
-      cmd01_.alive_counter =
-          static_cast<uint8_t>((cmd01_.alive_counter + 1) & 0xFF);
-      out_cmd = cmd01_;  // 复制出临界区，CAN 发送不持锁
-    }
-
-    const CanFrame f = CanProtocol::encodeAdcuCmd01(out_cmd);
-    if (!can_driver_->send(f)) {
-      RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
-          "CAN 发送失败 (ID=0x%08X)", f.id);
-    }
-  }
-
-  void onCanReceive(const CanFrame& frame) {
-    ChassisState01 s{};
-    // decodeState01 声明即为 const CanFrame&，无需 const_cast
-    if (CanProtocol::decodeState01(frame, s)) {
-      // 心跳用 atomic 记录：CAN 接收线程与定时器线程并发，
-      // 避免为读一个时间戳去抢 sendCommand() 的 cmd_mutex_。
-      last_vcu_ns_.store(this->now().nanoseconds(), std::memory_order_relaxed);
-      std::lock_guard<std::mutex> lock(state_mutex_);
-      state01_ = s;
-    }
-    // State_02~23 的 decode 同理，暂略
-  }
-
-  void publishState() {
-    ChassisState01 s{};
-    {
-      // 与 CAN 接收线程共享 state01_，读取必须加锁，否则是数据竞争 (UB)
-      std::lock_guard<std::mutex> lock(state_mutex_);
-      s = state01_;
-    }
-    std_msgs::msg::String msg;
-    msg.data = fmtState(s);
-    state_pub_->publish(msg);
-  }
-
-  static std::string fmtState(const ChassisState01& s) {
-    char buf[256];
-    snprintf(buf, sizeof(buf),
-             "speed=%u mm/s gear=%u estop=%u mode=%u alive=%u bumper=%u",
-             static_cast<unsigned>(s.speed_raw),
-             static_cast<unsigned>(s.gear),
-             static_cast<unsigned>(s.estop),
-             static_cast<unsigned>(s.ctrl_mode),
-             static_cast<unsigned>(s.alive_counter),
-             static_cast<unsigned>(s.bumper));
-    return std::string(buf);
-  }
-
-  // ---- 成员 ----
-  std::unique_ptr<CanDriver> can_driver_;
-  AdcuCommand01 cmd01_{};
-
-  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
-  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr steer_sub_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
-  rclcpp::TimerBase::SharedPtr send_timer_;
-  rclcpp::TimerBase::SharedPtr pub_timer_;
-
-  ChassisState01 state01_{};
-  // static_cast<int64_t>(0) 是必需的：裸写 0 会让
-  //   Time(int64_t, rcl_clock_type_t) 与 Time(int32_t, uint32_t, rcl_clock_type_t)
-  // 两个重载都成为同等候选，GCC 报 "conversion ... is ambiguous"。
-  rclcpp::Time last_cmd_time_{static_cast<int64_t>(0), RCL_ROS_TIME};
-  rclcpp::Time last_steer_time_{static_cast<int64_t>(0), RCL_ROS_TIME};
-  std::atomic<int64_t> last_vcu_ns_{0};
-  std::mutex cmd_mutex_;
-  std::mutex state_mutex_;
-
-  double cmd_timeout_s_   = 0.5;
-  double vcu_timeout_s_   = 1.0;
-  double max_speed_m_s_   = 1.4;
-  double max_steer_deg_   = 90.0;
-  double publish_hz_      = 20.0;
-
-  // 转向指令来源（均受 cmd_mutex_ 保护）
-  std::string steer_cmd_topic_       = "/weeder/steer_cmd";
-  double steer_timeout_s_            = 0.5;
-  bool   steer_fallback_to_cmd_vel_  = true;
-  uint8_t steer_mode_                = 0;
-  double steer_cmd_deg_              = 0.0;  // 来自 /weeder/steer_cmd（权威）
-  double steer_from_cmd_vel_deg_     = 0.0;  // 来自 /cmd_vel 的 angular.z（回退）
-};
-
-}  // namespace weeder_base
-
-int main(int argc, char* argv[]) {
-  rclcpp::init(argc, argv);
-  int ret = 0;
+  // 配置 spdlog 滚动文件输出
   try {
-    auto node = std::make_shared<weeder_base::ChassisNode>("chassis_node");
-    rclcpp::spin(node);
-    node.reset();  // 显式释放：确保 CAN 接收线程在 main 返回前停止
+    detail::ConfigureLogger(log_dir_, static_cast<size_t>(log_file_size_mb_) * 1024U * 1024U, static_cast<size_t>(log_file_count_), log_enable_console_, log_level_);
+    SPDLOG_INFO("日志配置成功");
   } catch (const std::exception& e) {
-    RCLCPP_FATAL(rclcpp::get_logger("chassis_node"), "节点异常退出: %s", e.what());
-    ret = 1;
+    SPDLOG_WARN("文件日志配置失败, 使用默认日志器: {}", e.what());
   }
-  rclcpp::shutdown();
-  return ret;
+
+  loadParameters();
+
+  // ---- CAN 驱动 ----
+  // CAN 是底盘控制的命根子, 打不开即快速失败 (进程退出, 由 launch respawn 拉起):
+  // 静默"正常运行"却一帧都发不出去, 比明确报错危险得多。
+  can_driver_ = std::make_unique<CanDriver>(can_interface_);
+  // 只接收协议文档中 VCU -> ADCU 的全部周期帧。漏配会导致对应解码分支
+  // 永远收不到数据, 因此这里与 onCanReceive() 的 switch 保持一一对应。
+  can_driver_->setFilters({
+    protocol::can_id::CHASSIS_STATE_01,
+    protocol::can_id::CHASSIS_STATE_02,
+    protocol::can_id::CHASSIS_STATE_03,
+    protocol::can_id::CHASSIS_STATE_04,
+    protocol::can_id::CHASSIS_STATE_05,
+    protocol::can_id::CHASSIS_STATE_06,
+    protocol::can_id::CHASSIS_STATE_07,
+    protocol::can_id::CHASSIS_STATE_08,
+    protocol::can_id::CHASSIS_STATE_09,
+    protocol::can_id::CHASSIS_STATE_10,
+    protocol::can_id::CHASSIS_STATE_11,
+    protocol::can_id::CHASSIS_STATE_21,
+    protocol::can_id::CHASSIS_STATE_22,
+  });
+  if (!can_driver_->open()) {
+    throw std::runtime_error("无法打开 CAN 接口: " + can_interface_);
+  }
+  can_driver_->setReceiveCallback([this](const protocol::CanFrame& frame) {
+    onCanReceive(frame);
+  });
+  can_driver_->startReceiveThread();
+
+  // ---- 时间基准 ----
+  // 必须与 this->now() 同为 RCL_ROS_TIME: 跨时钟源相减会抛 std::runtime_error,
+  // 异常从定时器回调冒出会直接 terminate 进程。
+  // 同时对齐到启动时刻: 否则 last_cmd_time_ 停留在 epoch 0, 启动后第一个 20ms
+  // 周期的 age 就是十亿秒级, 必然立即进入超时分支。
+  const rclcpp::Time now   = this->now();
+  last_cmd_time_           = now;
+  last_cmd_stale_log_time_ = now;
+  last_vcu_stale_log_time_ = now;
+  last_vcu_stuck_log_time_ = now;
+  last_send_fail_log_time_ = now;
+  last_vcu_ns_.store(now.nanoseconds(), std::memory_order_relaxed);
+  last_vcu_alive_change_ns_.store(now.nanoseconds(), std::memory_order_relaxed);
+
+  // ---- ROS 话题 ----
+  // 速度与转角必须来自同一条消息、同一控制周期。
+  cmd_sub_        = create_subscription<weeder_msgs::msg::ChassisCmd>(cmd_topic_, 10, std::bind(&ChassisNode::onChassisCmd, this, std::placeholders::_1));
+  state_pub_      = create_publisher<weeder_msgs::msg::ChassisState>("/weeder/chassis/state", 10);
+  state_text_pub_ = create_publisher<std_msgs::msg::String>("/weeder/chassis/state_text", 10);
+
+  // ---- 定时器 ----
+  // 20ms = ADCU_toVCU_01 的协议周期; VCU 靠该帧的生命信号 (alive_counter) 判断
+  // ADCU 是否存活, 所以周期必须守住。
+  send_timer_ = create_wall_timer(20ms, std::bind(&ChassisNode::sendCommand, this));
+
+  const auto pub_period = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(1.0 / publish_hz_));
+  pub_timer_            = create_wall_timer(pub_period, std::bind(&ChassisNode::publishState, this));
+
+  SPDLOG_INFO(
+    "ChassisNode 启动: 接口={} cmd_timeout={:.2f}s vcu_timeout={:.2f}s max_speed={:.2f} m/s max_steer={:.1f} deg publish={:.1f} Hz",
+    can_interface_,
+    cmd_timeout_s_,
+    vcu_timeout_s_,
+    max_speed_m_s_,
+    max_steer_deg_,
+    publish_hz_);
+  SPDLOG_INFO("底盘指令: {} | steer_mode={}", cmd_topic_, static_cast<unsigned>(steer_mode_));
 }
+
+ChassisNode::~ChassisNode() {
+  // 析构体在成员销毁之前执行: 先停定时器, 再停接收线程并注销回调,
+  // 避免 CAN 线程在 this 已销毁后回调 onCanReceive()。
+  send_timer_.reset();
+  pub_timer_.reset();
+  cmd_sub_.reset();
+  if (can_driver_) {
+    can_driver_->stopReceiveThread();   // join 返回后才可能销毁 this
+    can_driver_->setReceiveCallback(nullptr);
+    can_driver_->close();
+  }
+}
+
+void ChassisNode::loadLogParameters() {
+  declare_parameter("log_dir", "/opt/agri/logs");
+  declare_parameter("log_file_size_mb", 50);
+  declare_parameter("log_file_count", 10);
+  declare_parameter("log_enable_console", true);
+  declare_parameter("log_level", "info");
+
+  log_dir_            = get_parameter("log_dir").as_string();
+  log_file_size_mb_   = static_cast<int>(std::max<int64_t>(1, get_parameter("log_file_size_mb").as_int()));
+  log_file_count_     = static_cast<int>(std::max<int64_t>(1, get_parameter("log_file_count").as_int()));
+  log_enable_console_ = get_parameter("log_enable_console").as_bool();
+  log_level_          = get_parameter("log_level").as_string();
+}
+
+void ChassisNode::loadParameters() {
+  declare_parameter("can_interface", "vcan0");
+  declare_parameter("publish_hz", kDefaultPublishHz);
+  declare_parameter("cmd_timeout_s", kDefaultCmdTimeoutS);
+  declare_parameter("vcu_timeout_s", kDefaultVcuTimeoutS);
+  declare_parameter("max_speed_m_s", kMaxSpeedLimitMps);
+  declare_parameter("max_steer_deg", kMaxSteerLimitDeg);
+  declare_parameter("cmd_topic", kDefaultCmdTopic);
+  declare_parameter("steer_mode", 0);
+  declare_parameter("watchdog_log_interval_s", kDefaultWatchdogLogIntervalS);
+
+  can_interface_                 = get_parameter("can_interface").as_string();
+  publish_hz_                    = get_parameter("publish_hz").as_double();
+  cmd_timeout_s_                 = get_parameter("cmd_timeout_s").as_double();
+  vcu_timeout_s_                 = get_parameter("vcu_timeout_s").as_double();
+  max_speed_m_s_                 = get_parameter("max_speed_m_s").as_double();
+  max_steer_deg_                 = get_parameter("max_steer_deg").as_double();
+  cmd_topic_                     = get_parameter("cmd_topic").as_string();
+  watchdog_log_interval_s_       = get_parameter("watchdog_log_interval_s").as_double();
+  const int64_t steer_mode_param = get_parameter("steer_mode").as_int();
+
+  // ---- 参数边界校验 ----
+  // 两类错都得拦:
+  //   1. 数值越界: std::clamp(v, 0.0, max) 在 max<0 时是 UB (precondition 违反);
+  //      车速/转角还有协议硬上限 (1400 mm/s, ±90.0°)。
+  //   2. 语义错位: steer_mode 必须与 lqr_control 的同名参数一致, 单/双阿克曼的
+  //      等效轴距差一倍, 对不上会让实际转角差一倍 —— "改了没生效" 类事故里最难查的一种。
+  // 一律回退到默认值 + 告警, 不用 std::max(0.0, x) 静默吸收错误值: 那样现场看到的
+  // 只是"限速改了没生效", 日志里却没有任何线索。
+  if (publish_hz_ <= 0.0) {
+    SPDLOG_WARN("publish_hz={:.3f} 非法, 回退为 {:.1f} Hz", publish_hz_, kDefaultPublishHz);
+    publish_hz_ = kDefaultPublishHz;
+  }
+  if (cmd_timeout_s_ <= 0.0) {
+    SPDLOG_WARN("cmd_timeout_s={:.3f} 非法, 回退为 {:.1f} s", cmd_timeout_s_, kDefaultCmdTimeoutS);
+    cmd_timeout_s_ = kDefaultCmdTimeoutS;
+  }
+  if (vcu_timeout_s_ <= 0.0) {
+    SPDLOG_WARN("vcu_timeout_s={:.3f} 非法, 回退为 {:.1f} s", vcu_timeout_s_, kDefaultVcuTimeoutS);
+    vcu_timeout_s_ = kDefaultVcuTimeoutS;
+  }
+  if (watchdog_log_interval_s_ <= 0.0) {
+    SPDLOG_WARN("watchdog_log_interval_s={:.3f} 非法, 回退为 {:.1f} s", watchdog_log_interval_s_, kDefaultWatchdogLogIntervalS);
+    watchdog_log_interval_s_ = kDefaultWatchdogLogIntervalS;
+  }
+  if (max_speed_m_s_ < 0.0 || max_speed_m_s_ > kMaxSpeedLimitMps) {
+    SPDLOG_WARN("max_speed_m_s={:.3f} 超出 [0, {:.1f}] (协议上限 1400 mm/s), 回退为 {:.1f}", max_speed_m_s_, kMaxSpeedLimitMps, kMaxSpeedLimitMps);
+    max_speed_m_s_ = kMaxSpeedLimitMps;
+  }
+  if (max_steer_deg_ < 0.0 || max_steer_deg_ > kMaxSteerLimitDeg) {
+    SPDLOG_WARN("max_steer_deg={:.1f} 超出 [0, {:.1f}] (协议上限 ±90.0°), 回退为 {:.1f}", max_steer_deg_, kMaxSteerLimitDeg, kMaxSteerLimitDeg);
+    max_steer_deg_ = kMaxSteerLimitDeg;
+  }
+  if (cmd_topic_.empty()) {
+    SPDLOG_WARN("cmd_topic 为空, 回退为 {}", kDefaultCmdTopic);
+    cmd_topic_ = kDefaultCmdTopic;
+  }
+  if (steer_mode_param < 0 || steer_mode_param > 3) {
+    SPDLOG_WARN("steer_mode={} 非法 (取值 0~3), 回退为 0 (单阿克曼)", steer_mode_param);
+    steer_mode_ = 0;
+  } else {
+    steer_mode_ = static_cast<uint8_t>(steer_mode_param);
+  }
+
+  SPDLOG_INFO(
+    "参数: publish_hz={:.1f} cmd_timeout={:.2f}s vcu_timeout={:.2f}s max_speed={:.2f} m/s max_steer={:.1f} deg watchdog_log={:.1f}s",
+    publish_hz_,
+    cmd_timeout_s_,
+    vcu_timeout_s_,
+    max_speed_m_s_,
+    max_steer_deg_,
+    watchdog_log_interval_s_);
+}
+
+// ---- 下行: 速度 + 前轮转角合并指令 ----
+void ChassisNode::onChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr msg) {
+  std::lock_guard<std::mutex> lock(cmd_mutex_);
+  last_cmd_time_ = this->now();
+
+  cmd01_.gear      = 1;   // D 档
+  cmd01_.ctrl_mode = 1;   // 无人驾驶
+  // 收到新指令 -> 解除超时看门狗锁存的急停。
+  cmd01_.estop = 0;
+
+  // m/s -> mm/s (协议速度 uint16, 分辨率 1 mm/s)
+  const double v   = std::clamp(msg->speed_m_s, 0.0, max_speed_m_s_);
+  cmd01_.speed_raw = static_cast<uint16_t>(std::llround(v * 1000.0));
+
+  // rad -> 0.1°。左正右负与协议同向, 不取反。
+  const double steer_deg   = msg->steer_angle_rad * 180.0 / M_PI;
+  const double clamped_deg = std::clamp(steer_deg, -max_steer_deg_, max_steer_deg_);
+  cmd01_.steer_angle       = static_cast<int16_t>(std::llround(clamped_deg * 10.0));
+}
+
+// ---- 20ms 周期下发 ADCU_toVCU_01 ----
+void ChassisNode::sendCommand() {
+  if (!can_driver_ || !can_driver_->isOpen()) {
+    return;   // 驱动侧已报过"未打开", 不要以 50 Hz 刷日志
+  }
+
+  protocol::AdcuCommand01 out_cmd{};
+  {
+    std::lock_guard<std::mutex> lock(cmd_mutex_);
+    const rclcpp::Time now     = this->now();
+    const double cmd_age       = (now - last_cmd_time_).seconds();
+    const double vcu_age       = static_cast<double>(now.nanoseconds() - last_vcu_ns_.load(std::memory_order_relaxed)) * 1e-9;
+    const double vcu_alive_age = static_cast<double>(now.nanoseconds() - last_vcu_alive_change_ns_.load(std::memory_order_relaxed)) * 1e-9;
+
+    // motion_inhibit: 任一看门狗触发即禁止运动, 转向强制回正。
+    // 集中在一处裁决, 避免看门狗置 0 后又被下面的来源选择覆盖。
+    bool motion_inhibit = false;
+
+    // 看门狗 1: 底盘合并指令超时 -> 停车 + 急停 (新指令可解除)
+    if (cmd_age > cmd_timeout_s_) {
+      cmd01_.speed_raw = 0;
+      cmd01_.estop     = 1;
+      motion_inhibit   = true;
+      if (now - last_cmd_stale_log_time_ >= rclcpp::Duration::from_seconds(watchdog_log_interval_s_)) {
+        last_cmd_stale_log_time_ = now;
+        SPDLOG_WARN("底盘指令超时 {:.2f}s > {:.2f}s, 已停车并置急停", cmd_age, cmd_timeout_s_);
+      }
+    }
+
+    // 看门狗 2: VCU 状态帧超时 -> 停车。
+    // 不锁存 estop: VCU 恢复上报后自动回到正常控制, 无需人工干预。
+    if (vcu_age > vcu_timeout_s_) {
+      cmd01_.speed_raw = 0;
+      motion_inhibit   = true;
+      if (now - last_vcu_stale_log_time_ >= rclcpp::Duration::from_seconds(watchdog_log_interval_s_)) {
+        last_vcu_stale_log_time_ = now;
+        SPDLOG_WARN("VCU 状态帧超时 {:.2f}s > {:.2f}s, 已停车", vcu_age, vcu_timeout_s_);
+      }
+    } else if (vcu_alive_age > vcu_timeout_s_) {
+      // State_01 还在发, 但 AliveCounter 不递增: 说明 VCU 控制程序卡死。
+      // 与"完全收不到帧"分开告警, 方便现场判断是线束问题还是 VCU 问题。
+      cmd01_.speed_raw = 0;
+      motion_inhibit   = true;
+      if (now - last_vcu_stuck_log_time_ >= rclcpp::Duration::from_seconds(watchdog_log_interval_s_)) {
+        last_vcu_stuck_log_time_ = now;
+        SPDLOG_WARN("VCU alive_counter 已 {:.2f}s 未变化 (>{:.2f}s), 已停车", vcu_alive_age, vcu_timeout_s_);
+      }
+    }
+
+    if (motion_inhibit) {
+      cmd01_.steer_angle = 0;
+    }
+
+    // 转向模式: 必须与 lqr_control 的 steer_mode 一致, 否则等效轴距对不上
+    cmd01_.steer_mode = steer_mode_;
+
+    cmd01_.alive_counter = static_cast<uint8_t>((cmd01_.alive_counter + 1) & 0xFF);
+    out_cmd              = cmd01_;   // 复制出临界区, CAN 发送不持锁
+  }
+
+  const protocol::CanFrame f = protocol::CanProtocol::encodeAdcuCmd01(out_cmd);
+  if (!can_driver_->send(f)) {
+    // 驱动侧不打印单帧发送失败 (会以 50 Hz 刷屏), 这里限流告警。
+    const rclcpp::Time now = this->now();
+    if (now - last_send_fail_log_time_ >= rclcpp::Duration::from_seconds(watchdog_log_interval_s_)) {
+      last_send_fail_log_time_ = now;
+      SPDLOG_ERROR("CAN 发送失败 (ID=0x{:08X}), 底盘未收到指令", f.id);
+    }
+  }
+}
+
+// ---- 上行: CAN 接收线程回调 (VCU -> ADCU) ----
+void ChassisNode::onCanReceive(const protocol::CanFrame& frame) {
+  switch (frame.id) {
+    case protocol::can_id::CHASSIS_STATE_01: {
+      protocol::ChassisState01 s;
+      if (!protocol::CanProtocol::decodeState01(frame, s)) {
+        return;
+      }
+      const int64_t now_ns = this->now().nanoseconds();
+      // 心跳时间戳用 atomic 记录, sendCommand() 无需为读时间戳抢 state_mutex_。
+      last_vcu_ns_.store(now_ns, std::memory_order_relaxed);
+
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      if (!vcu_alive_initialized_ || s.alive_counter != last_vcu_alive_counter_) {
+        last_vcu_alive_counter_ = s.alive_counter;
+        vcu_alive_initialized_  = true;
+        last_vcu_alive_change_ns_.store(now_ns, std::memory_order_relaxed);
+      }
+      state01_       = s;
+      state01_valid_ = true;
+
+      if (!ctrl_mode_logged_once_ || s.ctrl_mode != last_logged_ctrl_mode_) {
+        SPDLOG_INFO("VCU 驾驶模式: {} -> {}", last_logged_ctrl_mode_ ? "无人驾驶" : "遥控", s.ctrl_mode ? "无人驾驶" : "遥控");
+        last_logged_ctrl_mode_ = s.ctrl_mode;
+        ctrl_mode_logged_once_ = true;
+      }
+      break;
+    }
+
+    case protocol::can_id::CHASSIS_STATE_02: {
+      protocol::ChassisState02 s;
+      if (!protocol::CanProtocol::decodeState02(frame, s)) {
+        return;
+      }
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      state02_       = s;
+      state02_valid_ = true;
+      break;
+    }
+
+    case protocol::can_id::CHASSIS_STATE_03: {
+      protocol::ChassisState03 s;
+      if (!protocol::CanProtocol::decodeState03(frame, s)) {
+        return;
+      }
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      state03_       = s;
+      state03_valid_ = true;
+      break;
+    }
+
+    case protocol::can_id::CHASSIS_STATE_04:
+    case protocol::can_id::CHASSIS_STATE_05:
+    case protocol::can_id::CHASSIS_STATE_06:
+    case protocol::can_id::CHASSIS_STATE_07:
+    case protocol::can_id::CHASSIS_STATE_08:
+    case protocol::can_id::CHASSIS_STATE_09:
+    case protocol::can_id::CHASSIS_STATE_10:
+    case protocol::can_id::CHASSIS_STATE_11: {
+      protocol::MotorElecState s;
+      if (!protocol::CanProtocol::decodeMotorElec(frame, s)) {
+        return;
+      }
+      const bool is_drive = frame.id <= protocol::can_id::CHASSIS_STATE_07;
+      const uint32_t base = is_drive ? protocol::can_id::CHASSIS_STATE_04 : protocol::can_id::CHASSIS_STATE_08;
+      // ID 低 16 位一致, 每下一路增加 0x10000。
+      const size_t index = static_cast<size_t>((frame.id - base) >> 16);
+      if (index >= kWheelCount) {
+        return;
+      }
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      if (is_drive) {
+        drive_motors_[index]      = s;
+        drive_motor_valid_[index] = true;
+      } else {
+        steer_motors_[index]      = s;
+        steer_motor_valid_[index] = true;
+      }
+      break;
+    }
+
+    case protocol::can_id::CHASSIS_STATE_21: {
+      protocol::ChassisState21 s;
+      if (!protocol::CanProtocol::decodeState21(frame, s)) {
+        return;
+      }
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      state21_       = s;
+      state21_valid_ = true;
+      break;
+    }
+
+    case protocol::can_id::CHASSIS_STATE_22: {
+      protocol::ChassisState22 s;
+      if (!protocol::CanProtocol::decodeState22(frame, s)) {
+        return;
+      }
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      state22_       = s;
+      state22_valid_ = true;
+      if (!bms_error_logged_once_ || s.error_code != last_bms_error_code_) {
+        if (s.error_code == 0) {
+          SPDLOG_INFO("BMS 故障码: {} -> 0 (恢复正常)", last_bms_error_code_);
+        } else {
+          SPDLOG_WARN("BMS 故障码: {} -> {}", last_bms_error_code_, s.error_code);
+        }
+        last_bms_error_code_   = s.error_code;
+        bms_error_logged_once_ = true;
+      }
+      break;
+    }
+
+    default:
+      break;
+  }
+}
+
+// ---- 上行: 完整状态 + 兼容文本发布 (publish_hz) ----
+void ChassisNode::publishState() {
+  auto msg             = std::make_unique<weeder_msgs::msg::ChassisState>();
+  msg->header.stamp    = this->now();
+  msg->header.frame_id = "base_link";
+  protocol::ChassisState01 text_state01;
+  protocol::ChassisState02 text_state02;
+  protocol::ChassisState03 text_state03;
+  {
+    // 与 CAN 接收线程共享全部状态, 读取必须加锁, 否则是数据竞争 (UB)。
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    const protocol::ChassisState01& s1 = state01_;
+    msg->state01_valid                 = state01_valid_;
+    msg->gear                          = s1.gear;
+    msg->steer_mode                    = s1.steer_mode;
+    msg->estop                         = s1.estop != 0;
+    msg->reset                         = s1.reset != 0;
+    msg->release_brake                 = s1.release_brake != 0;
+    msg->ctrl_mode                     = s1.ctrl_mode != 0;
+    msg->speed_raw                     = s1.speed_raw;
+    msg->speed_m_s                     = s1.speed_m_s;
+    msg->wheel_track_cm                = s1.wheel_track_cm;
+    msg->sound                         = s1.sound != 0;
+    msg->light_green                   = s1.light_green != 0;
+    msg->light_yellow                  = s1.light_yellow != 0;
+    msg->light_red                     = s1.light_red != 0;
+    msg->headlight                     = s1.headlight != 0;
+    msg->turn_left                     = s1.turn_left != 0;
+    msg->turn_right                    = s1.turn_right != 0;
+    msg->steer_done_fl                 = s1.steer_done_fl != 0;
+    msg->steer_done_fr                 = s1.steer_done_fr != 0;
+    msg->steer_done_rl                 = s1.steer_done_rl != 0;
+    msg->steer_done_rr                 = s1.steer_done_rr != 0;
+    msg->bumper                        = s1.bumper != 0;
+    msg->bypass                        = s1.bypass != 0;
+    msg->battery_charging              = s1.battery_charging != 0;
+    msg->battery_full                  = s1.battery_full != 0;
+    msg->alive_counter                 = s1.alive_counter;
+
+    msg->state02_valid   = state02_valid_;
+    msg->motor_speed_rpm = {state02_.motor_speed_fl, state02_.motor_speed_fr, state02_.motor_speed_rl, state02_.motor_speed_rr};
+    msg->state03_valid   = state03_valid_;
+    msg->steer_angle_deg = {
+      static_cast<float>(state03_.steer_angle_fl) * 0.1f,
+      static_cast<float>(state03_.steer_angle_fr) * 0.1f,
+      static_cast<float>(state03_.steer_angle_rl) * 0.1f,
+      static_cast<float>(state03_.steer_angle_rr) * 0.1f};
+
+    for (size_t i = 0; i < kWheelCount; ++i) {
+      msg->drive_motor_valid[i] = drive_motor_valid_[i];
+      msg->drive_bus_voltage[i] = drive_motors_[i].bus_voltage;
+      msg->drive_out_current[i] = drive_motors_[i].out_current;
+      msg->drive_motor_temp[i]  = drive_motors_[i].motor_temp;
+      msg->drive_error_code[i]  = drive_motors_[i].error_code;
+
+      msg->steer_motor_valid[i] = steer_motor_valid_[i];
+      msg->steer_bus_voltage[i] = steer_motors_[i].bus_voltage;
+      msg->steer_out_current[i] = steer_motors_[i].out_current;
+      msg->steer_motor_temp[i]  = steer_motors_[i].motor_temp;
+      msg->steer_error_code[i]  = steer_motors_[i].error_code;
+    }
+
+    msg->state21_valid            = state21_valid_;
+    msg->bms_soc                  = state21_.soc_raw;
+    msg->bms_voltage              = state21_.voltage;
+    msg->bms_current              = state21_.current;
+    msg->bms_full_charge_capacity = state21_.full_charge_capacity;
+
+    msg->state22_valid        = state22_valid_;
+    msg->bms_cycle_count      = state22_.cycle_count;
+    msg->bms_error_code       = state22_.error_code;
+    msg->bms_max_cell_voltage = state22_.max_cell_voltage;
+    msg->system_voltage       = state22_.system_voltage;
+
+    text_state01 = state01_;
+    text_state02 = state02_;
+    text_state03 = state03_;
+  }
+  state_pub_->publish(std::move(msg));
+
+  std_msgs::msg::String text;
+  text.data = fmtState(text_state01, text_state02, text_state03);
+  state_text_pub_->publish(text);
+}
+
+std::string ChassisNode::fmtState(const protocol::ChassisState01& s1, const protocol::ChassisState02& s2, const protocol::ChassisState03& s3) {
+  char buf[384];
+  std::snprintf(
+    buf,
+    sizeof(buf),
+    "speed=%u mm/s gear=%u estop=%u mode=%u alive=%u bumper=%u "
+    "rpm=[%u,%u,%u,%u] steer=[%.1f,%.1f,%.1f,%.1f]",
+    static_cast<unsigned>(s1.speed_raw),
+    static_cast<unsigned>(s1.gear),
+    static_cast<unsigned>(s1.estop),
+    static_cast<unsigned>(s1.ctrl_mode),
+    static_cast<unsigned>(s1.alive_counter),
+    static_cast<unsigned>(s1.bumper),
+    static_cast<unsigned>(s2.motor_speed_fl),
+    static_cast<unsigned>(s2.motor_speed_fr),
+    static_cast<unsigned>(s2.motor_speed_rl),
+    static_cast<unsigned>(s2.motor_speed_rr),
+    static_cast<double>(s3.steer_angle_fl) * 0.1,
+    static_cast<double>(s3.steer_angle_fr) * 0.1,
+    static_cast<double>(s3.steer_angle_rl) * 0.1,
+    static_cast<double>(s3.steer_angle_rr) * 0.1);
+  return std::string(buf);
+}
+
+}   // namespace weeder_base

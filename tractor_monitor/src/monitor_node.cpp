@@ -18,9 +18,9 @@
 
 namespace tractor_monitor {
 
-using tractor_msgs::msg::Heartbeat;
-using tractor_msgs::msg::NodeHealth;
-using tractor_msgs::msg::SystemHealth;
+using weeder_msgs::msg::Heartbeat;
+using weeder_msgs::msg::NodeHealth;
+using weeder_msgs::msg::SystemHealth;
 
 // watch_table.hpp keeps its own Status enum so it can stay message-free. That
 // only works if the two never drift.

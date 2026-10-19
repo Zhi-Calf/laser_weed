@@ -1,6 +1,6 @@
 #pragma once
 
-// 故障来源 (责任归属) 的公共小工具 —— 语义见 tractor_msgs/msg/Heartbeat.msg 的 fault_source_node:
+// 故障来源 (责任归属) 的公共小工具 —— 语义见 weeder_msgs/msg/Heartbeat.msg 的 fault_source_node:
 //   * 空字符串 = 报故障的那个节点自己 (自检 / 自己的算法 / 自己打交道的链路);
 //   * 非空     = 造成这条故障的**具体来源**: 通常是一个 ROS 节点名 ("gnss_driver"),
 //                确实没有对应节点的用稳定的来源标签 ("path_file" 外部工具写的 txt、

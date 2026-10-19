@@ -1,7 +1,7 @@
-// 底盘 ROS2 节点：/cmd_vel -> encode -> CAN 发送；CAN 接收 -> decode -> 状态话题
+// 历史补丁文件，请勿直接使用：
+// 当前实现已统一为 /weeder/chassis/cmd (weeder_msgs/ChassisCmd)。
 //
-// 依赖：weeder_base/can_driver.hpp（内部 include can_bridge.hpp，
-//       由桥接层引入 laser_weed 命名空间的协议符号）
+// 依赖：weeder_base/can_driver.hpp（内部引入 weeder_base::protocol 协议符号）
 //
 // 已修复（相对重构后的上一版）：
 //   1. rclcpp::Time 时钟源统一为 RCL_ROS_TIME，消除 "can't subtract times with
@@ -88,7 +88,7 @@ public:
       throw std::runtime_error("无法打开 CAN 接口: " + can_interface);
     }
     can_driver_->setReceiveCallback(
-        [this](const CanFrame& frame) { onCanReceive(frame); });
+        [this](const protocol::CanFrame& frame) { onCanReceive(frame); });
     can_driver_->startReceiveThread();
 
     // ---- 时间基准 ----
@@ -196,7 +196,7 @@ private:
   }
 
   void sendCommand() {
-    AdcuCommand01 out_cmd{};
+    protocol::AdcuCommand01 out_cmd{};
     {
       std::lock_guard<std::mutex> lock(cmd_mutex_);
       const rclcpp::Time now = this->now();
@@ -253,17 +253,17 @@ private:
       out_cmd = cmd01_;  // 复制出临界区，CAN 发送不持锁
     }
 
-    const CanFrame f = CanProtocol::encodeAdcuCmd01(out_cmd);
+    const protocol::CanFrame f = protocol::CanProtocol::encodeAdcuCmd01(out_cmd);
     if (!can_driver_->send(f)) {
       RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
           "CAN 发送失败 (ID=0x%08X)", f.id);
     }
   }
 
-  void onCanReceive(const CanFrame& frame) {
-    ChassisState01 s{};
-    // decodeState01 声明即为 const CanFrame&，无需 const_cast
-    if (CanProtocol::decodeState01(frame, s)) {
+  void onCanReceive(const protocol::CanFrame& frame) {
+    protocol::ChassisState01 s{};
+    // decodeState01 声明即为 const protocol::CanFrame&，无需 const_cast
+    if (protocol::CanProtocol::decodeState01(frame, s)) {
       // 心跳用 atomic 记录：CAN 接收线程与定时器线程并发，
       // 避免为读一个时间戳去抢 sendCommand() 的 cmd_mutex_。
       last_vcu_ns_.store(this->now().nanoseconds(), std::memory_order_relaxed);
@@ -274,7 +274,7 @@ private:
   }
 
   void publishState() {
-    ChassisState01 s{};
+    protocol::ChassisState01 s{};
     {
       // 与 CAN 接收线程共享 state01_，读取必须加锁，否则是数据竞争 (UB)
       std::lock_guard<std::mutex> lock(state_mutex_);
@@ -285,7 +285,7 @@ private:
     state_pub_->publish(msg);
   }
 
-  static std::string fmtState(const ChassisState01& s) {
+  static std::string fmtState(const protocol::ChassisState01& s) {
     char buf[256];
     snprintf(buf, sizeof(buf),
              "speed=%u mm/s gear=%u estop=%u mode=%u alive=%u bumper=%u",
@@ -300,7 +300,7 @@ private:
 
   // ---- 成员 ----
   std::unique_ptr<CanDriver> can_driver_;
-  AdcuCommand01 cmd01_{};
+  protocol::AdcuCommand01 cmd01_{};
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr steer_sub_;
@@ -308,7 +308,7 @@ private:
   rclcpp::TimerBase::SharedPtr send_timer_;
   rclcpp::TimerBase::SharedPtr pub_timer_;
 
-  ChassisState01 state01_{};
+  protocol::ChassisState01 state01_{};
   // static_cast<int64_t>(0) 是必需的：裸写 0 会让
   //   Time(int64_t, rcl_clock_type_t) 与 Time(int32_t, uint32_t, rcl_clock_type_t)
   // 两个重载都成为同等候选，GCC 报 "conversion ... is ambiguous"。

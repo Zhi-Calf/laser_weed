@@ -2,7 +2,7 @@
 
 激光除草机器人项目的 Stanley 横向控制 ROS2 薄壳节点包。
 
-分层（与 laser_weed_can 的"协议层与 ROS 解耦"思想一致）：
+分层（与 weeder_base 的"协议层与 ROS 节点解耦"思想一致）：
 
 - `stanley_control/stanley_controller.py` — 纯算法层，零 ROS 依赖；
   单独 `python3 stanley_controller.py` 可跑内置直线/正弦仿真自测。
@@ -53,7 +53,7 @@ RViz2 配置：Fixed Frame 填 `map`，Add -> By topic 添加 `/path`（Path 显
 
     python3 test_node_stub.py   # 桩测试：回调链/可视化/日志节流/符号约定
 
-## 下游 CAN 桥接注意（laser_weed_can 协议第二版）
+## 下游 CAN 桥接注意（weeder_base 协议第二版）
 
 - `ADCU_toVCU_01` 目标转向角：单位 0.1 度、左正右负；本节点输出弧度、左正，
   **符号同向无需取反**，只做 弧度 → 0.1 度 换算。

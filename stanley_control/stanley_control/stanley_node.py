@@ -3,14 +3,14 @@
 
 只做三件事：订阅路径/里程计 -> 调纯算法 stanley_controller -> 发布转角指令。
 算法零 ROS 依赖，本文件不含任何控制数学，便于与孙勇军的路径规划、
-laser_weed_can 的 CAN 桥各自独立演进。
+weeder_base 的 CAN 桥各自独立演进。
 
 话题约定：
     订阅 /path     nav_msgs/Path      全局路径（规划节点发布）
     订阅 /odom     nav_msgs/Odometry  里程计（位姿 + 车体线速度）
     发布 /cmd_steer std_msgs/Float64  前轮转角指令，弧度，左转(逆时针)为正
 
-下游 CAN 桥接注意（见 laser_weed_can 协议第二版）：
+下游 CAN 桥接注意（见 weeder_base 协议第二版）：
     ADCU_toVCU_01 目标转向角单位 0.1 度、左正右负 —— 与本节点符号同向，
     无需取反，只做 弧度 -> 0.1 度 换算；指令帧 20ms 周期、带 alive 计数。
 """

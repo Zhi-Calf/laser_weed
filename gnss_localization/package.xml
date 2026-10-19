@@ -16,7 +16,7 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
-  <depend>tractor_msgs</depend>
+  <depend>weeder_msgs</depend>
   <depend>geographiclib</depend>
   <depend>spdlog_vendor</depend>
   <depend>tractor_monitor</depend>

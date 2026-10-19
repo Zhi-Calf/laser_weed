@@ -17,7 +17,7 @@
 // of a shared helper rather than ten hand-rolled timers is that the rate, the
 // seq semantics and the meaning of DEGRADED are decided ONCE. Ten copies drift.
 //
-// Header-only and depending on nothing but rclcpp + tractor_msgs, so a package
+// Header-only and depending on nothing but rclcpp + weeder_msgs, so a package
 // picking this up adds one leaf dependency and no build weight.
 
 #include <algorithm>
@@ -27,7 +27,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <string>
 #include <tractor_monitor/fault_source.hpp>
-#include <tractor_msgs/msg/heartbeat.hpp>
+#include <weeder_msgs/msg/heartbeat.hpp>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -62,13 +62,13 @@ struct HasIsActivated<P, std::void_t<decltype(std::declval<const P&>().is_activa
 template<typename NodeT>
 class BasicHeartbeatPublisher {
 public:
-  using PublisherT = decltype(std::declval<NodeT&>().template create_publisher<tractor_msgs::msg::Heartbeat>(std::declval<const char*>(), 10));
+  using PublisherT = decltype(std::declval<NodeT&>().template create_publisher<weeder_msgs::msg::Heartbeat>(std::declval<const char*>(), 10));
 
   // node must outlive this object (it is normally a member of the node).
   // rate_hz defaults to 5 Hz against tractor_monitor's 1.0 s default timeout,
   // i.e. five missed publishes before anyone calls it stale.
   BasicHeartbeatPublisher(NodeT* node, std::string node_name, double rate_hz = 5.0, const char* topic = kHeartbeatTopic) : node_(node), node_name_(std::move(node_name)) {
-    pub_              = node_->template create_publisher<tractor_msgs::msg::Heartbeat>(topic, 10);
+    pub_              = node_->template create_publisher<weeder_msgs::msg::Heartbeat>(topic, 10);
     const auto period = std::chrono::duration<double>(1.0 / std::max(rate_hz, 0.1));
     timer_            = node_->create_wall_timer(std::chrono::duration_cast<std::chrono::nanoseconds>(period), [this]() {
       publish();
@@ -76,7 +76,7 @@ public:
   }
 
   void setOk() {
-    set(tractor_msgs::msg::Heartbeat::STATUS_OK, "", kFaultSourceSelf);
+    set(weeder_msgs::msg::Heartbeat::STATUS_OK, "", kFaultSourceSelf);
   }
   // 下面三个接口的第二个参数 (故障来源) **必填** —— 见 Heartbeat.msg 的 fault_source_node:
   //   * 本节点自身         -> tractor_monitor::kFaultSourceSelf (空字符串);
@@ -85,16 +85,16 @@ public:
   // 刻意**不提供"只传 detail"的重载**: 故障状态会合并上报 (/monitor_heartbeat), APP 靠这个字段
   // 定位责任方 —— 漏填就变成"没人负责", 所以让编译期逼着每个调用点写清。
   void setStopImplement(const std::string& detail, const std::string& fault_source_node) {
-    set(tractor_msgs::msg::Heartbeat::STATUS_STOP_IMPLEMENT, detail, fault_source_node);
+    set(weeder_msgs::msg::Heartbeat::STATUS_STOP_IMPLEMENT, detail, fault_source_node);
   }
   // 设置农机停止运动状态 (STATUS_STOP_MOTION)。
   // detail 描述具体原因，如"no odometry"、"out of geofence"等。
   // fault_source_node 指定故障来源节点，参考上面的说明。
   void setStopMotion(const std::string& detail, const std::string& fault_source_node) {
-    set(tractor_msgs::msg::Heartbeat::STATUS_STOP_MOTION, detail, fault_source_node);
+    set(weeder_msgs::msg::Heartbeat::STATUS_STOP_MOTION, detail, fault_source_node);
   }
   void setFault(const std::string& detail, const std::string& fault_source_node) {
-    set(tractor_msgs::msg::Heartbeat::STATUS_FAULT, detail, fault_source_node);
+    set(weeder_msgs::msg::Heartbeat::STATUS_FAULT, detail, fault_source_node);
   }
 
   // 设置当前激活的故障码 (纯故障 ID, 无等级), 随心跳一并发布, 仅供 APP 展示。
@@ -107,7 +107,7 @@ public:
     std::lock_guard<std::mutex> lock(mutex_);
     status_            = status;
     detail_            = detail;
-    fault_source_node_ = (status == tractor_msgs::msg::Heartbeat::STATUS_OK) ? std::string(kFaultSourceSelf) : fault_source_node;
+    fault_source_node_ = (status == weeder_msgs::msg::Heartbeat::STATUS_OK) ? std::string(kFaultSourceSelf) : fault_source_node;
   }
 
   const std::string& name() const {
@@ -124,7 +124,7 @@ private:
       }
     }
 
-    tractor_msgs::msg::Heartbeat msg;
+    weeder_msgs::msg::Heartbeat msg;
     msg.header.stamp = node_->now();
     msg.node_name    = node_name_;
     {
@@ -147,7 +147,7 @@ private:
   // Starts FAULT (worst case), not OK: a node that constructs the publisher and
   // then wedges before it ever reports on itself must not look healthy for the
   // rest of the run.
-  uint8_t status_     = tractor_msgs::msg::Heartbeat::STATUS_FAULT;
+  uint8_t status_     = weeder_msgs::msg::Heartbeat::STATUS_FAULT;
   std::string detail_ = "starting up";
   uint32_t seq_       = 0;
   std::vector<uint32_t> fault_codes_;

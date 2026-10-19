@@ -1,7 +1,7 @@
-#include "can_protocol.hpp"
+#include "weeder_base/protocol/can_protocol.hpp"
 #include <cstdio>
 
-using namespace laser_weed;
+using namespace weeder_base::protocol;
 
 int main() {
   bool ok = true;
@@ -46,6 +46,32 @@ int main() {
   check(f.data[3] == 0x64 && f.data[4] == 0x00, "Byte3~4 转向角小端 (100)");
   check(f.data[5] == 0x00, "Byte5 灯光全关");
   check(f.data[7] == 123, "Byte7 生命信号");
+
+  // 协议层兜底限幅: 调用方传入越界值时, 不能把非法值原样写到总线上。
+  AdcuCommand01 cmd_high{};
+  cmd_high.speed_raw = 60000;
+  cmd_high.steer_angle = 2000;
+  CanFrame f_high = CanProtocol::encodeAdcuCmd01(cmd_high);
+  check(CanProtocol::readU16LE(&f_high.data[1]) == limits::kMaxSpeedMmps,
+        "车速越界被限幅到 1400");
+  check(CanProtocol::readI16LE(&f_high.data[3]) == limits::kMaxSteerAngleRaw,
+        "转向角越界被限幅到 900");
+
+  // ============================================================
+  // 1b. 位提取范围检查: 只允许访问 8 字节帧内的 1~32 bit
+  // ============================================================
+  printf("\n[位提取范围检查]\n");
+  uint8_t bits[8] = {0};
+  bits[7] = 0xA5;
+  check(CanProtocol::extractUnsigned(bits, 56, 8) == 0xA5, "末字节有效范围");
+  check(CanProtocol::extractUnsigned(bits, 63, 1) == 1, "bit63 有效范围");
+  check(CanProtocol::extractUnsigned(nullptr, 0, 8) == 0, "空指针返回 0");
+  check(CanProtocol::extractUnsigned(bits, 64, 1) == 0, "起始位 64 返回 0");
+  check(CanProtocol::extractUnsigned(bits, 60, 8) == 0, "跨越 64 bit 返回 0");
+  check(CanProtocol::extractUnsigned(bits, 0, 0) == 0, "长度 0 返回 0");
+  check(CanProtocol::extractUnsigned(bits, 0, 33) == 0, "长度 33 返回 0");
+  check(CanProtocol::extractSigned(bits, 60, 8) == 0, "有符号越界返回 0");
+  check(CanProtocol::extractSigned(bits, 0, 33) == 0, "有符号长度越界返回 0");
 
   // ============================================================
   // 2. decodeState01: 模拟一帧 VCU 状态, 验证解析
@@ -141,6 +167,8 @@ int main() {
   check(se.out_current == 100, "电流=100A");
   check(se.motor_temp == 65, "温度=65℃");
   check(se.error_code == 2, "故障码=2(过压)");
+  rxe.id = can_id::CHASSIS_STATE_21;   // 21 帧不是电机电参帧
+  check(CanProtocol::decodeMotorElec(rxe, se) == false, "非 State_04~11 返回 false");
 
   // ============================================================
   // 5. decodeState21 / 22: BMS (第二版布局)

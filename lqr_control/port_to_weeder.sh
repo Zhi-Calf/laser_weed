@@ -3,8 +3,8 @@
 # into the laser-weeder ROS 2 workspace.
 #
 # What this does (structural only):
-#   1. copies tractor_msgs, tractor_monitor, gnss_localization, global_path_planner
-#      and lqr_control into the weeder workspace src/
+#   1. copies tractor_monitor, gnss_localization, global_path_planner and
+#      lqr_control into the weeder workspace src/
 #   2. builds them in dependency order
 # It does NOT edit any config: every value that differs between the tracked
 # tractor and the weeder (serial ports, antenna lever arm,差分 accounts, log dirs)
@@ -16,7 +16,7 @@ set -euo pipefail
 
 # ---- Set these two before running ----
 # Where the VM can see the MegaTrak checkout (the folder that CONTAINS
-# sensor_node/, navigation_node/, monitoring_node/, tractor_msgs/).
+# sensor_node/, navigation_node/, monitoring_node/ 等)。
 # IMPORTANT: this must sit OUTSIDE the workspace src/ (default: ~/MegaTrak-main).
 # If the whole MegaTrak tree lives inside src/, colcon finds every package in it
 # AND our top-level copies -> "Duplicate package names not supported".
@@ -61,12 +61,16 @@ copy_pkg() {
 mkdir -p "$SRC_DIR"
 
 fail=0
-# tractor_msgs: note the DOUBLE directory (outer is the repo, inner has package.xml)
-copy_pkg tractor_msgs      "$MEGATRAK_SRC/tractor_msgs/tractor_msgs"            || fail=1
 copy_pkg tractor_monitor   "$MEGATRAK_SRC/monitoring_node/tractor_monitor"      || fail=1
 copy_pkg gnss_localization "$MEGATRAK_SRC/sensor_node/gnss_localization"        || fail=1
 copy_pkg global_path_planner "$MEGATRAK_SRC/navigation_node/global_path_planner" || fail=1
 copy_pkg lqr_control       "$LQR_SRC/lqr_control"                               || fail=1
+
+# weeder_msgs 是本项目自己的接口包，不再从 MegaTrak 的旧消息包拷贝。
+if [[ ! -d "$SRC_DIR/weeder_msgs" ]]; then
+  echo "!! 缺少 weeder_msgs：请先把项目自有的 weeder_msgs 包放入 $SRC_DIR"
+  fail=1
+fi
 
 echo
 if [[ "$fail" -ne 0 ]]; then
@@ -93,7 +97,7 @@ else
   echo "!! 警告：$MEGATRAK_SRC/scripts 不存在，params_in_yaml 测试可能失败（不影响功能）。"
 fi
 
-echo "== 构建（依赖优先：tractor_msgs -> tractor_monitor -> 其余）=="
+echo "== 构建（依赖优先：weeder_msgs -> tractor_monitor -> 其余）=="
 cd "$WS"
 # shellcheck disable=SC1091
 [[ -f /opt/ros/humble/setup.bash ]] && source /opt/ros/humble/setup.bash

@@ -29,8 +29,8 @@ lqr_control:
     odom_topic: /gnss_driver/odom
     path_topic: /global_path_planner/path
     work_mode_topic: /work_mode
-    cmd_vel_topic: /cmd_vel
-    steer_topic: /weeder/steer_cmd
+    # 速度 + 前轮转角合并指令（weeder_msgs/ChassisCmd）
+    cmd_topic: /weeder/chassis/cmd
 
     # ============================================================
     # LQR 权重与求解器
@@ -72,7 +72,7 @@ lqr_control:
     # ⚠️ 这道门是**必需的**，不是可选优化。LQR 的状态量只有 [横向误差, 航向误差]，
     # **没有沿路径方向的误差项**——车如果沿着路径自己的方向笔直冲过目标点，
     # 两个误差都恰好为 0，控制器会认为"完美跟踪"并继续给全速零转角。
-    # 2026-10-15 仿真实测：目标点冻结在起点，车跑出 238 m，steer_cmd=2.4e-14，
+    # 2026-10-15 仿真实测：目标点冻结在起点，车跑出 238 m，steer_angle_rad=2.4e-14，
     # 全程没有任何告警。这道门是唯一能发现该情况的手段。
     #
     # 取值：要大于地头掉头时目标点与车的合法最大间距（默认 path_resolution=0.2m、
@@ -94,11 +94,11 @@ lqr_control:
     path_timeout_s: 5.0        # 路径超时 → 停车
 
     # 工作模式门控：与 global_path_planner、gnss_driver 共用同一条系统级
-    # /work_mode 总线（tractor_msgs/WorkMode，由 APP 或模式管理方以 latched QoS
+    # /work_mode 总线（weeder_msgs/WorkMode，由 APP 或模式管理方以 latched QoS
     # 发布）。只有 MODE_UNMANNED(1) 才接管底盘；手动(0)/标定(2) 或信号超时都停车。
     # 发布端必须以 >= 1/work_mode_timeout_s Hz 持续发布；用 --once 发一次会在
     # work_mode_timeout_s 后被判超时并停车。台架调试用：
-    #   ros2 topic pub -r 1 /work_mode tractor_msgs/msg/WorkMode \
+    #   ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
     #       "{mode: 1, mode_name: unmanned}"
     require_unmanned: true
     work_mode_timeout_s: 3.0

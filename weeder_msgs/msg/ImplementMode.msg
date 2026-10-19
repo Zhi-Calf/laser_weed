@@ -4,7 +4,7 @@
 # so a late-joining subscriber immediately learns the active mode instead
 # of guessing until the next change.
 #
-# Mode changes are REQUESTED through tractor_msgs/srv/SetImplementMode;
+# Mode changes are REQUESTED through weeder_msgs/srv/SetImplementMode;
 # this topic reports the result. Never infer the mode from a service
 # request you sent -- a request can be rejected, and this topic is what
 # actually took effect.

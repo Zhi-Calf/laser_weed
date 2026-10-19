@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **BREAKING:** 包名由 `tractor_msgs` 改为 `weeder_msgs`。
+- `ChassisState` 改为激光除草机第二版 CAN 协议定义，并从 `weeder_base` 迁入本包。
 - **破坏性变更：** 用 `CalibrationCommand.srv` 取代 `CalibrationCmd.msg`。
   标定指令从"向 `/calibration_cmd` 话题发布"改为"调用 `/calibration_manager/command`
   服务"：响应携带 `accepted` + `state` + `reason`，调用方不必再轮询
@@ -25,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- `ChassisCmd.msg` — chassis control command (gear, motor RPM, PTO, hitch, kinematics)
+- `ChassisCmd.msg` — 车辆运动控制指令（速度 + 前轮转角）
 - `ChassisState.msg` — chassis state feedback from VCU CAN bus (V2 protocol)
 - `CalibrationCmd.msg` — calibration command (type, action, parameters)
 - `CalibrationResult.msg` — calibration result (speed, steering, deadzone, slip)

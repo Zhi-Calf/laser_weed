@@ -1,6 +1,6 @@
 # Implement (PTO + hitch) command from ADCU to VCU.
 # Maps 1:1 onto ADCU_toVCU_02 (0x0C02D01C, 100ms cycle).
-# Owner: implement_controller_node. chassis_interface merges this with
+# Owner: implement_controller_node. The chassis merges this with
 # the motion-side ChassisCmd into a single CAN02 frame; if this topic
 # goes stale (>implement_cmd_timeout_s), chassis_interface reverts to
 # safe defaults (PTO=0, hitch raised).

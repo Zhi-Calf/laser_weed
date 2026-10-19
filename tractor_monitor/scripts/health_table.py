@@ -14,7 +14,7 @@ import sys
 import rclpy
 from rclpy.node import Node
 
-from tractor_msgs.msg import NodeHealth, SystemHealth
+from weeder_msgs.msg import NodeHealth, SystemHealth
 
 RESET = "\033[0m"
 BOLD = "\033[1m"

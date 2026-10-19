@@ -29,7 +29,7 @@ find_package(nav_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
-find_package(tractor_msgs REQUIRED)
+find_package(weeder_msgs REQUIRED)
 find_package(spdlog_vendor REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(yaml-cpp REQUIRED)
@@ -89,7 +89,7 @@ ament_target_dependencies(gnss_driver_node
   tf2
   tf2_ros
   tf2_geometry_msgs
-  tractor_msgs
+  weeder_msgs
   tractor_monitor
 )
 

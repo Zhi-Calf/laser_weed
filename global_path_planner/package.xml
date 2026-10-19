@@ -35,9 +35,9 @@
        jammy 的 nlohmann-json3-dev; rosdep 键 nlohmann-json-dev)。 -->
   <depend>nlohmann-json-dev</depend>
   <!-- 心跳: tractor_monitor 提供 heartbeat_publisher.hpp (header-only),
-       并带出 tractor_msgs。tractor_monitor 只依赖 rclcpp + tractor_msgs,
+       并带出 weeder_msgs。tractor_monitor 只依赖 rclcpp + weeder_msgs,
        不依赖本包, 所以这条边不会造成循环。 -->
-  <depend>tractor_msgs</depend>
+  <depend>weeder_msgs</depend>
   <depend>tractor_monitor</depend>
   <exec_depend>rviz2</exec_depend>
   <!-- 调试用: planner.launch.py 里的 static_transform_publisher (让 RViz 的 Fixed Frame

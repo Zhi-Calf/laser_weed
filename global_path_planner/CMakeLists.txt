@@ -24,7 +24,7 @@ find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
-find_package(tractor_msgs REQUIRED)
+find_package(weeder_msgs REQUIRED)
 find_package(tractor_monitor REQUIRED)
 find_package(Eigen3 3.3 REQUIRED)
 find_package(spdlog_vendor REQUIRED)
@@ -59,7 +59,7 @@ set(dependencies
   geometry_msgs
   nav_msgs
   visualization_msgs
-  tractor_msgs
+  weeder_msgs
   tractor_monitor
 )
 

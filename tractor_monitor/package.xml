@@ -13,7 +13,7 @@
        heartbeat_publisher.hpp, so anything added here is added to all of them.
        tractor_monitor must never depend on a package that it monitors. -->
   <depend>rclcpp</depend>
-  <depend>tractor_msgs</depend>
+  <depend>weeder_msgs</depend>
 
   <!-- 只有 monitor_node.cpp 用 spdlog, 且刻意不进 ament_export_dependencies,
        所以它不会传染给依赖本包 heartbeat_publisher.hpp 的六个包。 -->

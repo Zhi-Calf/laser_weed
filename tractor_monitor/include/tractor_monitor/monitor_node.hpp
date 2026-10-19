@@ -3,8 +3,8 @@
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
 #include <string>
-#include <tractor_msgs/msg/heartbeat.hpp>
-#include <tractor_msgs/msg/system_health.hpp>
+#include <weeder_msgs/msg/heartbeat.hpp>
+#include <weeder_msgs/msg/system_health.hpp>
 
 #include "tractor_monitor/watch_table.hpp"
 
@@ -26,15 +26,15 @@ private:
   // tractor_monitor.log —— 而它们正是事后要翻的东西。
   void loadLogParameters();
   void loadParameters();
-  void onHeartbeat(const tractor_msgs::msg::Heartbeat::SharedPtr msg);
+  void onHeartbeat(const weeder_msgs::msg::Heartbeat::SharedPtr msg);
   void onCheckTimer();
   double nowSeconds() const;
 
   std::unique_ptr<WatchTable> table_;
 
-  rclcpp::Subscription<tractor_msgs::msg::Heartbeat>::SharedPtr hb_sub_;
-  rclcpp::Publisher<tractor_msgs::msg::Heartbeat>::SharedPtr verdict_pub_;
-  rclcpp::Publisher<tractor_msgs::msg::SystemHealth>::SharedPtr health_pub_;
+  rclcpp::Subscription<weeder_msgs::msg::Heartbeat>::SharedPtr hb_sub_;
+  rclcpp::Publisher<weeder_msgs::msg::Heartbeat>::SharedPtr verdict_pub_;
+  rclcpp::Publisher<weeder_msgs::msg::SystemHealth>::SharedPtr health_pub_;
   rclcpp::TimerBase::SharedPtr check_timer_;
 
   double heartbeat_rate_    = 10.0;

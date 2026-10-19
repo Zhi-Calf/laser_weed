@@ -23,7 +23,7 @@
   <depend>eigen</depend>
   <!-- From MegaTrak: WorkMode + Heartbeat definitions, and the header-only
        heartbeat publisher. Must be built before this package. -->
-  <depend>tractor_msgs</depend>
+  <depend>weeder_msgs</depend>
   <depend>tractor_monitor</depend>
 
   <test_depend>ament_lint_auto</test_depend>

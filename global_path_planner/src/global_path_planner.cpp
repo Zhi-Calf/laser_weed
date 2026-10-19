@@ -154,10 +154,10 @@ GlobalPathPlannerNode::GlobalPathPlannerNode(const rclcpp::NodeOptions& options)
 
   // 订阅
   origin_sub_    = create_subscription<sensor_msgs::msg::NavSatFix>("/gnss_driver/origin", rclcpp::QoS(1).transient_local(), std::bind(&GlobalPathPlannerNode::originLlhCallback, this, std::placeholders::_1));
-  work_mode_sub_ = create_subscription<tractor_msgs::msg::WorkMode>("/work_mode", rclcpp::QoS(1).reliable().transient_local(), std::bind(&GlobalPathPlannerNode::workModeCallback, this, std::placeholders::_1));
+  work_mode_sub_ = create_subscription<weeder_msgs::msg::WorkMode>("/work_mode", rclcpp::QoS(1).reliable().transient_local(), std::bind(&GlobalPathPlannerNode::workModeCallback, this, std::placeholders::_1));
 
   // 服务
-  set_source_srv_ = create_service<tractor_msgs::srv::SetPathSource>("~/set_source", std::bind(&GlobalPathPlannerNode::onSetPathSource, this, std::placeholders::_1, std::placeholders::_2));
+  set_source_srv_ = create_service<weeder_msgs::srv::SetPathSource>("~/set_source", std::bind(&GlobalPathPlannerNode::onSetPathSource, this, std::placeholders::_1, std::placeholders::_2));
 
   // 心跳。
   heartbeat_ = std::make_unique<tractor_monitor::HeartbeatPublisher>(this, "global_path_planner");
@@ -252,7 +252,7 @@ void GlobalPathPlannerNode::originLlhCallback(const sensor_msgs::msg::NavSatFix:
 }
 
 // 设置工作模式 (值变更/首次到达置 work_mode_changed_pending_ + 刷时间戳; 该标记为什么**不引起重算** -> 见头文件说明)
-void GlobalPathPlannerNode::workModeCallback(const tractor_msgs::msg::WorkMode::SharedPtr msg) {
+void GlobalPathPlannerNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg) {
 
   work_mode_stamp_ = this->now();
 
@@ -264,7 +264,7 @@ void GlobalPathPlannerNode::workModeCallback(const tractor_msgs::msg::WorkMode::
   work_mode_                 = msg->mode;
   work_mode_set_             = true;
   work_mode_changed_pending_ = true;
-  SPDLOG_INFO("收到工作模式: {}", msg->mode == tractor_msgs::msg::WorkMode::MODE_MANUAL ? "手动模式" : "非手动模式");
+  SPDLOG_INFO("收到工作模式: {}", msg->mode == weeder_msgs::msg::WorkMode::MODE_MANUAL ? "手动模式" : "非手动模式");
 }
 
 // 当前工作模式是否在宽限期内
@@ -293,7 +293,7 @@ bool GlobalPathPlannerNode::changeAllowedByMode() const {
   if (state != WorkModeState::kReady) {
     return false;
   }
-  return work_mode_ == tractor_msgs::msg::WorkMode::MODE_MANUAL;
+  return work_mode_ == weeder_msgs::msg::WorkMode::MODE_MANUAL;
 }
 
 // 现场/APP 要能一眼判断"是我没切手动, 还是模式信号断了, 还是刚上电还没收到"
@@ -329,7 +329,7 @@ void GlobalPathPlannerNode::injectDebugPoly0Origin(const std::array<double, 3>& 
 }
 
 // 设置路径来源 (local / file)
-void GlobalPathPlannerNode::onSetPathSource(const std::shared_ptr<tractor_msgs::srv::SetPathSource::Request> request, std::shared_ptr<tractor_msgs::srv::SetPathSource::Response> response) {
+void GlobalPathPlannerNode::onSetPathSource(const std::shared_ptr<weeder_msgs::srv::SetPathSource::Request> request, std::shared_ptr<weeder_msgs::srv::SetPathSource::Response> response) {
   // 1) 取值校验 (只认 0 (local) / 1 (file)
   PathSource next = path_source_;
   if (!parsePathSource(static_cast<int64_t>(request->path_source), next)) {
@@ -581,11 +581,11 @@ void GlobalPathPlannerNode::publishPath() {
 void GlobalPathPlannerNode::updateFilePathHealth() {
   std::vector<uint32_t> active_faults;
   std::string detail;
-  uint8_t status = tractor_msgs::msg::Heartbeat::STATUS_OK;
+  uint8_t status = weeder_msgs::msg::Heartbeat::STATUS_OK;
 
   if (file_path_state_ == FilePathState::kInvalid) {
     active_faults.push_back(static_cast<uint32_t>(FAULT_FILE_PATH_INVALID));
-    status = tractor_msgs::msg::Heartbeat::STATUS_STOP_MOTION;
+    status = weeder_msgs::msg::Heartbeat::STATUS_STOP_MOTION;
     detail = "固定路径文件无效 (" + file_path_invalid_reason_ + "), 已清空 /path";
     clearActivePath();
   }
@@ -596,7 +596,7 @@ void GlobalPathPlannerNode::updateFilePathHealth() {
   pruneFaultLog(active_faults);
 
   heartbeat_->setFaultCodes(active_faults);
-  if (status == tractor_msgs::msg::Heartbeat::STATUS_OK) {
+  if (status == weeder_msgs::msg::Heartbeat::STATUS_OK) {
     heartbeat_->setOk();
   } else {
     heartbeat_->setStopMotion(detail, "path_file");
@@ -607,13 +607,13 @@ void GlobalPathPlannerNode::updateFilePathHealth() {
 void GlobalPathPlannerNode::updateLocalPathHealth() {
   std::vector<uint32_t> active_faults;
   std::string detail;
-  uint8_t status = tractor_msgs::msg::Heartbeat::STATUS_OK;
+  uint8_t status = weeder_msgs::msg::Heartbeat::STATUS_OK;
 
   // 路径只算一次然后一直重发: 路点为空 = 规划失败 (进程还活着, 但下游永远等不到能跟的东西)。
   if (waypoints_.empty()) {
     const bool has_failure_status = (last_plan_status_ != PlanStatus::kOk);
     active_faults.push_back(has_failure_status ? planStatusFaultCode(last_plan_status_) : static_cast<uint32_t>(FAULT_PLAN_FAILED));
-    status = tractor_msgs::msg::Heartbeat::STATUS_FAULT;
+    status = weeder_msgs::msg::Heartbeat::STATUS_FAULT;
     detail =
       has_failure_status ? ("路径规划失败[" + std::string(planStatusName(last_plan_status_)) + "]: " + last_plan_error_) : "路径规划失败: 无路点 (ENU 原点已就绪, 检查 set_source (local) 请求带来的多边形顶点)";
   }
@@ -624,7 +624,7 @@ void GlobalPathPlannerNode::updateLocalPathHealth() {
   pruneFaultLog(active_faults);
 
   heartbeat_->setFaultCodes(active_faults);
-  if (status == tractor_msgs::msg::Heartbeat::STATUS_OK) {
+  if (status == weeder_msgs::msg::Heartbeat::STATUS_OK) {
     heartbeat_->setOk();
   } else {
     heartbeat_->setFault(detail, tractor_monitor::kFaultSourceSelf);

@@ -3,7 +3,7 @@
 在**没有实车、没有 RTK 接收机、没有 CAN 硬件**的条件下，把整条控制链跑通：
 
 ```
-sim_vehicle ──/gnss_driver/odom──► lqr_control ──/weeder/steer_cmd──► sim_vehicle
+sim_vehicle ──/gnss_driver/odom──► lqr_control ──/weeder/chassis/cmd──► sim_vehicle
      │                                  ▲
      ├──/gnss_driver/origin──► global_path_planner ──/path──┘
      └──/work_mode──────────►  (两者都订阅)
@@ -86,7 +86,7 @@ colcon build --packages-select sim_vehicle --symlink-install
 source install/setup.bash
 ```
 
-依赖只有 `rclpy` + 标准消息 + `tractor_msgs`（已在工作区），无需装系统库。
+依赖只有 `rclpy` + 标准消息 + `weeder_msgs`（已在工作区），无需装系统库。
 
 ---
 
@@ -143,7 +143,7 @@ cd ~/ros2_ws && source install/setup.bash
 **第 1 步：下发田块边界**（此刻必须还是 MANUAL）
 
 ```bash
-ros2 service call /global_path_planner/set_source tractor_msgs/srv/SetPathSource \
+ros2 service call /global_path_planner/set_source weeder_msgs/srv/SetPathSource \
 "{path_source: 0, ridge_width: 2.5, field_margin: 0.5, in_row_resolution: 1.0, poly_count: 4, poly: [34.6198653, 112.4497271, 100.0, 34.6198653, 112.4502729, 100.0, 34.6201347, 112.4502729, 100.0, 34.6201347, 112.4497271, 100.0]}"
 ```
 
@@ -182,8 +182,7 @@ ros2 topic pub --once /sim/unmanned std_msgs/msg/Bool "{data: true}"
 
 ```bash
 # 另开一个终端
-ros2 topic echo /weeder/steer_cmd     # 前轮转角（弧度），应收敛到小值
-ros2 topic echo /cmd_vel              # 速度 + 等效角速度
+ros2 topic echo /weeder/chassis/cmd   # 速度 + 前轮转角（同一控制周期）
 ros2 run tf2_ros tf2_echo odom base_link    # 车在动
 ```
 
@@ -233,7 +232,7 @@ rviz2 -d ~/ros2_ws/src/sim_vehicle/rviz/weeder_sim.rviz
 |---|---|
 | 规划器出路径 | `/global_path_planner/path` 有几十~上百个点 |
 | 控制器不再停车 | 终端 3 从刷"未使能/等待路径"变成打印 `v=... delta=...` |
-| 转向收敛 | `/weeder/steer_cmd` 从较大值（初始偏差 0.8m）逐渐变小 |
+| 转向收敛 | `/weeder/chassis/cmd` 的 `steer_angle_rad` 从较大值（初始偏差 0.8m）逐渐变小 |
 | 车在动 | `tf2_echo odom base_link` 的坐标持续变化 |
 | 跟踪上路径 | RViz 里绿箭头贴合灰色路径线前进 |
 | 无 NaN | 所有话题值都是有限数，无 `nan`/`inf` |
@@ -242,7 +241,7 @@ rviz2 -d ~/ros2_ws/src/sim_vehicle/rviz/weeder_sim.rviz
 
 ## 五、chassis_node 要不要起？
 
-**最小闭环不需要它。** `sim_vehicle` 直接订阅 `/weeder/steer_cmd`，已经把控制器输出闭环回车辆运动了。`chassis_node` 的职责是把指令转成 CAN 帧发给真实底盘，仿真里没有底盘，所以它不是必需的。
+**最小闭环不需要它。** `sim_vehicle` 直接订阅 `/weeder/chassis/cmd`，已经把控制器输出闭环回车辆运动了。`chassis_node` 的职责是把指令转成 CAN 帧发给真实底盘，仿真里没有底盘，所以它不是必需的。
 
 如果你想顺便验证它的链路，可以起，但**先确认你 VM 里的 `can_driver.cpp` 是哪个版本**：
 
@@ -264,7 +263,7 @@ grep -n "桩" ~/ros2_ws/src/*/weeder_base/src/can_driver.cpp
 [WARN] VCU 状态帧超时 X.XXs > 1.00s，已停车
 ```
 
-这是**预期行为**，不是 bug——没有真实 VCU 回发 `Chassis_State_01`，心跳看门狗必然触发，于是它持续下发零速+零转角。所以**仿真时不要看 `chassis_node` 的输出判断链路好坏**，要看 `/weeder/steer_cmd`（`lqr_control` 的输出）和 `sim_vehicle` 的运动。
+这是**预期行为**，不是 bug——没有真实 VCU 回发 `Chassis_State_01`，心跳看门狗必然触发，于是它持续下发零速+零转角。所以**仿真时不要看 `chassis_node` 的输出判断链路好坏**，要看 `/weeder/chassis/cmd`（`lqr_control` 的输出）和 `sim_vehicle` 的运动。
 
 也正因为它会覆盖转向指令为零，**如果同时起了 `chassis_node` 且它连的是真实 CAN，仿真结论不代表实车行为**。仿真阶段建议就不起它。
 
@@ -287,8 +286,8 @@ A：符号或轴距问题。① 确认两个 `wheelbase` 参数一致；② 确�
 **Q：路径只有一行、没有掉头**
 A：田块太窄或 `ridge_width` 太大。30m 南北宽配 2.5m 垄宽应该有 ~12 行。
 
-**Q：`sim_vehicle` 报 `ModuleNotFoundError: tractor_msgs`**
-A：`source install/setup.bash` 没执行，或 `tractor_msgs` 没编译。
+**Q：`sim_vehicle` 报 `ModuleNotFoundError: weeder_msgs`**
+A：`source install/setup.bash` 没执行，或 `weeder_msgs` 没编译。
 
 ---
 

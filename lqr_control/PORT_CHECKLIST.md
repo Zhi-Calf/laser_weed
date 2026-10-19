@@ -1,5 +1,9 @@
 # 移植配置清单（PORT_CHECKLIST）
 
+> **历史说明：** 当前 CAN 接口已统一为 `/weeder/chassis/cmd`
+> （`weeder_msgs/ChassisCmd`，同时携带速度与转角）。本文档中
+> `/cmd_vel` + `/weeder/steer_cmd` 的双话题方案已废弃，仅保留作移植记录。
+
 整包移植**不改源码，只改配置**。下面每一项都是除草机与履带拖拉机不一样、必须动的地方。
 按包分节，改完打勾。**带 🔴 的是不改就会出错的，🟡 是按硬件实际填的，🟢 是可选优化。**
 
@@ -206,10 +210,10 @@ ros2 topic echo /gnss_driver/odom --once
 ros2 launch global_path_planner planner.launch.py
 
 # 发无人模式（持续 1Hz，否则超时停车）
-ros2 topic pub -r 1 /work_mode tractor_msgs/msg/WorkMode "{mode: 1, mode_name: unmanned}"
+ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: unmanned}"
 
 # 调 set_source 触发规划（local 模式示例，顶点按你的田块改）
-ros2 service call /global_path_planner/set_source tractor_msgs/srv/SetPathSource \
+ros2 service call /global_path_planner/set_source weeder_msgs/srv/SetPathSource \
   "{path_source: 0, ridge_width: 2.5, field_margin: 0.5, in_row_resolution: 1.0, poly_count: 4, poly: [lat0,lon0,alt0, lat1,lon1,alt1, lat2,lon2,alt2, lat3,lon3,alt3]}"
 
 # 起控制（先不上实车，看它算出的转向角对不对）

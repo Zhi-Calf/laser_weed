@@ -16,7 +16,7 @@
 
 #include "gnss_localization/giavp_parser.hpp"
 #include "gnss_localization/serial_port.hpp"
-#include "tractor_msgs/msg/gnss_status.hpp"
+#include "weeder_msgs/msg/gnss_status.hpp"
 namespace gnss_localization {
 
 // GIAVP 解算状态常量 (与 giavp_parser.hpp 中 GiavpData::status 语义一致)。
@@ -74,7 +74,7 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_raw_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   rclcpp::Publisher<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr vel_pub_;
-  rclcpp::Publisher<tractor_msgs::msg::GnssStatus>::SharedPtr status_pub_;
+  rclcpp::Publisher<weeder_msgs::msg::GnssStatus>::SharedPtr status_pub_;
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr origin_llh_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   std::unique_ptr<tractor_monitor::BasicHeartbeatPublisher<rclcpp::Node>> heartbeat_;

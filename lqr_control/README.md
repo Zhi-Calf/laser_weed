@@ -2,7 +2,7 @@
 
 激光除草机器人（四轮转向底盘）的 LQR 路径跟踪控制器。
 
-从 MegaTrak 履带拖拉机项目 `control_node/path_controller` 移植而来，**状态方程按阿克曼/四轮转向运动学重新推导**。本包刻意不依赖私有 `tractor_msgs` 包，可独立编译。
+从 MegaTrak 履带拖拉机项目 `control_node/path_controller` 移植而来，**状态方程按阿克曼/四轮转向运动学重新推导**。本包依赖项目统一的 `weeder_msgs` 接口包。
 
 替代原有的 Python 版 `stanley_control`。
 
@@ -61,73 +61,29 @@ MegaTrak 的 `lqr_R_w` 是**角速度代价**，本包的 `lqr_R_steer` 是**转
 
 ---
 
-## 2. 必须同时替换 CAN 桥
+## 2. CAN 指令接口
 
-**这是让系统真正跑起来的前提**，不换的话控制指令到不了底盘。
+`lqr_control` 每个控制周期只发布一条 `/weeder/chassis/cmd`
+（`weeder_msgs/ChassisCmd`），同时携带：
 
-### 2.1 现状：转向指令没有权威来源
-
-`weeder_base/src/chassis_node.cpp` 只订阅 `/cmd_vel`（`geometry_msgs/Twist`），把 `angular.z`
-映射成转向角。这个映射量纲上不严谨——`angular.z` 是角速度（rad/s），却被当成角度（度）用。
-代码注释自己也标了"阿克曼转向运动学（当前 angular.z -> steer_angle 为粗略比例映射）"待实现。
-
-`lqr_control` 输出的是**前轮转角**（rad），不是角速度，所以需要一个直接承载转角的话题。
-
-### 2.2 用 patch/chassis_node.cpp 整体替换
-
-`patch/chassis_node.cpp` 是**完整替换文件**，基于你 2026-10-15 提供的版本改写，
-**原有 9 项修复（时钟源、看门狗、锁、析构顺序等）全部保留**：
-
-```bash
-cp ~/lqr_control/patch/chassis_node.cpp \
-   ~/ros2_ws/src/laser_weed_ros2_node/weeder_base/src/chassis_node.cpp
-cd ~/ros2_ws
-colcon build --packages-select weeder_base --symlink-install
-```
-
-四项改动：
-
-| # | 改动 | 说明 |
+| 字段 | 单位 | 约定 |
 |---|---|---|
-| 1 | 新增 `/weeder/steer_cmd` 订阅 | `std_msgs/Float64`，弧度，左正。**权威转向来源** |
-| 2 | `angular.z` 映射降级为**回退** | 保留手动遥控能力；自动作业时 steer_cmd 优先，此值不生效 |
-| 3 | `steer_mode` 提为参数 | 原先恒为结构体默认值 0，无法与 lqr_control 对齐 |
-| 4 | 新增转向超时看门狗 | `steer_timeout_s`（默认 0.5s），超时回正 |
+| `speed_m_s` | m/s | 前进速度 |
+| `steer_angle_rad` | rad | 前轮转角，左正右负 |
 
-**转向角优先级在 `sendCommand()` 里集中裁决**（这是设计要点）：
+速度与转角放在同一帧，CAN 桥不会把两个不同时刻计算出的值拼在一起。
+`weeder_base/chassis_node` 订阅该话题并转换为 `ADCU_toVCU_01`。
 
-```
-1. 任一看门狗触发 → 回正 0（安全侧，不给任何来源翻盘机会）
-2. /weeder/steer_cmd 新鲜 → 用它
-3. steer_fallback_to_cmd_vel=true → 用 angular.z 映射（手动遥控）
-4. 否则 → 回正 0
-```
-
-`onSteerCmd()` **只缓存值、不写 `cmd01_.steer_angle`**——就是为了不让回调顺序打乱这个优先级。
-
-细节、参数表、台架验证方法见 `patch/PATCH_NOTES.md`。`std_msgs` 已在依赖里
-（`package.xml:14`、`CMakeLists.txt:14,40`），不用改构建配置。
-
-### 2.3 两个 ⚠️ 必须注意
-
-**① `steer_mode` 两边必须一致。** 原代码没设这个字段（恒为 0 单阿克曼）。`lqr_control` 里
-`steer_mode=1`（双阿克曼）时等效轴距取 `L/2`——如果控制器按 `L/2` 算转角、底盘按单阿克曼执行，
-**转角会差一倍**。两个包的 `steer_mode` 填同一个值。
-
-**② 实车自动作业建议关掉回退。** 默认 `steer_fallback_to_cmd_vel=true` 是为台架和手动遥控方便。
-实车自动作业时那个量纲不严谨的映射不该有机会影响转向：
-
-```bash
-ros2 run weeder_base chassis_node --ros-args -p steer_fallback_to_cmd_vel:=false
-```
+`steer_mode` 仍必须与 `weeder_base` 参数一致。双阿克曼模式在控制器中按
+`L/2` 的等效轴距计算转角，若底盘按单阿克曼执行，实际转角会差一倍。
 
 ### 2.4 符号约定（已追踪源码核对）
 
 CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左正右负**
-（`laser_weed_can/protocol/can_protocol.hpp` 第二版 Byte3~4）。本控制器输出弧度、左正——
+（`weeder_base/protocol/can_protocol.hpp` 第二版 Byte3~4）。本控制器输出弧度、左正——
 **符号同向，不需要取反**，只做 `弧度 → 度 → ×10` 换算。
 
-字段名已确认：`can_bridge.hpp` 引入的是 `laser_weed::AdcuCommand01`，字段为
+字段名已确认：`weeder_base::protocol::AdcuCommand01` 的字段为
 `gear`/`steer_mode`/`estop`/`speed_raw`/`steer_angle`/`alive_counter`。
 工作区里另有一份 `gear_cmd`/`veh_speed_cmd` 命名的旧头文件，**没被引用、不参与编译**，别照它改。
 
@@ -139,22 +95,21 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 |---|---|---|---|
 | 订阅 | `/gnss_driver/odom` | `nav_msgs/Odometry` | `gnss_localization`（SensorDataQoS） |
 | 订阅 | `/global_path_planner/path` | `nav_msgs/Path` | `global_path_planner`（transient_local） |
-| 订阅 | `/work_mode` | `tractor_msgs/WorkMode` | 模式管理方/APP（transient_local） |
-| 发布 | `/weeder/steer_cmd` | `std_msgs/Float64` | → CAN 桥（权威指令） |
-| 发布 | `/cmd_vel` | `geometry_msgs/Twist` | 观察用 |
-| 发布 | `/heartbeat` | `tractor_msgs/Heartbeat` | → `tractor_monitor` 汇总 |
+| 订阅 | `/work_mode` | `weeder_msgs/WorkMode` | 模式管理方/APP（transient_local） |
+| 发布 | `/weeder/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
+| 发布 | `/heartbeat` | `weeder_msgs/Heartbeat` | → `tractor_monitor` 汇总 |
 | 发布 | `/lqr_control/target_point` | `visualization_msgs/Marker` | RViz |
 
 **QoS 匹配是硬要求**：`gnss_driver` 用 `SensorDataQoS`（best effort）发 odom，订阅端必须是 best effort，否则一条都收不到；规划器的 path 和 `/work_mode` 都是 `transient_local`（latched），订阅端必须匹配 durability 才能让晚加入的订阅者立刻收到最后一条。本节点已按此配置。
 
 ### 工作模式门控（/work_mode）
 
-统一用 MegaTrak 的系统级 `/work_mode` 总线（`tractor_msgs/WorkMode`），不再用私有 arm 话题——这样和 `global_path_planner`、`gnss_driver` 共用同一条使能信号，只有一处需要发布。只有 `MODE_UNMANNED(1)` 才接管底盘；手动(0)/标定(2)/信号超时都停车。
+统一用 MegaTrak 的系统级 `/work_mode` 总线（`weeder_msgs/WorkMode`），不再用私有 arm 话题——这样和 `global_path_planner`、`gnss_driver` 共用同一条使能信号，只有一处需要发布。只有 `MODE_UNMANNED(1)` 才接管底盘；手动(0)/标定(2)/信号超时都停车。
 
 发布端必须**持续**发（≥ 1/`work_mode_timeout_s` Hz），发一次会在超时后停车：
 
 ```bash
-ros2 topic pub -r 1 /work_mode tractor_msgs/msg/WorkMode "{mode: 1, mode_name: unmanned}"
+ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: unmanned}"
 ```
 
 不想启用门控就把 `require_unmanned` 设为 `false`（仅台架调试用，实车务必开着）。
@@ -195,7 +150,7 @@ ros2 topic pub -r 1 /work_mode tractor_msgs/msg/WorkMode "{mode: 1, mode_name: u
 
 LQR 的状态量只有 `[横向误差, 航向误差]`，**没有沿路径方向的误差项**。这意味着：车如果沿着路径自己的方向笔直冲过目标点，两个误差**都恰好为 0**，控制器会判定"完美跟踪"并继续给全速零转角——**没有任何告警**。
 
-仿真实测就是这样：目标点冻结在起点，车跑出 238 m，`steer_cmd = 2.4e-14`，所有误差指标都是 0，车径直冲出田块。`max_track_error_m` 这道门是唯一能发现该情况的手段，所以代码里强制下限 0.1 m，防止误配成 0 把它关掉。
+仿真实测就是这样：目标点冻结在起点，车跑出 238 m，`steer_angle_rad = 2.4e-14`，所有误差指标都是 0，车径直冲出田块。`max_track_error_m` 这道门是唯一能发现该情况的手段，所以代码里强制下限 0.1 m，防止误配成 0 把它关掉。
 
 配套的 `snap_window`（默认 25 点）让目标点每拍在窗口内吸附到离车最近的路径点，避免纯弧长累积在里程计打滑时与车越走越远。吸附**从当前索引开始搜索**，索引单调不减，所以永远不会把目标点拉回上一行（弓字形作业不会重跑已覆盖的垄）。
 
@@ -205,11 +160,11 @@ LQR 的状态量只有 `[横向误差, 航向误差]`，**没有沿路径方向�
 
 ## 5. 构建与运行
 
-**依赖前置**：本包依赖 `tractor_msgs`（WorkMode/Heartbeat）和 `tractor_monitor`（心跳库），必须先在工作区里有这两个包。
+**依赖前置**：本包依赖 `weeder_msgs`（WorkMode/Heartbeat）和 `tractor_monitor`（心跳库），必须先在工作区里有这两个包。
 
 > ⚠️ **前提：`MegaTrak-main` 整棵树不能放在 `~/ros2_ws/src/` 里面。**
 > colcon 会递归扫描 `src/` 下所有 `package.xml`；如果 MegaTrak 树在 `src/` 内，
-> 它自带的 `tractor_msgs`、`tractor_monitor` 等包会被扫到，再和下面 `cp` 到 `src/`
+> 它自带的旧消息包、`tractor_monitor` 等包会被扫到，再和下面 `cp` 到 `src/`
 > 顶层的副本**重名**，报 `Duplicate package names not supported`。
 > 把 MegaTrak-main 放在 `src/` **外面**（如 `~/MegaTrak-main`），下面的 `cp` 才安全。
 > 推荐直接用 `port_to_weeder.sh`（已内置此护栏），别手动逐条 cp。
@@ -219,8 +174,7 @@ LQR 的状态量只有 `[横向误差, 航向误差]`，**没有沿路径方向�
 #    若它现在在 ~/ros2_ws/src/MegaTrak-main，先移出来：
 #      mv ~/ros2_ws/src/MegaTrak-main ~/MegaTrak-main
 
-# 1) 把 MegaTrak 的依赖包放进工作区（从 src 外的树里拷）
-cp -r ~/MegaTrak-main/tractor_msgs ~/ros2_ws/src/
+# 1) 把依赖包放进工作区（weeder_msgs 已由本项目提供）
 cp -r ~/MegaTrak-main/monitoring_node/tractor_monitor ~/ros2_ws/src/
 cp -r lqr_control ~/ros2_ws/src/
 
@@ -237,7 +191,7 @@ colcon test-result --verbose
 ros2 launch lqr_control lqr_control.launch.py
 ```
 
-纯算法层（`lqr.cpp` + `path_profile.cpp`，编成 `lqr_control_lib`）零 ROS 依赖，但**测试可执行文件依赖 rclcpp/gtest，且 `lqr_node` 依赖 tractor_msgs**，所以整个包必须在完整 ROS2 环境里 `colcon build`，不能脱离 ROS 单独编译。
+纯算法层（`lqr.cpp` + `path_profile.cpp`，编成 `lqr_control_lib`）零 ROS 依赖，但**测试可执行文件依赖 rclcpp/gtest，且 `lqr_node` 依赖 weeder_msgs**，所以整个包必须在完整 ROS2 环境里 `colcon build`，不能脱离 ROS 单独编译。
 
 ---
 
@@ -260,11 +214,11 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 
 ## 7. 整包移植进度（gnss_localization / global_path_planner）
 
-`tractor_msgs` 子模块已补齐（用户拷入 `MegaTrak-main/tractor_msgs/tractor_msgs/`，含 12 msg + 3 srv + 1 action，`rosidl_generate_interfaces` 齐全，只依赖标准消息包）。**阻塞已解除**。按"整包原样移植"方案，接下来把这几个包整体拷进除草机工作区，只做配置适配、不改源码：
+`weeder_msgs` 已作为本项目自有接口包放入工作区（含 12 msg + 3 srv + 1 action，`rosidl_generate_interfaces` 齐全，只依赖标准消息包）。按"整包原样移植"方案，接下来把这几个包整体拷进除草机工作区，只做配置适配、不改源码：
 
 | 包 | 位置 | 移植动作 |
 |---|---|---|
-| `tractor_msgs` | 消息定义 | 原样拷，`colcon build` 生成接口 |
+| `weeder_msgs` | 消息定义 | 项目自有，`colcon build` 生成接口 |
 | `tractor_monitor` | `monitoring_node/` | 原样拷，header-only 心跳库 + monitor 节点 |
 | `gnss_localization` | `sensor_node/` | 原样拷，改 config |
 | `global_path_planner` | `navigation_node/` | 原样拷，改 config |

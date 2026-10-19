@@ -3,8 +3,8 @@
 
 替代真实的 gnss_localization + 底盘，构成一个闭环：
 
-    lqr_control ──/weeder/steer_cmd──► sim_vehicle ──/gnss_driver/odom──► lqr_control
-                 └─/cmd_vel──────────►            └─TF odom->base_link─►
+    lqr_control ──/weeder/chassis/cmd──► sim_vehicle ──/gnss_driver/odom──► lqr_control
+                                      └─TF odom->base_link─►
 
 同时模拟 gnss_driver 的两个前置输出，让 global_path_planner 能工作：
     /gnss_driver/origin  (NavSatFix, latched)  ENU 投影原点
@@ -23,15 +23,15 @@
 import math
 
 import rclpy
-from geometry_msgs.msg import TransformStamped, Twist
+from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
 from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy,
                        qos_profile_sensor_data)
 from sensor_msgs.msg import NavSatFix
-from std_msgs.msg import Bool, Float64
+from std_msgs.msg import Bool
 from tf2_msgs.msg import TFMessage
-from tractor_msgs.msg import WorkMode
+from weeder_msgs.msg import ChassisCmd, WorkMode
 from visualization_msgs.msg import Marker
 
 TWO_PI = 2.0 * math.pi
@@ -56,6 +56,7 @@ class SimVehicleNode(Node):
         # 90°，所以这里夹到 60°，既避免 inf/nan 又不至于掩盖控制器的异常输出。
         self.declare_parameter("max_plant_steer_deg", 60.0)
         self.declare_parameter("cmd_timeout_s", 0.5)
+        self.declare_parameter("cmd_topic", "/weeder/chassis/cmd")
 
         # ---- 初始位姿（ENU，单位 m）。默认在原点，即田块西南角附近。
         self.declare_parameter("init_x", 0.0)
@@ -94,6 +95,7 @@ class SimVehicleNode(Node):
         self.max_plant_steer = math.radians(
             max(self.get_parameter("max_plant_steer_deg").value, 1.0))
         self.cmd_timeout_s = self.get_parameter("cmd_timeout_s").value
+        self.cmd_topic = self.get_parameter("cmd_topic").value
         self.rtk_sigma = self.get_parameter("rtk_sigma").value
 
         # ---- 车辆状态
@@ -110,7 +112,6 @@ class SimVehicleNode(Node):
         self.aligned = False   # 是否已完成对齐（只对齐一次）
 
         self.last_cmd_time = self.get_clock().now()
-        self.last_steer_time = self.get_clock().now()
 
         # ---- QoS：必须与下游订阅端匹配，否则一条都收不到 ----
         # lqr_control 用 SensorDataQoS 订阅 odom
@@ -124,9 +125,7 @@ class SimVehicleNode(Node):
 
         # ---- 订阅（控制指令）----
         self.create_subscription(
-            Twist, "/cmd_vel", self.on_cmd_vel, 10)
-        self.create_subscription(
-            Float64, "/weeder/steer_cmd", self.on_steer_cmd, 10)
+            ChassisCmd, self.cmd_topic, self.on_chassis_cmd, 10)
         self.create_subscription(
             Bool, "/sim/unmanned", self.on_unmanned, 10)
         # 仅用于"对齐到路径起点"，仿真本身不跟路径（那是 lqr_control 的事）。
@@ -160,22 +159,17 @@ class SimVehicleNode(Node):
                math.degrees(self.yaw), self.rtk_sigma,
                "UNMANNED" if self.unmanned else "MANUAL"))
         self.get_logger().info(
-            "订阅 /cmd_vel + /weeder/steer_cmd + /sim/unmanned | "
+            "订阅 /weeder/chassis/cmd + /sim/unmanned | "
             "发布 /gnss_driver/odom + /gnss_driver/origin + /work_mode + /tf")
 
     # ============================================================
     # 回调
     # ============================================================
-    def on_cmd_vel(self, msg):
-        """线速度指令。只取 linear.x（前进速度），angular.z 在仿真里忽略——
-        真实底盘的转向来自 /weeder/steer_cmd，与 lqr_control 的输出一致。"""
+    def on_chassis_cmd(self, msg):
+        """速度与转角来自同一控制周期，保证仿真车辆执行一致的运动学组合。"""
         self.last_cmd_time = self.get_clock().now()
-        self.v_cmd = max(0.0, min(msg.linear.x, self.max_speed))
-
-    def on_steer_cmd(self, msg):
-        """前轮转角指令（弧度，左正）。这是 lqr_control 的权威输出。"""
-        self.last_steer_time = self.get_clock().now()
-        raw = msg.data
+        self.v_cmd = max(0.0, min(msg.speed_m_s, self.max_speed))
+        raw = msg.steer_angle_rad
         clamped = max(-self.max_plant_steer, min(self.max_plant_steer, raw))
         if abs(clamped - raw) > 1e-9:
             # 控制器输出了超出物理范围的转角，记下来便于发现调参问题
@@ -232,7 +226,6 @@ class SimVehicleNode(Node):
         # 否则 lqr_control 一旦被门控停掉，仿真车还会按最后一条指令一直跑。
         if (now - self.last_cmd_time).nanoseconds * 1e-9 > self.cmd_timeout_s:
             self.v_cmd = 0.0
-        if (now - self.last_steer_time).nanoseconds * 1e-9 > self.cmd_timeout_s:
             self.delta_cmd = 0.0
 
         # 单阿克曼自行车模型积分（与 lqr_control 的离散模型同源）

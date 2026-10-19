@@ -24,7 +24,7 @@ enum class Criticality {
   kIgnore,     // 忽略：丢失 -> 仅记录（例如云链路）
 };
 
-// Mirrors tractor_msgs::msg::Heartbeat::STATUS_*. Duplicated rather than
+// Mirrors weeder_msgs::msg::Heartbeat::STATUS_*. Duplicated rather than
 // included so this header stays message-free; static_assert'd against the real
 // constants in monitor_node.cpp.
 enum class Status : uint8_t {

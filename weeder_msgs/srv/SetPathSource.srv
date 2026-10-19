@@ -2,8 +2,8 @@
 # ⚠ 本文件里**不要**用行尾反斜杠做续行 —— rosidl 生成器会把注释一起带进 IDL 模板, 那会让它报
 #   UnicodeDecodeError processing template 'struct.idl.em'):
 # ⚠ 下面两个例子里 in_row_resolution **必须带** (两种来源都必填); 切 local 时 ridge_width / field_margin 也必填:
-#   ros2 service call /global_path_planner/set_source tractor_msgs/srv/SetPathSource "{path_source: 1, path_file: /opt/agri/path/route.json, in_row_resolution: 1.0}"
-#   ros2 service call /global_path_planner/set_source tractor_msgs/srv/SetPathSource "{path_source: 0, ridge_width: 2.5, field_margin: 0.5, in_row_resolution: 1.0, poly_count: 4, poly: [34.70316078, 112.39118753, 102.0, 34.70316002, 112.39133512, 202.0, 34.70320482, 112.39131299, 102.0, 34.7032093, 112.39117310, 101.0]}"
+#   ros2 service call /global_path_planner/set_source weeder_msgs/srv/SetPathSource "{path_source: 1, path_file: /opt/agri/path/route.json, in_row_resolution: 1.0}"
+#   ros2 service call /global_path_planner/set_source weeder_msgs/srv/SetPathSource "{path_source: 0, ridge_width: 2.5, field_margin: 0.5, in_row_resolution: 1.0, poly_count: 4, poly: [34.70316078, 112.39118753, 102.0, 34.70316002, 112.39133512, 202.0, 34.70320482, 112.39131299, 102.0, 34.7032093, 112.39117310, 101.0]}"
 
 # 目标来源, 取 PATH_SOURCE_* 之一 (服务请求字段; 本节点**没有**同名参数 —— 这个服务就是唯一入口)。
 uint8 path_source

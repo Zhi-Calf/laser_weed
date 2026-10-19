@@ -6,7 +6,7 @@
   <description>
     Simulation vehicle node for laser-weeder integration testing without hardware.
     Replaces gnss_localization (publishes /gnss_driver/odom, /gnss_driver/origin, TF
-    odom->base_link) and the chassis (consumes /cmd_vel and /weeder/steer_cmd, integrates
+    odom->base_link) and the chassis (consumes /weeder/chassis/cmd, integrates
     a single-Ackermann bicycle model), and publishes /work_mode so that
     global_path_planner and lqr_control can be exercised end to end.
   </description>
@@ -20,8 +20,8 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>tf2_msgs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
-  <!-- WorkMode definition, from the ported tractor_msgs package -->
-  <exec_depend>tractor_msgs</exec_depend>
+  <!-- WorkMode definition, from the ported weeder_msgs package -->
+  <exec_depend>weeder_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD 17)
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(tractor_msgs REQUIRED)
+find_package(weeder_msgs REQUIRED)
 find_package(spdlog_vendor REQUIRED)
 find_package(spdlog REQUIRED)
 
@@ -34,7 +34,7 @@ target_include_directories(${PROJECT_NAME}_lib PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(${PROJECT_NAME}_lib ${PROJECT_NAME}_core spdlog::spdlog)
-ament_target_dependencies(${PROJECT_NAME}_lib rclcpp tractor_msgs)
+ament_target_dependencies(${PROJECT_NAME}_lib rclcpp weeder_msgs)
 
 # 让 SPDLOG_* 宏携带源码文件名与行号（source location）
 target_compile_definitions(${PROJECT_NAME}_lib PRIVATE
@@ -82,10 +82,10 @@ ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME}_core ${PROJECT_NAME}_lib)
 # spdlog 刻意不在导出列表里: 只有 _lib(monitor_node.cpp) 用它,
 # heartbeat_publisher.hpp 不用。加进来会让六个被监控包都被迫依赖 spdlog。
-# rclcpp and tractor_msgs are exported because heartbeat_publisher.hpp is a
+# rclcpp and weeder_msgs are exported because heartbeat_publisher.hpp is a
 # header-only target consumed by every monitored package: they get the include
 # path and both dependencies from a single <depend>tractor_monitor</depend>.
-ament_export_dependencies(rclcpp tractor_msgs)
+ament_export_dependencies(rclcpp weeder_msgs)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)

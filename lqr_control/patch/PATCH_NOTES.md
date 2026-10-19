@@ -1,5 +1,8 @@
 # CAN 桥补丁：接入 /weeder/steer_cmd
 
+> **历史说明：** 本补丁已被当前 `weeder_base` 实现取代。现在速度与转角统一由
+> `/weeder/chassis/cmd`（`weeder_msgs/ChassisCmd`）发布，不要直接应用本目录的旧文件。
+
 **目的**：让 `lqr_control` 算出的转向角能真正下发到底盘。
 
 **用法**：`chassis_node.cpp` 是**完整替换文件**，不是 diff 补丁。直接覆盖：
@@ -69,10 +72,10 @@ ros2 run weeder_base chassis_node --ros-args -p steer_fallback_to_cmd_vel:=false
 
 ## 符号约定（已核对，不需要取反）
 
-`laser_weed::AdcuCommand01::steer_angle` 是 `int16_t`，0.1° 分辨率，**左正右负**（协议第二版 Byte3~4）。
+`weeder_base::protocol::AdcuCommand01::steer_angle` 是 `int16_t`，0.1° 分辨率，**左正右负**（协议第二版 Byte3~4）。
 `lqr_control` 输出弧度、左正。**同向**，所以只做 `弧度 → 度 → ×10` 换算，不取反。
 
-字段名已追踪确认：`can_bridge.hpp` 引入 `laser_weed::AdcuCommand01`（`laser_weed_can/protocol/can_protocol.hpp`），
+字段名已追踪确认：`weeder_base::protocol::AdcuCommand01`（`weeder_base/protocol/can_protocol.hpp`），
 用的是 `gear`/`steer_mode`/`estop`/`speed_raw`/`steer_angle`/`alive_counter` 这套。
 工作区里另有一份 `gear_cmd`/`veh_speed_cmd` 命名的旧头文件，**没被引用、不参与编译**，别照它改。
 

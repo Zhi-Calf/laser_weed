@@ -13,8 +13,8 @@
 #include <set>
 #include <string>
 #include <tractor_monitor/heartbeat_publisher.hpp>
-#include <tractor_msgs/msg/work_mode.hpp>
-#include <tractor_msgs/srv/set_path_source.hpp>
+#include <weeder_msgs/msg/work_mode.hpp>
+#include <weeder_msgs/srv/set_path_source.hpp>
 #include <vector>
 #include <visualization_msgs/msg/marker.hpp>
 
@@ -253,7 +253,7 @@ private:
 
 private:
   // /work_mode: 新鲜度 + 变更门 (10411x); set_source 受不受理由 changeAllowedByMode() 定
-  void workModeCallback(const tractor_msgs::msg::WorkMode::SharedPtr msg);
+  void workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg);
   bool changeAllowedByMode() const;
   std::string changeRejectReason() const;
   bool workModeStartupGraceActive(const rclcpp::Time& now) const;
@@ -263,7 +263,7 @@ private:
 
 private:
   // 服务: 只做校验 + 存 pending_*, 真正应用留给下一拍的 ③
-  void onSetPathSource(const std::shared_ptr<tractor_msgs::srv::SetPathSource::Request> request, std::shared_ptr<tractor_msgs::srv::SetPathSource::Response> response);
+  void onSetPathSource(const std::shared_ptr<weeder_msgs::srv::SetPathSource::Request> request, std::shared_ptr<weeder_msgs::srv::SetPathSource::Response> response);
 
 private:
   // 定时器与 IO (话题/服务名与 QoS 见类注释)
@@ -275,8 +275,8 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pto_path_pub_;
   rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr origin_sub_;
-  rclcpp::Subscription<tractor_msgs::msg::WorkMode>::SharedPtr work_mode_sub_;
-  rclcpp::Service<tractor_msgs::srv::SetPathSource>::SharedPtr set_source_srv_;
+  rclcpp::Subscription<weeder_msgs::msg::WorkMode>::SharedPtr work_mode_sub_;
+  rclcpp::Service<weeder_msgs::srv::SetPathSource>::SharedPtr set_source_srv_;
   std::unique_ptr<tractor_monitor::HeartbeatPublisher> heartbeat_;
 
 private:

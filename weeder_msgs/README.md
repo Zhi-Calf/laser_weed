@@ -1,15 +1,13 @@
-# tractor_msgs
+# weeder_msgs
 
-Custom ROS2 message definitions for the Zhi-Calf agricultural robot platform.
-
-This is a **shared interface package** — all teams in the Zhi-Calf organization can depend on it.
+激光除草机器人使用的 ROS2 消息、服务和 Action 定义。
 
 ## Messages
 
 | Message | Description |
 |---------|-------------|
-| `ChassisCmd` | Chassis control command (gear, motor RPM, PTO, hitch, kinematics) |
-| `ChassisState` | Chassis state feedback (VCU CAN bus: motors, BMS, PTO, hydraulic) |
+| `ChassisCmd` | 车辆运动控制指令：速度 `speed_m_s` + 前轮转角 `steer_angle_rad` |
+| `ChassisState` | 激光除草机底盘完整状态：State_01~11 四轮底盘/电机数据与 State_21/22 BMS |
 | `CalibrationResult` | Calibration status/result: GNSS lever arm + heading offset, `success` + `message` (failure reason) on `/calibration_manager/status` |
 | `RobotStatus` | Robot status for cloud reporting (state, battery, services, faults) |
 | `Heartbeat` | Per-node liveness + self-reported health (`/heartbeat`, `/monitor_heartbeat`) |
@@ -37,39 +35,28 @@ This is a **shared interface package** — all teams in the Zhi-Calf organizatio
 
 ## Consumers
 
-| Repository | Packages |
-|------------|----------|
-| `MegaTrak` | `tractor_base`, `path_controller`, `tractor_calibration`, `tractor_bringup`, `tractor_monitor`, `gnss_localization`, `global_path_planner`, `local_path_planner`, `implement_controller` |
-| `robot-tool` | `tractor_calibration_ui` |
-
-> `implement_controller` 目前**没有**被任何 launch 拉起（它订阅的 `/path/global`、`/path/seg_types` 已无发布者），
-> 仍在表内是因为它声明依赖本包 —— 接入前先确认链路。
+当前工作区中的 `weeder_base`、`tractor_monitor`、`gnss_localization`、
+`global_path_planner`、`lqr_control` 和 `sim_vehicle` 依赖本包。
 
 ## Build
 
 Requires ROS2 Humble.
 
 ```bash
-# As part of a colcon workspace
-mkdir -p ~/zhi_calf_ws/src && cd ~/zhi_calf_ws/src
-git clone git@github.com:Zhi-Calf/tractor_msgs.git
-git clone git@github.com:Zhi-Calf/robot-core.git
-
-cd ~/zhi_calf_ws
-colcon build --packages-select tractor_msgs
+# 在工作区根目录
+colcon build --packages-select weeder_msgs
 source install/setup.bash
 ```
 
 ## Standalone Build
 
 ```bash
-cd ~/zhi_calf_ws
-colcon build --packages-select tractor_msgs
+colcon build --packages-select weeder_msgs
 source install/setup.bash
 
 # Verify messages are available
-ros2 interface list | grep tractor_msgs
-ros2 interface show tractor_msgs/msg/ChassisCmd
+ros2 interface list | grep weeder_msgs
+ros2 interface show weeder_msgs/msg/ChassisState
 ```
 
 ## Versioning

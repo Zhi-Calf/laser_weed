@@ -3,7 +3,7 @@
 
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
-#include <tractor_msgs/msg/heartbeat.hpp>
+#include <weeder_msgs/msg/heartbeat.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -45,9 +45,9 @@ LqrNode::LqrNode()
     "LQR 控制器已启动: 轴距=%.3fm 等效轴距=%.3fm 最大转角=%.1fdeg 最大速度=%.2fm/s 频率=%.1fHz",
     wheelbase_, effective_wheelbase_, max_steer_deg_, max_speed_, control_hz_);
   RCLCPP_INFO(get_logger(),
-    "订阅 里程计=%s 路径=%s 工作模式=%s | 发布 %s + %s | 心跳=%s",
+    "订阅 里程计=%s 路径=%s 工作模式=%s | 发布 %s | 心跳=%s",
     odom_topic_.c_str(), path_topic_.c_str(), work_mode_topic_.c_str(),
-    cmd_vel_topic_.c_str(), steer_topic_.c_str(), tractor_monitor::kHeartbeatTopic);
+    cmd_topic_.c_str(), tractor_monitor::kHeartbeatTopic);
 }
 
 void LqrNode::loadParameters()
@@ -82,8 +82,7 @@ void LqrNode::loadParameters()
   odom_topic_ = declare_parameter<std::string>("odom_topic", "/gnss_driver/odom");
   path_topic_ = declare_parameter<std::string>("path_topic", "/global_path_planner/path");
   work_mode_topic_ = declare_parameter<std::string>("work_mode_topic", "/work_mode");
-  cmd_vel_topic_ = declare_parameter<std::string>("cmd_vel_topic", "/cmd_vel");
-  steer_topic_ = declare_parameter<std::string>("steer_topic", "/weeder/steer_cmd");
+  cmd_topic_ = declare_parameter<std::string>("cmd_topic", "/weeder/chassis/cmd");
   viz_ = declare_parameter<bool>("viz", true);
 
   // Sanity guards: a non-positive wheelbase would divide by zero in B_d, and a
@@ -165,12 +164,11 @@ void LqrNode::setupInterfaces()
   // latched by the mode manager so a late subscriber learns the current mode
   // immediately. Same QoS contract as global_path_planner's subscription.
   const auto mode_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
-  work_mode_sub_ = create_subscription<tractor_msgs::msg::WorkMode>(
+  work_mode_sub_ = create_subscription<weeder_msgs::msg::WorkMode>(
     work_mode_topic_, mode_qos,
-    [this](const tractor_msgs::msg::WorkMode::SharedPtr msg) {workModeCallback(msg);});
+    [this](const weeder_msgs::msg::WorkMode::SharedPtr msg) {workModeCallback(msg);});
 
-  cmd_vel_pub_ = create_publisher<geometry_msgs::msg::Twist>(cmd_vel_topic_, 10);
-  steer_pub_ = create_publisher<std_msgs::msg::Float64>(steer_topic_, 10);
+  cmd_pub_ = create_publisher<weeder_msgs::msg::ChassisCmd>(cmd_topic_, 10);
   if (viz_) {
     viz_pub_ = create_publisher<visualization_msgs::msg::Marker>("/lqr_control/target_point", 10);
   }
@@ -272,13 +270,13 @@ void LqrNode::pathCallback(const nav_msgs::msg::Path::SharedPtr msg)
     traj.size(), traj.front().x, traj.front().y, traj.back().x, traj.back().y);
 }
 
-void LqrNode::workModeCallback(const tractor_msgs::msg::WorkMode::SharedPtr msg)
+void LqrNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   last_work_mode_time_ = now();
   const bool first_mode = !ever_got_work_mode_;
   ever_got_work_mode_ = true;
-  unmanned_ = (msg->mode == tractor_msgs::msg::WorkMode::MODE_UNMANNED);
+  unmanned_ = (msg->mode == weeder_msgs::msg::WorkMode::MODE_UNMANNED);
 
   // Log only when the mode value actually changes (not on every 1 Hz republish),
   // so the log stays readable during a run. last_mode_ doubles as the change
@@ -302,11 +300,10 @@ bool LqrNode::rtkQualityOk(double & worst_sigma) const
 
 void LqrNode::publishStop()
 {
-  geometry_msgs::msg::Twist zero;
-  cmd_vel_pub_->publish(zero);
-  std_msgs::msg::Float64 steer;
-  steer.data = 0.0;
-  steer_pub_->publish(steer);
+  weeder_msgs::msg::ChassisCmd zero;
+  zero.speed_m_s = 0.0;
+  zero.steer_angle_rad = 0.0;
+  cmd_pub_->publish(zero);
 }
 
 void LqrNode::controlTick()
@@ -449,7 +446,7 @@ void LqrNode::controlTick()
   // so the controller happily commands full speed with zero steering, forever.
   //
   // Observed in simulation (2026-10-15): goal frozen at the path start while the
-  // robot ran 238 m downrange, steer_cmd = 2.4e-14, no warning logged. The
+  // robot ran 238 m downrange, steer_angle_rad = 2.4e-14, no warning logged. The
   // vehicle drove out of the field with every error metric at zero.
   //
   // Placed AFTER advanceGoal() so the snap-forward has already had its chance to
@@ -470,22 +467,12 @@ void LqrNode::controlTick()
   const double v = out.vel_cmd.linear_v;
   const double delta = out.vel_cmd.steer_angle;  // rad, left positive
 
-  // Equivalent yaw rate of the Ackermann model, published on /cmd_vel so that
-  // generic ROS tooling sees a physically meaningful value. NOTE: the CAN bridge
-  // must consume /weeder/steer_cmd as the authoritative steering source; its
-  // angular.z mapping is dimensionally wrong and only a manual-teleop fallback.
-  // See patch/PATCH_NOTES.md for the updated chassis_node.
-  geometry_msgs::msg::Twist twist;
-  twist.linear.x = v;
-  twist.angular.z = (v / effective_wheelbase_) * std::tan(delta);
-  cmd_vel_pub_->publish(twist);
-
-  // Authoritative command for the CAN bridge: front-wheel angle in radians, left
-  // positive - the same sign convention as ADCU_toVCU_01's steer angle, so no
-  // negation is needed downstream.
-  std_msgs::msg::Float64 steer_msg;
-  steer_msg.data = delta;
-  steer_pub_->publish(steer_msg);
+  // 速度与转角在同一帧发布，保证 CAN 桥使用的是同一控制周期内的运动学组合。
+  // 转角单位为 rad、左正，与 ADCU_toVCU_01 的符号约定一致。
+  weeder_msgs::msg::ChassisCmd cmd;
+  cmd.speed_m_s = v;
+  cmd.steer_angle_rad = delta;
+  cmd_pub_->publish(cmd);
 
   RCLCPP_DEBUG(get_logger(),
     "v=%.3f m/s delta=%+.2f deg (fb=%+.2f ff=%+.2f) e_lat=%+.3f m e_head=%+.3f rad "

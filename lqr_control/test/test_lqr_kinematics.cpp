@@ -374,7 +374,7 @@ TEST(LqrGuards, NegativeTravelDoesNotRewindGoal)
 // Along-track blind spot. REGRESSION TEST for the 2026-10-15 simulation finding.
 //
 // Observed: the tracked goal stayed pinned at the path start while the robot ran
-// 238 m downrange. steer_cmd came out as 2.4e-14 and NO error was reported,
+// 238 m downrange. steer_angle_rad came out as 2.4e-14 and NO error was reported,
 // because the LQR state [e_lateral, e_heading] contains no along-track term:
 // a robot that runs straight along the path's own direction has both errors
 // exactly zero. The vehicle left the field while every metric read "nominal".

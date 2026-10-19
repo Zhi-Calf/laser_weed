@@ -163,7 +163,7 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   odom_raw_pub_          = create_publisher<nav_msgs::msg::Odometry>("~/odom_raw", qos_sensor);
   imu_pub_               = create_publisher<sensor_msgs::msg::Imu>("~/imu", qos_sensor);
   vel_pub_               = create_publisher<geometry_msgs::msg::TwistWithCovarianceStamped>("~/vel", qos_sensor);
-  status_pub_            = create_publisher<tractor_msgs::msg::GnssStatus>("~/status", qos_sensor);
+  status_pub_            = create_publisher<weeder_msgs::msg::GnssStatus>("~/status", qos_sensor);
   origin_llh_pub_        = create_publisher<sensor_msgs::msg::NavSatFix>("~/origin", rclcpp::QoS(1).transient_local());
   tf_broadcaster_        = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
   heartbeat_             = std::make_unique<tractor_monitor::BasicHeartbeatPublisher<rclcpp::Node>>(this, get_name());
@@ -854,7 +854,7 @@ void GnssDriver::publishVelocity(const GiavpData& d) {
 
 // 发布GNSS状态信息
 void GnssDriver::publishStatus(const GiavpData& d) {
-  auto msg            = tractor_msgs::msg::GnssStatus();
+  auto msg            = weeder_msgs::msg::GnssStatus();
   msg.header.stamp    = now();
   msg.header.frame_id = frame_id_;
 
