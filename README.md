@@ -40,7 +40,7 @@ sim_vehicle ──/gnss_driver/odom──► lqr_control
 | `global_path_planner` | 根据田块边界生成弓字形全覆盖路径，提供 `/global_path_planner/set_source` 服务 |
 | `lqr_control` | 四轮转向 LQR 路径跟踪，输出统一底盘指令 `/weeder/chassis/cmd` |
 | `weeder_base` | CAN 协议编解码、SocketCAN 驱动、20ms 指令发送、全部底盘/BMS 状态接收 |
-| `weeder_msgs` | 车辆、BMS、GNSS、心跳、路径规划等 ROS2 消息、服务与 Action |
+| `weeder_msgs` | 车辆、BMS、GNSS、工作模式、路径规划等 ROS2 消息、服务与 Action |
 | `sim_vehicle` | 无硬件仿真：模拟 RTK、车辆运动学、工作模式，并可一键启动完整链路 |
 
 ## 底盘指令
@@ -72,7 +72,7 @@ float64 steer_angle_rad    # 左转为正
 
 ```text
 /weeder/chassis/state       weeder_msgs/msg/ChassisState
-/weeder/chassis/state_text  std_msgs/msg/String（兼容旧监控）
+/weeder/chassis/state_text  std_msgs/msg/String（兼容旧订阅者）
 ```
 
 每个状态块带有 `*_valid` 标志，用于区分“值为 0”和“尚未收到该帧”。
