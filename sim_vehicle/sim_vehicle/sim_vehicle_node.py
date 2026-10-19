@@ -63,10 +63,10 @@ class SimVehicleNode(Node):
         self.declare_parameter("init_y", 0.0)
         self.declare_parameter("init_yaw", 0.0)
 
-        # ---- 模拟 GNSS 原点（ENU 投影基准）。global_path_planner 用它把
-        #      set_source 请求里的经纬度顶点投到平面坐标。默认取洛阳附近。
-        self.declare_parameter("origin_lat", 34.6200)
-        self.declare_parameter("origin_lon", 112.4500)
+        # ---- 模拟 GNSS 原点（ENU 投影基准）。默认与 planner YAML 的 poly
+        #      首个顶点一致，保证仿真里 odom 与 path 使用同一坐标基准。
+        self.declare_parameter("origin_lat", 34.6198653)
+        self.declare_parameter("origin_lon", 112.4497271)
         self.declare_parameter("origin_alt", 100.0)
 
         # ---- 模拟 RTK 精度。lqr_control 的门控是 sigma <= rtk_max_sigma(0.05)
@@ -74,7 +74,7 @@ class SimVehicleNode(Node):
         #      0.02 对应 gnss_driver 的 acc_rtk_fixed（固定解）。
         self.declare_parameter("rtk_sigma", 0.02)
 
-        # ---- 工作模式：false = MANUAL（允许 set_source 规划），
+        # ---- 工作模式：false = MANUAL（规划器自动规划），
         #      true = UNMANNED（允许 lqr_control 驱动底盘）。
         #      发 /sim/unmanned 切换。见 RUN_SIM.md 的时序说明。
         self.declare_parameter("start_unmanned", False)
@@ -187,7 +187,7 @@ class SimVehicleNode(Node):
             self.unmanned = msg.data
             self.get_logger().info(
                 "工作模式切换 -> %s" % ("UNMANNED（允许 lqr_control 驱动）"
-                                       if self.unmanned else "MANUAL（允许 set_source 规划）"))
+                                       if self.unmanned else "MANUAL（规划器自动规划）"))
 
     def on_path(self, msg):
         """收到规划路径后，把车对齐到起点附近（只做一次）。
@@ -318,12 +318,10 @@ class SimVehicleNode(Node):
     def publish_slow_topics(self):
         """1Hz 重发 latched 话题。
 
-        origin：planner 的 ENU 投影原点，必须在 set_source 之前到位，
-                否则规划器会一直等原点而不规划。
-        work_mode：planner 要求 MANUAL 才接受 set_source（require_manual_for_change），
-                   lqr_control 要求 UNMANNED 才驱动。两者靠 /sim/unmanned 切换。
-                   必须持续发：planner 的 work_mode_timeout_s=3.0、
-                   lqr_control 的同名参数也是 3.0，停发会被判超时。
+        origin：planner 的 ENU 投影原点，未到位时规划器不会规划。
+        work_mode：lqr_control 要求 UNMANNED 才驱动，靠 /sim/unmanned 切换。
+                   必须持续发：lqr_control 的 work_mode_timeout_s=3.0，
+                   停发会被判超时。
         """
         now = self.get_clock().now().to_msg()
 
@@ -355,9 +353,13 @@ def main():
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    except RuntimeError:
+        if rclpy.ok():
+            raise
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

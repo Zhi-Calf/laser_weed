@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- 删除仓库内无调用方的 `CalibrationCommand.srv`、`SetImplementMode.srv`
+  和 `ExecutePath.action`。
+- 删除 `SetPathSource.srv`；`global_path_planner` 改为从 YAML 读取地块顶点、
+  垄宽、田边余量和 PTO 行内分辨率。
+- 删除无节点发布或订阅的 `CalibrationResult.msg`、`FaultReport.msg`、
+  `Heartbeat.msg`、`ImplementCmd.msg`、`ImplementMode.msg`、`NodeHealth.msg`、
+  `RobotStatus.msg` 和 `SystemHealth.msg`。
+
 ### Changed
 
 - **BREAKING:** 包名由 `tractor_msgs` 改为 `weeder_msgs`。

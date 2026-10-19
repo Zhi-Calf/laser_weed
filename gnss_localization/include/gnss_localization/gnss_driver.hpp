@@ -32,7 +32,7 @@ constexpr int kStatusRtkFixed = 4;   // RTK 固定解
 ///   ~/imu            IMU 姿态 (含 ENU yaw), sensor_msgs/Imu
 ///   ~/vel            车体系速度 (TwistWithCovarianceStamped, x 前 y 左 z 上)
 ///   ~/status         GNSS 状态 (含原始航向、解算状态, GnssStatus)
-///   ~/origin     ENU 起点经纬度 (上电后首次固定解), transient_local +
+///   ~/origin     ENU 起点经纬度 (优先取 YAML origin_*, 否则取上电后首次固定解), transient_local +
 ///                    1 Hz 低频重发, 供 global_path_planner / local_path_planner
 ///                    作规划原点 (保证全链路同原点; path_controller 直接订阅
 ///                    ~/odom, 已含同原点的修正 ENU 位姿)。
@@ -118,6 +118,7 @@ private:
   double datum_lat_deg_{0.0};                                   // datum 纬度
   double datum_lon_deg_{0.0};                                   // datum 经度
   double datum_alt_m_{0.0};                                     // datum 高程
+  bool datum_from_config_{false};                               // ENU 原点是否来自 YAML
   bool first_heading_logged_{false};                            // 是否已打印过首个航向日志
 };
 

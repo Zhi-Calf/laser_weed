@@ -974,7 +974,7 @@ void resampleBowSkeleton(
     // "弧长步长 <= path_resolution 且每步转角 <= kMaxArcStepRad(5°)" 采好, 每个弧段都短于
     // path_resolution, 于是走第一支**原样保留、不重复插值** (弧的保真度只由几何阶段决定,
     // /global_path_planner/path 与 /global_path_planner/pto_path 的弧逐点相同); **外部骨架的粗掉头段**
-    // (file 模式的掉头可能只有两个
+    // (外部骨架的掉头可能只有两个
     // 端点, 长达数米) 会落到插值支, 按 path_resolution 采出弧上的点 —— 否则 PTO 路径在掉头
     // 处是一条折线 (弧上最近点定位与航向差分最敏感, 采样太粗会把转弯当成折线)。
     const double step = (seg_type == kSegWork) ? in_row : path_resolution;

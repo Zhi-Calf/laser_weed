@@ -6,12 +6,12 @@
 #
 # 启动的节点：
 #   sim_vehicle          仿真车辆（同时充当 GNSS 定位 + 底盘 + 模式管理方）
-#   global_path_planner  全覆盖弓字形规划（从 MegaTrak 移植，原样）
+#   global_path_planner  从 YAML 读取田块并自动生成弓字形全覆盖路径
 #   lqr_control          四轮转向 LQR 控制器
-#   sim_orchestrator     编排四段式时序：等原点 → MANUAL → set_source → 等路径 → UNMANNED
+#   sim_orchestrator     等 YAML 路径 → 切 UNMANNED
 #   rviz2                预置视图（田块边界/弓字形路径/仿真车/跟踪目标点）
 #
-# 启动顺序无关：编排器每个阶段都等条件满足才推进，所以谁先起来都行。
+# 启动顺序无关：planner 自动规划，编排器只等条件满足后切模式。
 #
 # ⚠️ 关于 LaunchConfiguration 与参数类型：LaunchConfiguration 是**字符串替换**，
 #    直接赋给 declare_parameter<double>() 声明的参数会抛 InvalidParameterTypeException。
@@ -46,7 +46,7 @@ def generate_launch_description():
         LaunchConfiguration('ridge_width'), value_type=float)
     # ⚠️ field_margin 必须 >= ridge_width/2，否则半圆掉头会鼓出田块边界
     #    （2026-10-15 仿真里绿箭飞出田块就是这个原因：掉头半径 1.25m > 内缩 0.5m）。
-    #    默认 2.5/2=1.25，给 1.5 留了余量。编排器也会在启动前预检并告警。
+    #    默认 2.5/2=1.25，给 1.5 留了余量。
     field_margin = ParameterValue(
         LaunchConfiguration('field_margin'), value_type=float)
     target_v = ParameterValue(LaunchConfiguration('target_v'), value_type=float)
@@ -95,13 +95,18 @@ def generate_launch_description():
             }],
         ),
 
-        # ---- 全覆盖规划器（MegaTrak 原样移植，用它自己的 config）----
+        # ---- 全覆盖规划器：田块和几何参数来自 YAML，命令行可覆盖垄宽/余量 ----
         Node(
             package='global_path_planner',
             executable='global_path_planner_node',
             name='global_path_planner',
             output='screen',
-            parameters=[planner_params, {'use_sim_time': use_sim_time}],
+            parameters=[
+                planner_params,
+                {'ridge_width': ridge_width},
+                {'field_margin': field_margin},
+                {'use_sim_time': use_sim_time},
+            ],
         ),
 
         # ---- LQR 控制器 ----
@@ -119,17 +124,13 @@ def generate_launch_description():
             ],
         ),
 
-        # ---- 编排器：自动完成四段式时序 ----
+        # ---- 编排器：路径生成后自动切 UNMANNED ----
         Node(
             package='sim_vehicle',
             executable='sim_orchestrator',
             name='sim_orchestrator',
             output='screen',
             parameters=[{
-                'path_source': 0,          # 0=本机规划(用内置田块顶点)
-                'ridge_width': ridge_width,
-                'field_margin': field_margin,
-                'in_row_resolution': 1.0,
                 'use_sim_time': use_sim_time,
             }],
         ),

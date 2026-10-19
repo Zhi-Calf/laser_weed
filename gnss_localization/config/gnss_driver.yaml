@@ -3,6 +3,14 @@ gnss_driver:
     serial_port: "/dev/ttyUSB0"
     baud_rate: 115200
     frame_id: "gnss_link"
+
+    # ENU 原点（首个路径点）。必须与
+    # global_path_planner/config/global_path_planner.yaml 的 poly 第一个顶点一致。
+    # 三项都有效时使用这里的坐标作为 datum；未配置或非法时回退为首次 RTK 固定解。
+    origin_lat: 34.6198653
+    origin_lon: 112.4497271
+    origin_alt: 100.0
+
     debug_giavp: false
     status_log_interval: 500    # 状态日志条数间隔 (10Hz 下 500 条 = 50s 打印一次)
     odom_log_interval: 10       # 里程计日志条数间隔 (10Hz 下 10 条 = 1s 打印一次)

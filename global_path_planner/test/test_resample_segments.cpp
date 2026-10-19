@@ -1,9 +1,9 @@
-// 外部骨架 (file 模式) 的采样契约 (src/bow.cpp 的 resampleBowSkeleton)。
+// 外部骨架的采样契约 (src/bow.cpp 的 resampleBowSkeleton)。
 //
-// file 模式下发的 JSON 是**骨架** (粗点 + 逐点 turn_flag), 节点要按 path_resolution 采出
+// 外部骨架 (粗点 + 逐点/逐段类型) 要按 path_resolution 采出
 // /global_path_planner/path、按 in_row_resolution 采出 /global_path_planner/pto_path ——
 // 与 local 模式**共用** resampleBowSkeleton。这里钉住外部骨架特有的两条:
-//   ① **段类型**按 BowSkeleton::seg_types 判 (外部文件的 turn_flag 标在"掉头段走完的那个点"上,
+//   ① **段类型**按 BowSkeleton::seg_types 判 (段标记落在"掉头段走完的那个点"上,
 //      这个口径表达不成点类型: 掉头段与其后的作业行共用一个端点);
 //   ② **粗掉头段** (比 path_resolution 长的掉头段, 外部骨架才会出现) 在 /global_path_planner/pto_path
 //      里也要按 path_resolution 采出弧上的点, 不能只留两个端点 (否则 PTO 路径在掉头处是折线)。
@@ -80,7 +80,7 @@ TEST(ExternalSkeleton, SegmentTypesWinOverPointTypeRule) {
   EXPECT_EQ(pto_types[6], kSegWork);
 }
 
-// ② 粗掉头段 (比 path_resolution 长) 在 PTO 里也必须采出弧上的点 —— file 模式的掉头段可能只有
+// ② 粗掉头段 (比 path_resolution 长) 在 PTO 里也必须采出弧上的点 —— 外部骨架的掉头段可能只有
 // 两个端点, 若原样保留会是一条折线 (弧上最近点定位与航向差分最敏感)。
 TEST(ExternalSkeleton, CoarseTurnIsInterpolatedForPtoAsWell) {
   // 一条 20 m 的掉头段两端点 + 一条作业段; 掉头段在文件里没有中间点。
@@ -132,7 +132,7 @@ TEST(ExternalSkeleton, PresampledShortTurnSegmentsAreKeptAsIs) {
 }
 
 // ④ 采样密度: 外部骨架的直段按 path_resolution 采 /path、按 in_row_resolution 采 PTO
-// (这就是 file 模式要的"文件是骨架、节点负责插值")。
+// (外部骨架只给粗点, 节点负责插值)。
 TEST(ExternalSkeleton, ResolutionsDriveSamplingDensity) {
   const BowSkeleton sk = SkeletonOf({Point_2(0.0, 0.0), Point_2(10.0, 0.0)},
                                     {kSegWork, kSegWork},

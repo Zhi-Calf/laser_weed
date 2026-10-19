@@ -745,7 +745,6 @@ TEST(PlanStatusFaultCode, CodesAreContiguousWithoutGaps) {
   const std::vector<uint32_t> all = {
     global_path_planner::FAULT_NONE,
     global_path_planner::FAULT_PLAN_FAILED,
-    global_path_planner::FAULT_FILE_PATH_INVALID,
     global_path_planner::FAULT_PLAN_INPUT_TOO_FEW,
     global_path_planner::FAULT_PLAN_DEDUP_TOO_FEW,
     global_path_planner::FAULT_PLAN_HULL_TOO_FEW,
@@ -753,35 +752,20 @@ TEST(PlanStatusFaultCode, CodesAreContiguousWithoutGaps) {
     global_path_planner::FAULT_PLAN_BAD_FIELD_MARGIN,
     global_path_planner::FAULT_PLAN_BAD_RIDGE_WIDTH,
     global_path_planner::FAULT_PLAN_INTERNAL,
-    global_path_planner::FAULT_ORIGIN_TIMEOUT,
-    global_path_planner::FAULT_WORK_MODE_TIMEOUT,
   };
 
   EXPECT_EQ(all.front(), 10400u) << "FAULT_NONE 必须是模块号 + 序号 00";
   for (size_t i = 1; i < all.size(); ++i) {
     EXPECT_EQ(all[i], all[i - 1] + 1u) << "第 " << i << " 个故障码与上一个不连续 (有空号或多写了值)";
   }
-  // 旧死码/旧空号不允许再出现 (重排后旧号一律作废)
-  for (const uint32_t code : all)
-    EXPECT_NE(code, 10414u) << "旧空号 10414 不该出现在新表里";
   // 对外发布的 ID 逐个钉死 (APP/云端码表按这些数字维护): 尾巴上这几个尤其要留神 —— 表尾一动,
   // 报出去的号就变, 必须先在这里红一次再改 README "编号约定" 与 APP 码表; **逐个改号比逐个加码
   // 更容易出错** (改号后旧号仍指向别的含义), 所以这里把整条尾巴都钉死。
-  // 历史: 2026-10 删掉原 10411 (路径来源未设置 —— 该状态不再算故障, timerCallback ④ 只发空 /path),
-  // 后面的码整体前移一位: 旧 10412 (ENU 原点超时) -> 10411, 旧 10413 (/work_mode) -> 10412。
-  // ⚠ 2026-10 第三次重排 (**还是删码引起的整体前移**): 删除旧 10402 (固定路径文件未就绪 —— 该状态在
-  // 调用图上不可达, 见 global_path_planner.hpp 的 FilePathState), 其后的码整体前移一位:
-  // 旧 10403 (固定路径文件无效) -> 10402, 旧 10404..10410 (规划失败细分) -> 10403..10409,
-  // 旧 10411 (ENU 原点超时) -> 10410, 旧 10412 (/work_mode 信号超时) -> 10411。
-  // ⚠ 数字又复用了一批: 旧 10402 (文件未就绪) / 旧 10411 (ENU 原点超时) / 旧 10412 (/work_mode)
-  // 都不是它们现在指的东西了, APP/云端一律按当前这版表对照。
-  // 把**整条表**的关键位都钉死 (文件码 / 规划细分段首尾 / 两个专码): 只钉尾巴会漏掉中间段。
-  EXPECT_EQ(static_cast<uint32_t>(global_path_planner::FAULT_FILE_PATH_INVALID), 10402u);
-  EXPECT_EQ(static_cast<uint32_t>(global_path_planner::FAULT_PLAN_INPUT_TOO_FEW), 10403u);
-  EXPECT_EQ(static_cast<uint32_t>(global_path_planner::FAULT_PLAN_INTERNAL), 10409u);
-  EXPECT_EQ(static_cast<uint32_t>(global_path_planner::FAULT_ORIGIN_TIMEOUT), 10410u);
-  EXPECT_EQ(static_cast<uint32_t>(global_path_planner::FAULT_WORK_MODE_TIMEOUT), 10411u);
-  EXPECT_EQ(all.back(), 10411u) << "最后一个码变了 -> 记得同步 README 的码表与 APP";
+  // 2026-10: 删除固定 JSON 路径文件模式后, 原文件码 10402 一并删除,
+  // 后续故障码整体前移一位, 保持连续编号。
+  EXPECT_EQ(static_cast<uint32_t>(global_path_planner::FAULT_PLAN_INPUT_TOO_FEW), 10402u);
+  EXPECT_EQ(static_cast<uint32_t>(global_path_planner::FAULT_PLAN_INTERNAL), 10408u);
+  EXPECT_EQ(all.back(), 10408u) << "最后一个码变了 -> 记得同步 README 的码表与 APP";
 }
 
 TEST(BowPlannerInput, RejectsConcavePolygon) {

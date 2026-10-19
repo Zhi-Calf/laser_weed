@@ -10,15 +10,10 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- rclcpp 与 sensor_msgs 是**直接依赖**, 不靠 nav_msgs 传递:
-       rclcpp/rclcpp.hpp 与 sensor_msgs/msg/nav_sat_fix.hpp 都在本包头文件里直接 include,
-       CMakeLists 也 find_package(rclcpp)。仓内其余 C++ 包 (tractor_base / gnss_localization /
-       path_controller / local_path_planner) 同样显式声明, 这里保持一致 —— 传递依赖能编过,
-       但 rosdep 装不齐、单包拷出构建就会缺件。 -->
+  <!-- rclcpp、消息包与几何库都显式声明, 保证 rosdep 与单包构建完整。 -->
   <depend>rclcpp</depend>
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
-  <depend>sensor_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>spdlog_vendor</depend>
   <!-- find_package(Eigen3) —— 多边形/几何适配 (eigen_boost_adaptor.hpp); rosdep 键 eigen -->
@@ -31,11 +26,6 @@
   <!-- GeographicLib (LocalCartesian): 经纬度 <-> ENU 平面; rosdep 键 geographiclib
        (Jammy/Humble 是 libgeographic-dev, Noble/Jazzy 是 libgeographiclib-dev, 见 CMakeLists) -->
   <depend>geographiclib</depend>
-  <!-- file 模式 (path_source=1) 的全覆盖路径文件是 JSON, 用 nlohmann/json 解析 (header-only,
-       jammy 的 nlohmann-json3-dev; rosdep 键 nlohmann-json-dev)。 -->
-  <depend>nlohmann-json-dev</depend>
-  <!-- 工作模式与路径来源服务接口。 -->
-  <depend>weeder_msgs</depend>
   <exec_depend>rviz2</exec_depend>
   <!-- 调试用: planner.launch.py 里的 static_transform_publisher (让 RViz 的 Fixed Frame
        odom 存在)。正常运行时不用它 —— 真机的 odom 由 gnss_driver 广播。 -->

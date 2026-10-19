@@ -186,6 +186,9 @@ void GnssDriver::loadParameters() {
   declare_parameter("serial_port", "/dev/ttyS0");
   declare_parameter("baud_rate", 115200);
   declare_parameter("frame_id", "gnss_link");
+  declare_parameter("origin_lat", std::numeric_limits<double>::quiet_NaN());
+  declare_parameter("origin_lon", std::numeric_limits<double>::quiet_NaN());
+  declare_parameter("origin_alt", std::numeric_limits<double>::quiet_NaN());
   declare_parameter("heading_std_deg", 0.2);
   declare_parameter("acc_rtk_fixed", 0.02);
   declare_parameter("acc_rtk_float", 0.3);
@@ -204,6 +207,9 @@ void GnssDriver::loadParameters() {
   serial_port_path_         = get_parameter("serial_port").as_string();
   baud_rate_                = get_parameter("baud_rate").as_int();
   frame_id_                 = get_parameter("frame_id").as_string();
+  const double origin_lat   = get_parameter("origin_lat").as_double();
+  const double origin_lon   = get_parameter("origin_lon").as_double();
+  const double origin_alt   = get_parameter("origin_alt").as_double();
   heading_std_deg_          = get_parameter("heading_std_deg").as_double();
   acc_rtk_fixed_            = get_parameter("acc_rtk_fixed").as_double();
   acc_rtk_float_            = get_parameter("acc_rtk_float").as_double();
@@ -219,9 +225,27 @@ void GnssDriver::loadParameters() {
   status_log_interval_      = static_cast<int>(std::max<int64_t>(1, get_parameter("status_log_interval").as_int()));
   odom_log_interval_        = static_cast<int>(std::max<int64_t>(1, get_parameter("odom_log_interval").as_int()));
 
+  // ---- ENU 原点: 优先使用 YAML 配置；未配置时沿用首次 RTK 固定解 ----
+  const bool origin_any = !std::isnan(origin_lat) || !std::isnan(origin_lon) || !std::isnan(origin_alt);
+  const bool origin_valid = std::isfinite(origin_lat) && std::isfinite(origin_lon) && std::isfinite(origin_alt) &&
+                            std::abs(origin_lat) <= 90.0 && std::abs(origin_lon) <= 180.0;
+  if (origin_valid) {
+    datum_lat_deg_      = origin_lat;
+    datum_lon_deg_      = origin_lon;
+    datum_alt_m_        = origin_alt;
+    datum_proj_         = std::make_unique<GeographicLib::LocalCartesian>(origin_lat, origin_lon, origin_alt);
+    datum_from_config_  = true;
+    SPDLOG_INFO("ENU 原点已从 YAML 设置: 纬度={:.8f} 经度={:.8f} 高程={:.3f}", datum_lat_deg_, datum_lon_deg_, datum_alt_m_);
+  } else if (origin_any) {
+    SPDLOG_WARN("origin_lat/lon/alt 配置非法或不完整 (lat={} lon={} alt={}), 回退为首次 RTK 固定解", origin_lat, origin_lon, origin_alt);
+  } else {
+    SPDLOG_INFO("未配置 origin_lat/lon/alt, ENU 原点将在首次 RTK 固定解时设置");
+  }
+
   // 详细打印所有参数
   SPDLOG_INFO("========== GNSS 驱动参数加载 ==========");
   SPDLOG_INFO("串口: {}, 波特率: {}, frame_id: {}", serial_port_path_, baud_rate_, frame_id_);
+  SPDLOG_INFO("ENU 原点来源: {}", datum_from_config_ ? "YAML" : "首次 RTK 固定解");
   SPDLOG_INFO("航向: std={:.2f}°", heading_std_deg_);
   SPDLOG_INFO("位置精度 (m): 固定解={:.3f} 浮点解={:.3f} RTD={:.3f} 单点={:.3f}", acc_rtk_fixed_, acc_rtk_float_, acc_rtd_, acc_spp_);
   SPDLOG_INFO(
@@ -485,7 +509,9 @@ void GnssDriver::publishOriginLlh() {
   msg.latitude        = datum_lat_deg_;
   msg.longitude       = datum_lon_deg_;
   msg.altitude        = datum_alt_m_;
-  msg.status.status   = sensor_msgs::msg::NavSatStatus::STATUS_GBAS_FIX;   // ENU 原点来自 RTK 固定解
+  msg.status.status   = datum_from_config_
+                          ? sensor_msgs::msg::NavSatStatus::STATUS_FIX
+                          : sensor_msgs::msg::NavSatStatus::STATUS_GBAS_FIX;   // YAML 原点 / 首次固定解
   origin_llh_pub_->publish(msg);
 }
 

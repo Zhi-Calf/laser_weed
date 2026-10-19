@@ -1,30 +1,13 @@
-// path_source 取值域的契约 (include/global_path_planner/global_path_planner.hpp)。
+// global_path_planner YAML 配置的取值契约 (本地弓形规划)。
 //
-// path_source 是**对外接口**: 只在 weeder_msgs/srv/SetPathSource 的请求字段里出现 (本节点没有
-// 同名参数 —— 换来源走服务, 见 global_path_planner.hpp)。它一旦改号, App/MQTT/脚本与现场文档就
-// 会对不上, 所以这里把"哪个号是哪个模式"钉死:
-//   * 0 = local (本机弓形规划) / 1 = file (固定路径 JSON 文件), 与 global_path_planner.hpp 里的
-//     PathSource 枚举**必须一致**;
-//   * 其余取值 (含 file 的旧值 2) 一律拒绝, 且不改动 out (调用方据此保持原来源) —— 拒绝原因里已经写明
-//     "只能是 0 (local) / 1 (file)" 与收到的值, 不为某个废弃取值单开提示。
-// 以及 file 来源要加载的文件路径判据 (isUsableFilePath): file 请求的 path_file 必须是"展开后非空的
-// 绝对路径" —— 位置只能从服务请求来 (path_file 参数已删除), 所以这条判据就是"能不能受理"的一半。
-// 以及 local 来源要带的**多边形顶点**判据 (parsePolygonVertices): local 的顶点也只能从服务请求来
-// (yaml 里的 poly_count / poly_* 已删除), 所以这条判据就是"能不能受理"的另一半 —— 与 path_file 那条
-// 完全对称: 数量 [3, kMaxPolygonVertices] / poly 长度 == 3 * poly_count / 每个顶点三个分量都有限且
-// |lat| <= 90、|lon| <= 180。⚠ 它只判"像不像一批顶点": 合法但几何上排不出路径是规划阶段的事
-// (10403..10409), 不在受理处判。
-// 以及随请求携带的另外两类字段 (**原同名参数 ridge_width / field_margin / in_row_resolution 已删除**,
-// 所以"取值非法"只能在这里挡):
-//   * parseLocalGeometryConfig —— local 的 ridge_width (> 0 的有限数, 单位 m) 与 field_margin
-//     (>= 0 的有限数); ⚠ file 请求**不判也不生效** (几何全由文件决定);
-//   * parseInRowResolution —— in_row_resolution, **两种来源都判** (file 的 PTO 掉头段也按它采):
-//     0.0 (= 不产出 pto_path) 或 [kMinInRowResolution, kMaxInRowResolution] 内的有限数 —— 与旧参数
-//     set 时的校验**逐字同一套判据**, 只是判的时机从"参数回调"搬到"服务受理";
-//   * parseFirstRowMarginForRidge —— **yaml 参数** first_row_margin 与**请求里的** ridge_width 的相容性
-//     ([kMinFirstRowMargin, 垄宽/2] m, 仅 local): 不相容 -> 整条请求被拒, **不夹取** (改造前是 .cpp 里的
-//     ClampFirstRowMargin 把生效值悄悄夹进区间)。默认 0.005 m 因此要求 ridge_width >= 0.01 m。
-// ⚠ 它们都只判"取值像不像话"; 合法但几何上排不出路径同样留给规划阶段 (10404..10410)。
+// 这些校验函数在节点启动读取 YAML 时调用；参数非法会让节点启动失败，而不是
+// 在运行期静默回退：
+//   * poly: 必须是 3 的倍数且至少 3 个顶点，每个顶点为 (lat, lon, alt)，
+//     经纬度有限且不越界;
+//   * ridge_width > 0、field_margin >= 0;
+//   * in_row_resolution 为 0 或 [kMinInRowResolution, kMaxInRowResolution] m;
+//   * first_row_margin 必须落在 [kMinFirstRowMargin, ridge_width/2]。
+// 合法但几何上排不出路径仍属于规划阶段错误 (10402..10408)。
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -34,68 +17,18 @@
 
 #include "global_path_planner/global_path_planner.hpp"
 
-using global_path_planner::isUsableFilePath;
 using global_path_planner::kMaxInRowResolution;
 using global_path_planner::kMaxPolygonVertices;
 using global_path_planner::kMinInRowResolution;
-using global_path_planner::kPathSourceFile;
-using global_path_planner::kPathSourceLocal;
 using global_path_planner::LocalGeometryConfig;
 using global_path_planner::parseFirstRowMarginForRidge;
 using global_path_planner::parseInRowResolution;
 using global_path_planner::parseLocalGeometryConfig;
-using global_path_planner::parsePathSource;
 using global_path_planner::parsePolygonVertices;
-using global_path_planner::pathSourceName;
-using global_path_planner::PathSource;
 // ⚠ kMinFirstRowMargin / kDefaultFirstRowMargin 是 bow.hpp 里的**全局**常量 (那个头文件不开 namespace),
 // 所以这里不给它们写 using 声明 —— 与 test_bow_planner.cpp 的用法一致。
 
-// 号与模式的对应关系 (改号就是改对外接口, 这条必须先红)。
-TEST(PathSource, WireValuesAre0Local1File) {
-  EXPECT_EQ(kPathSourceLocal, 0);
-  EXPECT_EQ(kPathSourceFile, 1);
-  EXPECT_EQ(static_cast<int>(PathSource::kLocal), 0);
-  EXPECT_EQ(static_cast<int>(PathSource::kFile), 1);
-}
-
-// 合法取值: 解析成功并写出对应枚举。
-TEST(PathSource, LegalValuesParse) {
-  PathSource out = PathSource::kFile;   // 先塞个"错"的值, 确认真的被改写
-  EXPECT_TRUE(parsePathSource(0, out));
-  EXPECT_EQ(out, PathSource::kLocal);
-  EXPECT_TRUE(parsePathSource(1, out));
-  EXPECT_EQ(out, PathSource::kFile);
-
-  EXPECT_STREQ(pathSourceName(PathSource::kLocal), "local");
-  EXPECT_STREQ(pathSourceName(PathSource::kFile), "file");
-}
-
-// 非法取值: 拒绝且**不改动** out (调用方靠这一点保证"来源不变")。
-TEST(PathSource, IllegalValuesAreRejectedWithoutTouchingOut) {
-  for (const int64_t value : {2, 3, -1, 99, 100}) {
-    PathSource out = PathSource::kFile;
-    EXPECT_FALSE(parsePathSource(value, out)) << "取值 " << value << " 不该被接受";
-    EXPECT_EQ(out, PathSource::kFile) << "取值 " << value << " 被拒时不该改动 out";
-  }
-}
-
-// file 请求的文件路径判据: 收的是**已经展开** (~ / $VAR 由调用方 ExpandPath 处理) 的字符串 ——
-// 只有"非空 + 绝对路径"才可用; 空与相对路径一律不可用 (服务据此 accepted=false, 来源与 /path 不变)。
-TEST(PathSource, FilePathMustBeNonEmptyAbsolute) {
-  EXPECT_TRUE(isUsableFilePath("/opt/agri/path/route.json"));
-  EXPECT_TRUE(isUsableFilePath("/route.json"));
-  EXPECT_TRUE(isUsableFilePath("/tmp/route.json"));
-
-  EXPECT_FALSE(isUsableFilePath(""));                 // 请求没带 path_file
-  EXPECT_FALSE(isUsableFilePath("route.json"));       // 裸文件名
-  EXPECT_FALSE(isUsableFilePath("tmp/route.json"));   // 相对路径
-  EXPECT_FALSE(isUsableFilePath("./route.json"));
-  EXPECT_FALSE(isUsableFilePath("~/route.json"));   // 未展开的 ~ 不算绝对路径 (调用方先展开)
-  EXPECT_FALSE(isUsableFilePath("$HOME/route.json"));
-}
-
-// ---- local 请求的多边形顶点 (SetPathSource 的 poly_count + poly -> 顶点数组) ----
+// ---- YAML 多边形的顶点判据 ----
 
 // 合法: 3 个顶点也能受理 (地块边界最少 3 个点), 分量按 (lat, lon, alt) 逐位落位, reason 被清空。
 TEST(PolygonVertices, ParsesFlatArrayIntoLatLonAltTriples) {
@@ -132,7 +65,7 @@ TEST(PolygonVertices, RejectsTooFewVertices) {
   }
 }
 
-// 顶点太多 (超过 kMaxPolygonVertices): 拒收 (请求体量兜底), 原因里给出上限值。
+// 顶点太多 (超过 kMaxPolygonVertices): 拒收, 原因里给出上限值。
 TEST(PolygonVertices, RejectsTooManyVertices) {
   const uint32_t count = kMaxPolygonVertices + 1u;
   std::string reason;
@@ -189,7 +122,7 @@ TEST(PolygonVertices, RejectsOutOfRangeLatLonButAcceptsTheLimits) {
   EXPECT_DOUBLE_EQ(ok[1][1], 180.0);
 }
 
-// ---- local 请求的几何参数 (SetPathSource 的 ridge_width + field_margin -> LocalGeometryConfig) ----
+// ---- YAML 几何参数 (ridge_width + field_margin -> LocalGeometryConfig) ----
 
 // 合法: 垄宽 > 0 且余量 >= 0 就受理, 两个分量逐位落位, reason 被清空。
 // ⚠ field_margin = 0 是**合法**值 (文档里就是"明确不内缩"), 不是"没填"—— 不该被当成缺失拒收。
@@ -240,20 +173,19 @@ TEST(LocalGeometry, RejectsNegativeOrNonFiniteFieldMargin) {
   }
 }
 
-// ---- yaml 参数 first_row_margin 与请求里的垄宽必须相容 (相容性判据, **仅 local**) ----
+// ---- YAML first_row_margin 与 ridge_width 必须相容 (仅 local) ----
 //
-// 这条判据取代了旧的夹取 (ClampFirstRowMargin): 越界不再"悄悄换个值", 而是把整条 local 请求拒掉 ——
-// 所以两端都必须钉死, 而且它们都是**跨接口**的: 下界来自 bow.hpp 的常量 (Clipper2 量化网格), 上界来自
-// **请求里的** ridge_width (同一个 first_row_margin 在窄垄宽上合法、在更窄的垄宽上就非法)。
+// 越界不再"悄悄换个值", 而是让节点启动失败 —— 所以两端都必须钉死:
+// 下界来自 bow.hpp 的常量 (Clipper2 量化网格), 上界来自 YAML ridge_width。
 
-// 下界常量本身也钉一下 (改它 = 改现场能受理的最小余量; 上界是 0.5 * 请求的 ridge_width, 没有常量)。
+// 下界常量本身也钉一下 (改它 = 改现场能用的最小余量; 上界是 0.5 * ridge_width, 没有常量)。
 TEST(FirstRowMarginRange, LowerBoundConstantIsTheClipperGridFloor) {
   EXPECT_DOUBLE_EQ(kMinFirstRowMargin, 0.001);
   EXPECT_DOUBLE_EQ(kDefaultFirstRowMargin, 0.005);
 }
 
-// 合法: 落在 [kMinFirstRowMargin, 垄宽/2] 内 —— 两端都取得到 (界值判成开区间会误拒合法请求),
-// 且成功时 reason 被清空 (受理处直接把它当 reason 回给调用方)。
+// 合法: 落在 [kMinFirstRowMargin, 垄宽/2] 内 —— 两端都取得到,
+// 且成功时 reason 被清空。
 TEST(FirstRowMarginRange, AcceptsClosedIntervalBounds) {
   std::string reason = "上一个请求留下的脏串";
   EXPECT_TRUE(parseFirstRowMarginForRidge(kDefaultFirstRowMargin, 2.5, reason));   // 默认值 + 常见垄宽
@@ -278,8 +210,8 @@ TEST(FirstRowMarginRange, RejectsBelowLowerBound) {
   }
 }
 
-// 超过 垄宽/2 -> 拒 —— **上界随请求变**: 同一个余量在窄垄宽上被拒、在宽垄宽上被接受 (这正是"必须判在受理处"
-// 的理由); 默认值 0.005 m 配 0.009 m 的垄宽 (上界 0.0045) 同样被拒。
+// 超过 垄宽/2 -> 拒 —— 上界随 ridge_width 变化; 默认值 0.005 m
+// 配 0.009 m 的垄宽 (上界 0.0045) 同样被拒。
 TEST(FirstRowMarginRange, RejectsAboveHalfRidgeWidth) {
   std::string reason;
   EXPECT_FALSE(parseFirstRowMarginForRidge(0.01, 0.019, reason)) << "0.019/2 = 0.0095 < 0.01: 该拒";
@@ -303,16 +235,16 @@ TEST(FirstRowMarginRange, RejectsNonFinite) {
   }
 }
 
-// ---- 随请求携带的 PTO 行内分辨率 (in_row_resolution, **两种来源都必填**) ----
+// ---- PTO 行内分辨率 (YAML in_row_resolution, 两种来源都必填) ----
 
-// 取值域本身是**对外接口**: 服务定义里逐字写着 0.0 = 不产出 pto_path 与 [0.01, 100] 这个区间,
-// 常量改了服务文档就与代码分叉 (与 path_source 的 0/1 同一种"号与语义必须对齐"的约定)。
+// 取值域必须与 YAML 文档保持一致: 0.0 = 不产出 pto_path,
+// 否则必须落在 [0.01, 100] m。
 TEST(InRowResolution, WireValueRangeIsPartOfTheInterface) {
   EXPECT_DOUBLE_EQ(kMinInRowResolution, 0.01);
   EXPECT_DOUBLE_EQ(kMaxInRowResolution, 100.0);
 }
 
-// 合法: 0.0 (不产出 pto_path) 与**闭区间两端**都要收下 —— 界值判成开区间就会误拒合法请求。
+// 合法: 0.0 (不产出 pto_path) 与**闭区间两端**都要收下。
 TEST(InRowResolution, AcceptsZeroAndClosedRangeBounds) {
   std::string reason = "上一个请求留下的脏串";
   EXPECT_TRUE(parseInRowResolution(0.0, reason));
@@ -327,7 +259,7 @@ TEST(InRowResolution, AcceptsZeroAndClosedRangeBounds) {
 // 非法: 越界 (两侧各取一点 + 1e-6 这种"点数爆炸"的极小值) / 负值 / NaN / ±inf 一律拒 ——
 // 极小值那一条是这条判据存在的**主要理由** (点数按 1/步长 增长, 300 m 的垄给 1e-6 = 3e8 个点),
 // NaN/Inf 则会让 PTO 路径静默消失 (have_pto 恒为 false)。
-// reason 里必须给出取值域 (含 0.0 这个特例) 与收到的值, 现场据此直接改请求。
+// reason 里必须给出取值域 (含 0.0 这个特例) 与收到的值, 现场据此直接改 YAML。
 TEST(InRowResolution, RejectsOutOfRangeAndNonFinite) {
   const double nan = std::numeric_limits<double>::quiet_NaN();
   const double inf = std::numeric_limits<double>::infinity();

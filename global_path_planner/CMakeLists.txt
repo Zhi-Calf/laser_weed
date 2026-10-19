@@ -24,12 +24,10 @@ find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
-find_package(weeder_msgs REQUIRED)
 find_package(Eigen3 3.3 REQUIRED)
 find_package(spdlog_vendor REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(Boost REQUIRED)
-find_package(nlohmann_json REQUIRED)
 
 # ---- 第三方: Clipper2 (vendored, BSL-1.0, 见 ThirdParty/clipper2/README.md) ----
 # 全覆盖路径规划 (bow.cpp) 用 Clipper2 做边界偏置 / 半平面求交 / 扫描线裁剪。
@@ -58,7 +56,6 @@ set(dependencies
   geometry_msgs
   nav_msgs
   visualization_msgs
-  weeder_msgs
 )
 
 # ---- Library ----
@@ -95,7 +92,7 @@ if(NOT GEOGRAPHICLIB_LIBRARY)
     "libgeographic-dev (Jammy/Humble).")
 endif()
 
-target_link_libraries(${PROJECT_NAME}_lib ${GEOGRAPHICLIB_LIBRARY} spdlog::spdlog clipper2 nlohmann_json::nlohmann_json)
+target_link_libraries(${PROJECT_NAME}_lib ${GEOGRAPHICLIB_LIBRARY} spdlog::spdlog clipper2)
 
 # 让 SPDLOG_* 宏携带源码文件名与行号（source location）。
 # 缺了它 SPDLOG_ACTIVE_LEVEL 取默认的 INFO, SPDLOG_DEBUG/TRACE 会被编译掉 ——
@@ -181,8 +178,7 @@ if(BUILD_TESTING)
 
   # 参数与 yaml 一致性检查 (脚本在仓库根 scripts/, 各包共用同一份): 代码里 declare_parameter
   # 了但 yaml 漏写的键, 现场只表现为"这个参数改了没用", 用构建期测试拦住。
-  # ⚠ 这里不再需要 --allow-prefix: 曾经的动态参数家族 poly_0..poly_N 已随"地块顶点改由 set_source
-  # 请求携带"删除 (yaml 与代码里都没有了), 本包的参数名现在全是字面量。
+  # 地块顶点现在由 YAML 的 poly 扁平数组提供, 参数名全是字面量, 不需要 --allow-prefix。
   find_package(ament_cmake_test REQUIRED)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   ament_add_test(params_in_yaml
@@ -195,26 +191,16 @@ if(BUILD_TESTING)
   #  (src/yaml_persist.hpp 与 planner_config_path) 一并删除"而移除 —— 本包不再写任何 yaml 文件。
   #  ⚠ gnss_localization / tractor_calibration 各自那份同名实现与它们的测试不受影响。)
 
-  # path_source 等**服务请求字段**的取值域契约测试: 0 = local / 1 = file 是**对外接口** (服务请求字段 /
-  # APP-MQTT 脚本), 改号会让现场旧脚本打到别的模式上 —— 这条钉住"号与模式的对应"、"非法值不改动 out",
-  # file 请求的 path_file 判据 (非空 + 展开后绝对路径), local 请求的顶点判据 (数量/长度/经纬度),
-  # 以及随请求携带的几何参数与 PTO 行内分辨率判据 (ridge_width > 0 / field_margin >= 0 /
-  # in_row_resolution 为 0 或 [kMinInRowResolution, kMaxInRowResolution])。
-  ament_add_gtest(test_path_source test/test_path_source.cpp)
-  target_link_libraries(test_path_source ${PROJECT_NAME}_lib)
+  # YAML 配置契约测试: poly 顶点数量/长度/经纬度, 以及 ridge_width / field_margin /
+  # in_row_resolution / first_row_margin 的取值域。
+  ament_add_gtest(test_path_config test/test_path_config.cpp)
+  target_link_libraries(test_path_config ${PROJECT_NAME}_lib)
 
-  # 外部骨架 (file 模式) 的采样契约: 段类型按 BowSkeleton::seg_types 判 (外部文件的 turn_flag
+  # 外部骨架的采样契约: 段类型按 BowSkeleton::seg_types 判 (外部标记
   # 标在掉头段的落点上, 点类型表达不了), 并且**粗掉头段**在 PTO 里也要按 path_resolution 采出
   # 弧上的点 —— 文件是骨架, 插值由节点按 path_resolution / in_row_resolution 做。
   ament_add_gtest(test_resample_segments test/test_resample_segments.cpp)
   target_link_libraries(test_resample_segments ${PROJECT_NAME}_lib)
-
-  # 再加一条: file 模式的 JSON 全覆盖路径文件解析 (src/file_path_parser.hpp)。现场文件由外部
-  # 工具产出, 解析必须"要么读对, 要么说清哪里不对": 合法样例 / 旧 txt 判无效 / unit 不支持 /
-  # 点数不足 / 字段缺失或类型不对, 各一条。
-  ament_add_gtest(test_file_path_parser test/test_file_path_parser.cpp)
-  target_link_libraries(test_file_path_parser nlohmann_json::nlohmann_json)
-  target_include_directories(test_file_path_parser PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
   # 全覆盖 (弓字形) 路径规划的行为契约测试: 覆盖率、垄间距、分辨率、凸性校验、顶点乱序/逆序
   # 输入、余量内缩。几何引擎换成 Clipper2 + Boost.Geometry 之后, 这些是"没有被换坏"的可执行

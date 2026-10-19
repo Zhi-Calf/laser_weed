@@ -108,7 +108,7 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 
 ### 工作模式门控（/work_mode）
 
-统一用 MegaTrak 的系统级 `/work_mode` 总线（`weeder_msgs/WorkMode`），不再用私有 arm 话题——这样和 `global_path_planner`、`gnss_driver` 共用同一条使能信号，只有一处需要发布。只有 `MODE_UNMANNED(1)` 才接管底盘；手动(0)/标定(2)/信号超时都停车。
+统一用 MegaTrak 的系统级 `/work_mode` 总线（`weeder_msgs/WorkMode`），不再用私有 arm 话题——由模式管理方或 APP 统一发布。只有 `MODE_UNMANNED(1)` 才接管底盘；手动(0)/标定(2)/信号超时都停车。
 
 发布端必须**持续**发（≥ 1/`work_mode_timeout_s` Hz），发一次会在超时后停车：
 
@@ -205,7 +205,8 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 
 ## 7. 整包移植进度（gnss_localization / global_path_planner）
 
-`weeder_msgs` 已作为本项目自有接口包放入工作区（含 12 msg + 3 srv + 1 action，`rosidl_generate_interfaces` 齐全，只依赖标准消息包）。按"整包原样移植"方案，接下来把这几个包整体拷进除草机工作区，只做配置适配、不改源码：
+`weeder_msgs` 已作为本项目自有接口包放入工作区（当前保留 4 个实际使用的 msg，
+只依赖标准消息库）。按"整包原样移植"方案，接下来把这几个包整体拷进除草机工作区，只做配置适配、不改源码：
 
 | 包 | 位置 | 移植动作 |
 |---|---|---|
@@ -225,9 +226,9 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 **规划器必改配置**（`global_path_planner.yaml`）：
 
 - `log_dir`：`/home/asd/logs` 按部署改
-- `path_resolution`（默认 0.2m）：除草机激光作业幅宽和履带车不同，按实际机具宽度调 `ridge_width`（垄宽在 `set_source` 服务请求里给，不是 yaml）
-- `first_row_margin`：与请求里的 `ridge_width` 必须相容（落在 [0.001, ridge_width/2]），否则请求被拒
-- `require_manual_for_change`：门控是否要求手动模式才能改路径源，实车按需
+- `path_resolution`（默认 0.2m）：`/path` 插值分辨率
+- `poly` / `ridge_width` / `field_margin`：按除草机实际田块和机具宽度填写
+- `first_row_margin`：与 `ridge_width` 必须相容（落在 [0.001, ridge_width/2]），否则节点启动失败
 
 **可直接复用、代价小的**：`global_path_planner` 的纯算法层 `bow.cpp/bow.hpp` 零 ROS 依赖（Boustrophedon 弓字形全覆盖，输入输出都是 Eigen/std），Clipper2 是 vendored（拷过去就能编），6 个 gtest 只链 `_lib` 可直接跑。GNSS 的 `giavp_parser`、`serial_port`、ENU 投影逻辑也与车型无关。
 

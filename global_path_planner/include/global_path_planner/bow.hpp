@@ -50,7 +50,7 @@ inline bool isBadInput(PlanStatus status) {
 }
 
 // 是否属于"参数配置不合理"这一类 (field_margin / ridge_width)。与 isBadInput() 对称:
-// 两类要分开 —— 一类该去查地块顶点 (set_source (local) 请求带来的那些), 另一类该去查这两个几何参数。
+// 两类要分开 —— 一类该去查 YAML 里的地块顶点 poly, 另一类该去查这两个几何参数。
 inline bool isBadParams(PlanStatus status) {
   return status == PlanStatus::kBadFieldMargin || status == PlanStatus::kBadRidgeWidth;
 }
@@ -124,7 +124,7 @@ struct BowSkeleton {
   std::vector<uint8_t> types;    // 与 points 1:1 的类型 (只有 kSegWork / kSegTurn 两种)
   // 可选的**逐段**类型 (size == points.size() - 1): 非空时**优先**用它判段; 为空时按上面的点类型
   // 用"两端都是 WORK 才算行内段"的规则推 (本机规划走这条, 弧点逐点标 TURN, 交界点标 WORK)。
-  // file 模式 (外部 JSON 骨架) 走这条: 外部文件用"点标记"表示"**上一段**是掉头段"(turn_flag 标在
+  // 外部骨架 (测试或其他调用方) 走这条: 用"点标记"表示"**上一段**是掉头段"(标记在
   // 掉头段的落点上) —— 这个口径**表达不成点类型**: 掉头段与其后的作业行共用一个端点, 那个端点
   // 无论标什么都会让一侧判错; 所以外部路径直接把段类型给进来。
   std::vector<uint8_t> seg_types;
@@ -139,7 +139,7 @@ struct BowSkeleton {
 //   * waypoint_types: 与 waypoints 逐点 1:1 的类型 (可空; 发布时写进 pose.position.z);
 //   * pto_waypoints : **行内段按 in_row_resolution 加密**; 掉头段: 本机规划的弧已在几何阶段采好
 //                     (每段都短于 path_resolution) 就原样保留, **比 path_resolution 还长的粗掉头段**
-//                     (外部骨架, 如 file 模式的 2 点掉头) 按 path_resolution 插值 —— 不然 PTO 路径
+//                     (外部骨架的 2 点掉头) 按 path_resolution 插值 —— 不然 PTO 路径
 //                     在掉头处是一条折线 (弧上最近点定位与航向差分最敏感, 见 ② 的说明);
 //   * pto_seg_types : 与 pto_waypoints 逐点 1:1 的类型 (同上, 也写进 z; 不再单独发话题)。
 // 段类型的判据: skeleton.seg_types 非空 (1:1 对段) 时**以它为准**; 否则"两端都是 WORK 才算行内段"。

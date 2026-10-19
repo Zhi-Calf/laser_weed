@@ -21,12 +21,12 @@ ros2 launch gnss_localization localization.launch.py
 ros2 launch tractor_bringup bringup.launch.py
 ```
 
-全栈启动时 **ENU 原点（datum）由 `gnss_driver` 自动确定**：上电后首次进入
-RTK 固定解时取该点经纬度作为原点，经 `transient_local` 发布到
-`/gnss_driver/origin`（之后以 1 Hz 重复发布）。`global_path_planner` 与
-`local_path_planner` 都订阅该原点做 ENU 投影，`path_controller` 直接订阅
-`/gnss_driver/odom`（已用同一原点完成 ENU 投影），全链路共享同一原点，无需
-现场手工设置 datum。`gnss:=false` 可跳过整个 GNSS 分支做台架测试。
+**ENU 原点（datum）优先取 `gnss_driver.yaml` 的 `origin_lat/origin_lon/origin_alt`**。
+这三个值必须与 `global_path_planner.yaml` 中 `poly` 的第一个顶点完全一致：
+规划器用该顶点做 ENU 投影，`gnss_driver` 用同一坐标把 RTK 位置投影成 `/gnss_driver/odom`。
+原点通过 `/gnss_driver/origin` 以 `transient_local` 发布，之后按 1 Hz 重发。
+若 `origin_*` 未配置或非法，才回退为上电后首次 RTK 固定解。
+`gnss:=false` 可跳过整个 GNSS 分支做台架测试。
 
 ---
 

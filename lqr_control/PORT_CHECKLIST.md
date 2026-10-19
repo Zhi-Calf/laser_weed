@@ -78,12 +78,11 @@
 |---|---|---|---|
 | `log_dir` | `/home/asd/logs` | 除草机日志目录 | 🟡 |
 | `path_resolution` | `0.2` | 路径插值分辨率(m)，按除草机跟踪精度调；只读参数，改后重启 | 🟡 |
-| `first_row_margin` | `0.005` | 首行离内缩边界余量；**必须与 set_source 请求的 ridge_width 相容**，落在 [0.001, ridge_width/2] | 🟡 |
-| `require_manual_for_change` | `true` | 是否要求手动模式才能改路径源，实车按需 | 🟢 |
+| `first_row_margin` | `0.005` | 首行离内缩边界余量；**必须与 YAML 里的 ridge_width 相容**，落在 [0.001, ridge_width/2] | 🟡 |
 | `miter_limit` | `2.0` | 实测改它不改变路径（见 yaml 注释），保持默认 | 🟢 |
 
-**垄宽 ridge_width 不在 yaml 里**——它在 `set_source` 服务请求里给（`SetPathSource.srv`），
-按除草机激光作业幅宽填。这是全覆盖的行距，直接决定除草覆盖率。
+`poly`、`ridge_width`、`field_margin` 和 `in_row_resolution` 都在 YAML 中配置，
+按除草机实际田块和激光作业幅宽填写。`ridge_width` 是全覆盖行距，直接决定除草覆盖率。
 
 **已知限制（重要）**：`global_path_planner` 只接受**凸多边形**田块，**不支持田块内障碍物挖空**
 （`bow.cpp:61-66`，非凸直接返回 `kNonConvex`）。除草场景若田块内有不能作业的障碍物（树、石头、
@@ -151,7 +150,6 @@ rosdep 装不了或想手动确认，这几个是硬依赖（对应 rosdep 键�
 | `eigen` | 矩阵/几何 | `libeigen3-dev` | 两个模块 + lqr_control |
 | `geographiclib` | 经纬度↔ENU 投影 | ⚠️ **Jammy/Humble 是 `libgeographic-dev`；Noble/Jazzy 是 `libgeographiclib-dev`** | 两个模块 |
 | `boost` | 多边形几何适配 | `libboost-dev` | global_path_planner |
-| `nlohmann-json-dev` | file 模式 JSON 路径解析 | `nlohmann-json3-dev` | global_path_planner |
 | `yaml-cpp` | 参数写回 | `libyaml-cpp-dev` | gnss_localization |
 | `spdlog_vendor` | 滚动日志 | ROS 包，`apt install ros-humble-spdlog-vendor` | 两个模块 |
 
@@ -161,7 +159,7 @@ rosdep 装不了或想手动确认，这几个是硬依赖（对应 rosdep 键�
 装完验证一下关键库在不在：
 
 ```bash
-dpkg -l | grep -E 'libeigen3|libgeographic|libboost-dev|nlohmann|libyaml-cpp' 
+dpkg -l | grep -E 'libeigen3|libgeographic|libboost-dev|libyaml-cpp'
 ros2 pkg prefix spdlog_vendor   # 能打印路径说明 spdlog_vendor 就位
 ```
 
@@ -212,13 +210,12 @@ ros2 launch global_path_planner planner.launch.py
 # 发无人模式（持续 1Hz，否则超时停车）
 ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: unmanned}"
 
-# 调 set_source 触发规划（local 模式示例，顶点按你的田块改）
-ros2 service call /global_path_planner/set_source weeder_msgs/srv/SetPathSource \
-  "{path_source: 0, ridge_width: 2.5, field_margin: 0.5, in_row_resolution: 1.0, poly_count: 4, poly: [lat0,lon0,alt0, lat1,lon1,alt1, lat2,lon2,alt2, lat3,lon3,alt3]}"
+# 规划器从 YAML 自动读取田块并发布 /global_path_planner/path
+ros2 topic echo /global_path_planner/path --once
 
 # 起控制（先不上实车，看它算出的转向角对不对）
 ros2 launch lqr_control lqr_control.launch.py
-ros2 topic echo /weeder/steer_cmd
+ros2 topic echo /chassis/cmd
 
 # 都对了再起 CAN 桥连实车
 ```

@@ -11,16 +11,14 @@ GNSS 接收机
     │ 串口
     ▼
 gnss_localization ──/gnss_driver/odom──► lqr_control
-    │                                        │
-    └──/gnss_driver/origin──► global_path_planner
-                                   │
-                                   ▼ /global_path_planner/path
+global_path_planner ──/global_path_planner/path──► lqr_control
+    (YAML poly 首个顶点 = ENU 原点)
 
 lqr_control ──/chassis/cmd──► weeder_base ──CAN──► VCU
                 (速度 + 前轮转角)          │
                                            └──/chassis/state
 
-/work_mode：系统级驾驶模式使能
+/work_mode：lqr_control 驾驶模式使能
 ```
 
 仿真时，`sim_vehicle` 同时替代 `gnss_localization` 和真实底盘，形成闭环：
@@ -36,10 +34,10 @@ sim_vehicle ──/gnss_driver/odom──► lqr_control
 | 包 | 职责 |
 |---|---|
 | `gnss_localization` | 读取 RTK 接收机 GIAVP 数据，投影到 ENU，发布 odom、origin、status 和 `odom→base_link` TF；提供 NTRIP 与千寻 SDK 两种差分客户端 |
-| `global_path_planner` | 根据田块边界生成弓字形全覆盖路径，提供 `/global_path_planner/set_source` 服务 |
+| `global_path_planner` | 根据 YAML 中的田块边界生成弓字形全覆盖路径 |
 | `lqr_control` | 四轮转向 LQR 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
 | `weeder_base` | CAN 协议编解码、SocketCAN 驱动、10Hz 指令发送与状态上报、全部底盘/BMS 状态接收 |
-| `weeder_msgs` | 车辆、BMS、GNSS、工作模式、路径规划等 ROS2 消息、服务与 Action |
+| `weeder_msgs` | 车辆、BMS、GNSS、工作模式等 ROS2 消息 |
 | `sim_vehicle` | 无硬件仿真：模拟 RTK、车辆运动学、工作模式，并可一键启动完整链路 |
 
 ## 底盘指令
@@ -50,9 +48,11 @@ sim_vehicle ──/gnss_driver/odom──► lqr_control
 话题：/chassis/cmd
 类型：weeder_msgs/msg/ChassisCmd
 
+std_msgs/Header header
+
 float64 speed_m_s
 float64 steer_angle_rad    # 左转为正
-uint8 gear                 # 0=N, 1=D, 2=R
+uint8 gear                 # 0=N, 1=D, 2=R, 3=无效
 uint8 steer_mode           # 0~3
 bool release_brake
 bool estop
@@ -87,7 +87,7 @@ bool ctrl_mode
 ```bash
 sudo apt update
 sudo apt install -y libeigen3-dev libgeographic-dev libboost-dev \
-                    nlohmann-json3-dev libyaml-cpp-dev ros-humble-spdlog-vendor
+                    libyaml-cpp-dev ros-humble-spdlog-vendor
 ```
 
 也可以在包含本仓库的工作区执行：
@@ -113,9 +113,9 @@ ros2 launch sim_vehicle weeder_sim.launch.py
 启动内容包括：
 
 - `sim_vehicle`：模拟 RTK、车辆运动学和工作模式
-- `global_path_planner`
+- `global_path_planner`：从 YAML 读取田块并自动规划
 - `lqr_control`
-- `sim_orchestrator`：自动完成初始化、规划、模式切换和路径下发
+- `sim_orchestrator`：确认路径生成后自动切换 UNMANNED
 - `rviz2`：预置可视化
 
 常用参数：
@@ -141,18 +141,35 @@ ros2 topic echo /chassis/cmd
 sudo ip link set can0 up type can bitrate 500000
 ```
 
-2. 启动各节点：
+2. 编辑 `global_path_planner/config/global_path_planner.yaml`，填入现场田块的
+   `poly`、`ridge_width` 和 `field_margin`。配置在启动时读取，修改后需要重启规划器。
+
+3. 启动各节点。若 RTK 差分由接收机内置 4G 模块提供，跳过差分客户端；否则
+   `ntrip_client` 与 `sdk_client` 二选一：
 
 ```bash
 ros2 launch gnss_localization localization.launch.py
+# 外置差分方案二选一（接收机自带 4G/RTCM 时不要启动）
+ros2 launch gnss_localization ntrip_client.launch.py
+# 或
+ros2 launch gnss_localization sdk_client.launch.py
+
 ros2 launch global_path_planner planner.launch.py
 ros2 launch lqr_control lqr_control.launch.py
 ros2 launch weeder_base can.launch.py interface:=can0
 ```
 
-3. 以不低于 1 Hz 持续发布无人驾驶模式：
+4. 规划器启动后立即把 `poly` 第一个顶点作为 ENU 原点并生成路径。
+   确认 RTK 固定且路径已生成后，再发布 UNMANNED 让控制器接管：
 
 ```bash
+# 确认 fix_type=4（RTK 固定解）
+ros2 topic echo /gnss_driver/status --once
+
+# 确认规划器已发布非空路径
+ros2 topic echo /global_path_planner/path --once
+
+# 路径正常后持续发布 UNMANNED
 ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
   "{mode: 1, mode_name: unmanned}"
 ```
@@ -166,6 +183,9 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 | 天线杆臂 `calib_offset_x/y` | `gnss_localization/config/gnss_driver.yaml` | 必须按实车安装位置测量 |
 | 串口 | `gnss_localization/config/*.yaml` | 按实际 `/dev/ttyUSB*` 或 `/dev/ttyACM*` 配置 |
 | 差分账号 | `ntrip_client.yaml` / `sdk_client.yaml` | 按设备分别配置 |
+| ENU 原点 | `gnss_localization/config/gnss_driver.yaml` | `origin_lat` / `origin_lon` / `origin_alt`，必须等于 `poly` 第一个顶点 |
+| 田块顶点 / 垄宽 / 田边余量 | `global_path_planner/config/global_path_planner.yaml` | `poly` / `ridge_width` / `field_margin`，修改后重启规划器 |
+| PTO 行内采样分辨率 | `global_path_planner/config/global_path_planner.yaml` | `in_row_resolution` |
 | `wheelbase` | `lqr_control/config/lqr_control.yaml` | 单阿克曼填真实轴距，双阿克曼填 `L/2` |
 | `steer_mode` | `lqr_control` | 由路径跟踪控制器随 `/chassis/cmd` 下发 |
 | `cmd_topic` | 两侧配置文件 | 默认 `/chassis/cmd` |
@@ -173,9 +193,11 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 
 ## 安全机制
 
-`lqr_control` 任一安全门控失败都会输出零速、零转角并上报故障：
+`lqr_control` 任一安全门控失败都会输出零速、零转角并停车。
+下表故障码定义在 `lqr_control/include/lqr_control/fault_codes.hpp`；当前节点
+尚未通过 ROS 话题发布故障，也未把故障码写入日志，下表是预留映射：
 
-| 门控 | 参数 | 故障码 |
+| 门控 | 参数 | 故障码（预留） |
 |---|---|---|
 | 工作模式必须是 UNMANNED | `work_mode_timeout_s` | 10101 |
 | RTK 位姿存在、新鲜且为固定解 | `odom_timeout_s` / `rtk_max_sigma` | 10102 |
