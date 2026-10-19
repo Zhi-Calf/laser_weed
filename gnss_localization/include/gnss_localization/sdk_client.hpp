@@ -7,7 +7,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <string>
 #include <thread>
-#include <tractor_monitor/heartbeat_publisher.hpp>
 
 namespace gnss_localization {
 
@@ -72,7 +71,6 @@ private:
 
 private:
   std::unique_ptr<SerialPort> serial_;
-  std::unique_ptr<tractor_monitor::HeartbeatPublisher> heartbeat_;
   std::thread worker_thread_;
   std::atomic<bool> running_{false};
   std::mutex serial_mutex_;
@@ -94,8 +92,6 @@ private:
   double rtcm_timeout_sec_{10.0};             // RTCM 停摆超时 (s): 差分断流判停摆 (需尽快重连, 故较严格)
   int serial_write_fail_count_{10};           // 串口写 RTCM 连续失败帧数阈值: 连续失败达到才上报 FAULT_SERIAL_WRITE
   int sdk_transient_error_max_{20};           // SDK 瞬时错误累计上限: 达到则判差分链路质量持续差, 重建会话
-  double serial_fault_warmup_sec_{15.0};      // 串口打开失败容忍期 (s): 超过才上报 FAULT_SERIAL
-  double sdk_init_fault_warmup_sec_{30.0};    // SDK 初始化/认证连续失败容忍期 (s): 超过才上报 FAULT_SDK_INIT_FAIL
 
 private:
   std::string log_dir_     = "/opt/agri/logs";   // 日志目录

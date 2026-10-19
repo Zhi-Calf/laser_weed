@@ -13,11 +13,7 @@ find_package(std_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(Eigen3 REQUIRED)
-# weeder_msgs: WorkMode + Heartbeat. tractor_monitor: header-only heartbeat
-# publisher. Both come from MegaTrak (see README), so they must be present in
-# the workspace before this package can build.
 find_package(weeder_msgs REQUIRED)
-find_package(tractor_monitor REQUIRED)
 
 include_directories(include ${EIGEN3_INCLUDE_DIRS})
 
@@ -29,7 +25,6 @@ set(DEPS
   visualization_msgs
   tf2
   weeder_msgs
-  tractor_monitor
 )
 
 # ---- Core library: pure algorithms, no ROS node dependencies ----

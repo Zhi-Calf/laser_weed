@@ -1,8 +1,6 @@
-# 单个被监控模块的健康快照, 由 tractor_monitor 判定。
+# 单个模块的健康快照（预留）。
 #
-# 与 Heartbeat 的区别: Heartbeat 是模块"自己说"的, NodeHealth 是 tractor_monitor
-# "判定"的 —— 它把自报状态和存活性合在一起。这个区别是必要的: 一个已经死掉的
-# 模块最后一条自报状态很可能是 OK, 光看 Heartbeat 会一直显示健康。
+# 当前系统未发布该消息。
 
 string node_name
 

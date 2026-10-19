@@ -32,12 +32,8 @@ gnss_driver:
     gnss_config_path: ""
 
     # 心跳判定:
-    #   startup_warmup_sec        启动宽限 (s): 从未收到过数据时, 超过该时长才判故障
     #                             (上电后定位收敛需要时间, 此期间不出数据属正常)。
-    #   startup_data_timeout_sec  数据超时 (s): 收到过数据后, 断流超过该时长判故障
     #                             (GIAVP 10Hz 下约 0.1s 一帧, 0.3s 即丢 3 帧, 应立即告警)。
-    startup_warmup_sec: 30.0
-    startup_data_timeout_sec: 0.3
 
     # spdlog 滚动日志
     log_dir: "/opt/agri/logs"   # 日志目录

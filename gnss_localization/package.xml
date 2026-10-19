@@ -19,7 +19,6 @@
   <depend>weeder_msgs</depend>
   <depend>geographiclib</depend>
   <depend>spdlog_vendor</depend>
-  <depend>tractor_monitor</depend>
   <depend>yaml-cpp</depend>
   <depend>eigen</depend>
 

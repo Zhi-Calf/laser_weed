@@ -24,8 +24,6 @@ sdk_client_node:
     rtcm_timeout_sec: 10.0            # RTCM 停摆超时 (s), 差分断流判停摆 (需尽快重连, 较严格)
     serial_write_fail_count: 10       # 串口写 RTCM 连续失败帧数阈值, 达到才上报 FAULT_SERIAL_WRITE (与帧率解耦)
     sdk_transient_error_max: 20       # SDK 瞬时错误累计上限, 达到则判差分链路质量持续差, 重建会话并上报 FAULT_SDK_ERROR
-    serial_fault_warmup_sec: 15.0     # 串口打开失败容忍期 (s), 超过该时长才上报 FAULT_SERIAL
-    sdk_init_fault_warmup_sec: 30.0   # SDK 初始化/认证连续失败容忍期 (s), 超过该时长才上报 FAULT_SDK_INIT_FAIL
 
     # spdlog 滚动日志
     log_dir: "/opt/agri/logs"   # 日志目录

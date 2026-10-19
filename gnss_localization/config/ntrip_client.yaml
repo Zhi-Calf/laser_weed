@@ -19,9 +19,7 @@ ntrip_client_node:
     gga_interval_sec: 1.0        # GGA 上传周期 (s)
     reconnect_delay_sec: 1.0     # 断线重连延迟 (s)
     first_rtcm_timeout_sec: 30.0 # 等待首帧 RTCM 超时 (s): 挂载点建立差分到首帧到达的容忍期
-    connect_fault_warmup_sec: 30.0  # NTRIP 连续连接失败故障容忍期 (s)
     first_gga_timeout_sec: 30.0  # 等待首个 GGA 超时 (s): 接收机定位收敛 (手册 <35s)
-    serial_fault_warmup_sec: 15.0    # 串口打开失败容忍期 (s): 本地硬件, 与网络宽限分开
     serial_write_fail_count: 10     # 串口写 RTCM 连续失败次数阈值, 达到才断开重连
     data_timeout_sec: 10.0       # 数据超时 (s), 正常接收后持续无数据判异常
     connect_timeout_sec: 10.0    # TCP 连接超时 (s)

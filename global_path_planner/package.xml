@@ -10,7 +10,7 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- rclcpp 与 sensor_msgs 是**直接依赖**, 不靠 tractor_monitor / nav_msgs 传递:
+  <!-- rclcpp 与 sensor_msgs 是**直接依赖**, 不靠 nav_msgs 传递:
        rclcpp/rclcpp.hpp 与 sensor_msgs/msg/nav_sat_fix.hpp 都在本包头文件里直接 include,
        CMakeLists 也 find_package(rclcpp)。仓内其余 C++ 包 (tractor_base / gnss_localization /
        path_controller / local_path_planner) 同样显式声明, 这里保持一致 —— 传递依赖能编过,
@@ -34,11 +34,8 @@
   <!-- file 模式 (path_source=1) 的全覆盖路径文件是 JSON, 用 nlohmann/json 解析 (header-only,
        jammy 的 nlohmann-json3-dev; rosdep 键 nlohmann-json-dev)。 -->
   <depend>nlohmann-json-dev</depend>
-  <!-- 心跳: tractor_monitor 提供 heartbeat_publisher.hpp (header-only),
-       并带出 weeder_msgs。tractor_monitor 只依赖 rclcpp + weeder_msgs,
-       不依赖本包, 所以这条边不会造成循环。 -->
+  <!-- 工作模式与路径来源服务接口。 -->
   <depend>weeder_msgs</depend>
-  <depend>tractor_monitor</depend>
   <exec_depend>rviz2</exec_depend>
   <!-- 调试用: planner.launch.py 里的 static_transform_publisher (让 RViz 的 Fixed Frame
        odom 存在)。正常运行时不用它 —— 真机的 odom 由 gnss_driver 广播。 -->

@@ -157,11 +157,6 @@ std::string base64Encode(const std::string& input) {
   return true;
 }
 
-// 本节点的故障**全部来自自身** (串口 / 接收机 / NTRIP 网络链路都是自己打交道的), 但来源仍要写清
-// 是**哪一个节点**: 故障会合并上报 (/monitor_heartbeat), APP 靠它定位责任方。
-// 值与本节点的 ROS 节点名一致 (构造函数里的 Node("ntrip_client", ...))。
-constexpr const char* kFaultSourceNode = "ntrip_client";
-
 }   // namespace
 
 NtripClient::NtripClient(const rclcpp::NodeOptions& options) : Node("ntrip_client", options) {
@@ -178,13 +173,6 @@ NtripClient::NtripClient(const rclcpp::NodeOptions& options) : Node("ntrip_clien
   loadParameters();
 
   serial_ = std::make_unique<SerialPort>();
-  // 本包 (gnss_localization) 的故障**全部来自自身** (串口 / 接收机 / NTRIP 网络链路都是本节点
-  // 自己打交道的): ① 来源一律写本节点的名字 (kFaultSourceNode = "ntrip_client");
-  // ② 状态一律用 FAULT (停作业 + 停车) —— 没有差分数据就别让整车继续走。
-
-  heartbeat_ = std::make_unique<tractor_monitor::HeartbeatPublisher>(this, get_name());
-  heartbeat_->setOk();
-
   running_       = true;
   worker_thread_ = std::thread(&NtripClient::workerLoop, this);
 }
@@ -222,9 +210,7 @@ void NtripClient::loadParameters() {
   declare_parameter("gga_interval_sec", 1.0);
   declare_parameter("reconnect_delay_sec", 1.0);
   declare_parameter("first_rtcm_timeout_sec", 30.0);
-  declare_parameter("connect_fault_warmup_sec", 30.0);
   declare_parameter("first_gga_timeout_sec", 30.0);
-  declare_parameter("serial_fault_warmup_sec", 15.0);
   declare_parameter("data_timeout_sec", 10.0);
   declare_parameter("connect_timeout_sec", 10.0);
   declare_parameter("header_timeout_sec", 15.0);
@@ -240,9 +226,7 @@ void NtripClient::loadParameters() {
   gga_interval_sec_         = get_parameter("gga_interval_sec").as_double();
   reconnect_delay_sec_      = get_parameter("reconnect_delay_sec").as_double();
   first_rtcm_timeout_sec_   = get_parameter("first_rtcm_timeout_sec").as_double();
-  connect_fault_warmup_sec_ = get_parameter("connect_fault_warmup_sec").as_double();
   first_gga_timeout_sec_    = get_parameter("first_gga_timeout_sec").as_double();
-  serial_fault_warmup_sec_  = get_parameter("serial_fault_warmup_sec").as_double();
   data_timeout_sec_         = get_parameter("data_timeout_sec").as_double();
   connect_timeout_sec_      = get_parameter("connect_timeout_sec").as_double();
   header_timeout_sec_       = get_parameter("header_timeout_sec").as_double();
@@ -252,15 +236,14 @@ void NtripClient::loadParameters() {
   SPDLOG_INFO("串口: {}@{}", serial_port_, serial_baud_);
   SPDLOG_INFO("caster: {}:{} mountpoint={} user={}", ntrip_host_, ntrip_port_, ntrip_mountpoint_, ntrip_user_);
   SPDLOG_INFO(
-    "GGA 上传周期: {:.1f}s, NTRIP 网络重连延迟: {:.1f}s, RTCM 首帧宽限: {:.1f}s, 连接故障容忍期: {:.1f}s, 等首个 GGA: {:.1f}s, 数据超时: {:.1f}s",
+    "GGA 上传周期: {:.1f}s, NTRIP 网络重连延迟: {:.1f}s, RTCM 首帧宽限: {:.1f}s, 等首个 GGA: {:.1f}s, 数据超时: {:.1f}s",
     gga_interval_sec_,
     reconnect_delay_sec_,
     first_rtcm_timeout_sec_,
-    connect_fault_warmup_sec_,
     first_gga_timeout_sec_,
     data_timeout_sec_);
   SPDLOG_INFO("连接超时: {:.1f}s, 响应头超时: {:.1f}s", connect_timeout_sec_, header_timeout_sec_);
-  SPDLOG_INFO("串口打开容忍期: {:.1f}s, 串口写 RTCM 失败容忍次数: {}", serial_fault_warmup_sec_, serial_write_fail_count_);
+  SPDLOG_INFO("串口写 RTCM 失败容忍次数: {}", serial_write_fail_count_);
   SPDLOG_INFO("日志级别: {}, 目录: {}, 文件上限: {} MB, 文件数量: {}, 控制台: {}", log_level_, log_dir_, log_file_size_mb_, log_file_count_, log_enable_console_ ? "是" : "否");
   SPDLOG_INFO("==========================================");
 }
@@ -645,8 +628,6 @@ NtripClient::SessionEnd NtripClient::runSession(int socket_fd, const std::string
 
 // 主线程: 外层负责链路建立与重连 (串口 + NTRIP), 内层 runSession 负责数据交互。
 void NtripClient::workerLoop() {
-  auto serial_fail_begin  = std::chrono::steady_clock::now();
-  auto connect_fail_begin = std::chrono::steady_clock::now();
   bool serial_failing     = false;   // 处于串口连续失败序列中
   bool connect_failing    = false;   // 处于 NTRIP 连续失败序列中
 
@@ -654,58 +635,38 @@ void NtripClient::workerLoop() {
     // ---- 1. 打开串口 (固定 200ms 重试节奏; reconnect_delay_sec_ 只用于 NTRIP 网络重连) ----
     if (!openSerial()) {
       if (!serial_failing) {
-        serial_failing    = true;
-        serial_fail_begin = std::chrono::steady_clock::now();
+        serial_failing = true;
         SPDLOG_WARN("串口打开失败: {}, 以 200ms 节奏重试", serial_port_);
-      }
-      const double fail_dur = std::chrono::duration<double>(std::chrono::steady_clock::now() - serial_fail_begin).count();
-      if (fail_dur >= serial_fault_warmup_sec_) {
-        heartbeat_->setFaultCodes({static_cast<uint32_t>(ntrip_client::FAULT_SERIAL)});
-        heartbeat_->setFault("串口持续打开失败: " + serial_port_, kFaultSourceNode);
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
       continue;
     }
     serial_failing = false;
     SPDLOG_INFO("串口打开成功: {}", serial_port_);
-    heartbeat_->setFaultCodes({});
-    heartbeat_->setOk();
 
     // ---- 2. 等待首个 GGA (接收机定位收敛, 宽限 first_gga_timeout_sec_)。超时上报 GGA 故障。 ----
     SPDLOG_INFO("等待串口 GGA ...");
     const auto first_gga = waitForGga(first_gga_timeout_sec_);
     if (!first_gga) {
-      heartbeat_->setFaultCodes({static_cast<uint32_t>(ntrip_client::FAULT_GGA_TIMEOUT)});
-      heartbeat_->setFault("等待首个 GGA 超时 (接收机无输出)", kFaultSourceNode);
       SPDLOG_WARN("等待首个 GGA 超时, 200ms 后重试");
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
       continue;
     }
     SPDLOG_INFO("收到首个 GGA");
-    heartbeat_->setFaultCodes({});
-    heartbeat_->setOk();
 
     // ---- 3. 连接 NTRIP ----
     std::string pending_data;
     int socket_fd = openNtripSocket(pending_data);
     if (socket_fd < 0) {
       if (!connect_failing) {
-        connect_failing    = true;
-        connect_fail_begin = std::chrono::steady_clock::now();
+        connect_failing = true;
         SPDLOG_WARN("NTRIP 连接失败, 以 {}s 重试", reconnect_delay_sec_);
-      }
-      const double fail_dur = std::chrono::duration<double>(std::chrono::steady_clock::now() - connect_fail_begin).count();
-      if (fail_dur >= connect_fault_warmup_sec_) {
-        heartbeat_->setFaultCodes({static_cast<uint32_t>(ntrip_client::FAULT_CONNECT)});
-        heartbeat_->setFault("NTRIP 持续连接失败", kFaultSourceNode);
       }
       std::this_thread::sleep_for(std::chrono::duration<double>(reconnect_delay_sec_));
       continue;
     }
     connect_failing = false;
     SPDLOG_INFO("NTRIP 连接成功");
-    heartbeat_->setFaultCodes({});
-    heartbeat_->setOk();
 
     // ---- 4. 数据交互 (内层)。 ----
     {
@@ -717,14 +678,7 @@ void NtripClient::workerLoop() {
             ::close(fd);
         }
       } guard{socket_fd};
-      const auto end = runSession(socket_fd, first_gga->first, first_gga->second, pending_data);
-      if (end == SessionEnd::kGgaTimeout) {
-        heartbeat_->setFaultCodes({static_cast<uint32_t>(ntrip_client::FAULT_GGA_TIMEOUT)});
-        heartbeat_->setFault("GGA 数据停摆 (超时)", kFaultSourceNode);
-      } else if (end == SessionEnd::kRtcmTimeout) {
-        heartbeat_->setFaultCodes({static_cast<uint32_t>(ntrip_client::FAULT_RTCM_TIMEOUT)});
-        heartbeat_->setFault("RTCM 数据停摆 (超时)", kFaultSourceNode);
-      }
+      runSession(socket_fd, first_gga->first, first_gga->second, pending_data);
       // 会话结束后不立即关闭串口, 由下一轮循环开头统一关闭 (确保干净的重连状态)。
     }
   }

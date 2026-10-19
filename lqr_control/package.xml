@@ -21,10 +21,7 @@
   <depend>visualization_msgs</depend>
   <depend>tf2</depend>
   <depend>eigen</depend>
-  <!-- From MegaTrak: WorkMode + Heartbeat definitions, and the header-only
-       heartbeat publisher. Must be built before this package. -->
   <depend>weeder_msgs</depend>
-  <depend>tractor_monitor</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_cmake_gtest</test_depend>

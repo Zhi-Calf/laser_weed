@@ -12,7 +12,6 @@
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <set>
 #include <string>
-#include <tractor_monitor/heartbeat_publisher.hpp>
 #include <weeder_msgs/msg/work_mode.hpp>
 #include <weeder_msgs/srv/set_path_source.hpp>
 #include <vector>
@@ -200,7 +199,6 @@ struct FileInputs {
 ///   /work_mode           工作模式 (只有允许变更的模式才受理 set_source)
 /// 服务:
 ///   ~/set_source         设置路径来源与几何参数 (唯一入口; 受理后由下一拍的 ③ 应用)
-/// 心跳: /heartbeat (tractor_monitor::HeartbeatPublisher; 故障码 104xx 见 fault_codes.hpp)
 class GlobalPathPlannerNode : public rclcpp::Node {
 public:
   explicit GlobalPathPlannerNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
@@ -277,7 +275,6 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr origin_sub_;
   rclcpp::Subscription<weeder_msgs::msg::WorkMode>::SharedPtr work_mode_sub_;
   rclcpp::Service<weeder_msgs::srv::SetPathSource>::SharedPtr set_source_srv_;
-  std::unique_ptr<tractor_monitor::HeartbeatPublisher> heartbeat_;
 
 private:
   // 算法对象 (随节点长生命周期)

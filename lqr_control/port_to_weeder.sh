@@ -3,8 +3,8 @@
 # into the laser-weeder ROS 2 workspace.
 #
 # What this does (structural only):
-#   1. copies tractor_monitor, gnss_localization, global_path_planner and
-#      lqr_control into the weeder workspace src/
+#   1. copies gnss_localization, global_path_planner and lqr_control into the
+#      weeder workspace src/
 #   2. builds them in dependency order
 # It does NOT edit any config: every value that differs between the tracked
 # tractor and the weeder (serial ports, antenna lever arm,差分 accounts, log dirs)
@@ -61,7 +61,6 @@ copy_pkg() {
 mkdir -p "$SRC_DIR"
 
 fail=0
-copy_pkg tractor_monitor   "$MEGATRAK_SRC/monitoring_node/tractor_monitor"      || fail=1
 copy_pkg gnss_localization "$MEGATRAK_SRC/sensor_node/gnss_localization"        || fail=1
 copy_pkg global_path_planner "$MEGATRAK_SRC/navigation_node/global_path_planner" || fail=1
 copy_pkg lqr_control       "$LQR_SRC/lqr_control"                               || fail=1
@@ -97,7 +96,7 @@ else
   echo "!! 警告：$MEGATRAK_SRC/scripts 不存在，params_in_yaml 测试可能失败（不影响功能）。"
 fi
 
-echo "== 构建（依赖优先：weeder_msgs -> tractor_monitor -> 其余）=="
+echo "== 构建（依赖优先：weeder_msgs -> 其余）=="
 cd "$WS"
 # shellcheck disable=SC1091
 [[ -f /opt/ros/humble/setup.bash ]] && source /opt/ros/humble/setup.bash

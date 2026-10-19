@@ -2,9 +2,8 @@
 //
 // Coding convention mirrors MegaTrak (3-digit module number + 2-digit index).
 // lqr_control occupies the same role in the chain as MegaTrak's path_controller,
-// so it reuses the 101xx range and keeps the same semantics per code, which lets
-// the existing APP / cloud fault tables and tractor_monitor watch table apply
-// unchanged.
+// so it reuses the 101xx range and keeps the same semantics per code for logs
+// and future health-reporting integrations.
 #ifndef LQR_CONTROL__FAULT_CODES_HPP_
 #define LQR_CONTROL__FAULT_CODES_HPP_
 
@@ -43,9 +42,7 @@ inline constexpr uint32_t kPathFinished = 10105;
 /// thing that catches that failure mode.
 inline constexpr uint32_t kTrackErrorLost = 10106;
 
-/// Upstream node names, used as Heartbeat.fault_source_node so the APP can
-/// attribute a fault to whoever actually caused it (see tractor_monitor/
-//  fault_source.hpp). Empty string (kFaultSourceSelf) means lqr_control itself.
+/// Upstream node names retained for fault attribution in future reporting.
 inline constexpr const char * kSourceGnss = "gnss_driver";
 inline constexpr const char * kSourcePlanner = "global_path_planner";
 inline constexpr const char * kSourceApp = "app";

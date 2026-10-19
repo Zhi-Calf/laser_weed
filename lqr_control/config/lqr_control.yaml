@@ -102,19 +102,9 @@ lqr_control:
     #       "{mode: 1, mode_name: unmanned}"
     require_unmanned: true
     work_mode_timeout_s: 3.0
-    # 启动宽限 (s)：仅在"从未收到过 /work_mode"时生效，期间不把缺模式当故障上报
-    # （心跳保持正常），给 APP/链路上电重连留时间。宽限**只抑制上报，不放开运动**。
+    # 启动宽限 (s)：仅在"从未收到过 /work_mode"时生效，期间抑制告警，
+    # 给 APP/链路上电重连留时间。宽限**只抑制告警，不放开运动**。
     # 与 MegaTrak path_controller 的 work_mode_startup_grace_s 同义同量级。
     work_mode_startup_grace_s: 20.0
-
-    # ============================================================
-    # 心跳（tractor_monitor 的 /heartbeat 总线）
-    # ============================================================
-    # 本节点以 5Hz 向 /heartbeat 发布 Heartbeat（node_name="lqr_control"），
-    # 由 tractor_monitor 汇总成 /monitor_heartbeat。故障码用 101xx 段，与 MegaTrak
-    # path_controller 同义：10101 无工作模式 / 10102 无 RTK 位姿 / 10103 无路径 /
-    # 10104 转向模式不兼容 / 10105 路径走完 / 10106 偏离目标过远。频率与故障码不可配
-    # （由库与代码约定），此处仅作说明。若整包移植了 tractor_monitor，务必同时起 monitor 节点，
-    # 否则没有汇总方，APP 看不到本节点健康状态。
 
     viz: true

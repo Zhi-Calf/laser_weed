@@ -25,7 +25,6 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(weeder_msgs REQUIRED)
-find_package(tractor_monitor REQUIRED)
 find_package(Eigen3 3.3 REQUIRED)
 find_package(spdlog_vendor REQUIRED)
 find_package(spdlog REQUIRED)
@@ -60,7 +59,6 @@ set(dependencies
   nav_msgs
   visualization_msgs
   weeder_msgs
-  tractor_monitor
 )
 
 # ---- Library ----

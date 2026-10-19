@@ -3,7 +3,6 @@
 
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
-#include <weeder_msgs/msg/heartbeat.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -18,7 +17,7 @@ namespace
 constexpr int kWarnIntervalMs = 3000;
 constexpr double kRad2Deg = 57.29577951308232;
 
-/// Node name used on the shared /heartbeat bus and in fault attribution.
+/// Node name used in logs.
 constexpr const char * kNodeName = "lqr_control";
 }  // namespace
 
@@ -30,11 +29,6 @@ LqrNode::LqrNode()
   lqr_ = std::make_unique<LQR>();
   loadParameters();
 
-  // BasicHeartbeatPublisher starts in STATUS_FAULT ("starting up") by design, so
-  // a node that wedges before reporting never looks healthy. It owns its own
-  // timer and publisher; this node only calls setOk()/setFault() as health changes.
-  heartbeat_ = std::make_unique<tractor_monitor::HeartbeatPublisher>(this, kNodeName);
-
   setupInterfaces();
 
   const auto period_ns = std::chrono::nanoseconds(
@@ -45,9 +39,9 @@ LqrNode::LqrNode()
     "LQR 控制器已启动: 轴距=%.3fm 等效轴距=%.3fm 最大转角=%.1fdeg 最大速度=%.2fm/s 频率=%.1fHz",
     wheelbase_, effective_wheelbase_, max_steer_deg_, max_speed_, control_hz_);
   RCLCPP_INFO(get_logger(),
-    "订阅 里程计=%s 路径=%s 工作模式=%s | 发布 %s | 心跳=%s",
+    "订阅 里程计=%s 路径=%s 工作模式=%s | 发布 %s",
     odom_topic_.c_str(), path_topic_.c_str(), work_mode_topic_.c_str(),
-    cmd_topic_.c_str(), tractor_monitor::kHeartbeatTopic);
+    cmd_topic_.c_str());
 }
 
 void LqrNode::loadParameters()
@@ -325,19 +319,6 @@ void LqrNode::controlTick()
     const bool fresh = ever_got_work_mode_ &&
       (t - last_work_mode_time_).seconds() <= work_mode_timeout_s_;
     if (!fresh || !unmanned_) {
-      if (ever_got_work_mode_ && !fresh) {
-        heartbeat_->setFaultCodes({fault::kNoWorkMode});
-        heartbeat_->setStopMotion("/work_mode 信号超时（模式发布方或链路中断）", fault::kSourceApp);
-      } else if (ever_got_work_mode_) {
-        heartbeat_->setFaultCodes({fault::kNoWorkMode});
-        heartbeat_->setStopMotion("当前非无人模式，不接管底盘", fault::kSourceApp);
-      } else if (!in_grace) {
-        heartbeat_->setFaultCodes({fault::kNoWorkMode});
-        heartbeat_->setFault("从未收到 /work_mode", fault::kSourceApp);
-      } else {
-        heartbeat_->setFaultCodes({});
-        heartbeat_->setOk();
-      }
       if (!in_grace) {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
           "未使能：需在 %s 上以 >= %.2fHz 持续发布 MODE_UNMANNED，输出停车",
@@ -350,11 +331,7 @@ void LqrNode::controlTick()
 
   // ---- Gate 2: RTK pose present, fresh, and of fixed-solution quality ----
   if (!has_odom_) {
-    heartbeat_->setFaultCodes({fault::kNoRtkPose});
-    if (in_grace) {
-      heartbeat_->setStopMotion("等待定位数据（启动宽限内）", fault::kSourceGnss);
-    } else {
-      heartbeat_->setFault("从未收到定位数据", fault::kSourceGnss);
+    if (!in_grace) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
         "等待定位数据 (%s)，输出停车", odom_topic_.c_str());
     }
@@ -362,8 +339,6 @@ void LqrNode::controlTick()
     return;
   }
   if ((t - last_odom_time_).seconds() > odom_timeout_s_) {
-    heartbeat_->setFaultCodes({fault::kNoRtkPose});
-    heartbeat_->setFault("定位数据超时", fault::kSourceGnss);
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
       "定位数据超时 (%.2fs > %.2fs)，输出停车",
       (t - last_odom_time_).seconds(), odom_timeout_s_);
@@ -373,8 +348,6 @@ void LqrNode::controlTick()
 
   double sigma = 0.0;
   if (!rtkQualityOk(sigma)) {
-    heartbeat_->setFaultCodes({fault::kNoRtkPose});
-    heartbeat_->setStopMotion("定位精度不足（非固定解）", fault::kSourceGnss);
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
       "定位精度不足 (sigma=%.3f > %.3f，可能非固定解)，输出停车", sigma, rtk_max_sigma_);
     publishStop();
@@ -383,11 +356,7 @@ void LqrNode::controlTick()
 
   // ---- Gate 3: a path to track, still fresh ----
   if (!has_path_) {
-    heartbeat_->setFaultCodes({fault::kNoPath});
-    if (in_grace) {
-      heartbeat_->setStopMotion("等待路径（启动宽限内）", fault::kSourcePlanner);
-    } else {
-      heartbeat_->setFault("从未收到路径", fault::kSourcePlanner);
+    if (!in_grace) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
         "等待路径 (%s)，输出停车", path_topic_.c_str());
     }
@@ -395,8 +364,6 @@ void LqrNode::controlTick()
     return;
   }
   if ((t - last_path_time_).seconds() > path_timeout_s_) {
-    heartbeat_->setFaultCodes({fault::kNoPath});
-    heartbeat_->setFault("路径超时", fault::kSourcePlanner);
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
       "路径超时 (%.2fs > %.2fs)，输出停车",
       (t - last_path_time_).seconds(), path_timeout_s_);
@@ -406,15 +373,11 @@ void LqrNode::controlTick()
 
   // ---- Gate 4: the Ackermann model must actually apply ----
   if (steer_mode_ == 2 || steer_mode_ == 3) {
-    heartbeat_->setFaultCodes({fault::kBadSteerMode});
-    heartbeat_->setFault("转向模式与阿克曼模型不兼容，拒绝接管", tractor_monitor::kFaultSourceSelf);
     publishStop();
     return;
   }
 
   // ---- All gates passed: run the controller ----
-  heartbeat_->setFaultCodes({});
-  heartbeat_->setOk();
 
   lqr_->setRobotState(robot_state_);
 
@@ -429,8 +392,6 @@ void LqrNode::controlTick()
     last_x_ = robot_state_.x;
     last_y_ = robot_state_.y;
     if (!lqr_->advanceGoal(travelled)) {
-      heartbeat_->setFaultCodes({fault::kPathFinished});
-      heartbeat_->setStopImplement("已到达路径末端", tractor_monitor::kFaultSourceSelf);
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
         "已到达路径末端，输出停车");
       publishStop();
@@ -453,8 +414,6 @@ void LqrNode::controlTick()
   // re-anchor the goal; only a genuine loss of tracking reaches this check.
   const double dist_to_goal = lqr_->distToGoal();
   if (dist_to_goal > max_track_error_m_) {
-    heartbeat_->setFaultCodes({fault::kTrackErrorLost});
-    heartbeat_->setFault("偏离跟踪目标过远，已丢失路径", tractor_monitor::kFaultSourceSelf);
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
       "偏离目标 %.2f m > %.2f m（横向/航向误差可能同时为 0 —— LQR 无沿路径误差项），"
       "输出停车。idx=%zu/%zu",

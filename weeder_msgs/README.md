@@ -10,9 +10,9 @@
 | `ChassisState` | 激光除草机底盘完整状态：State_01~11 四轮底盘/电机数据与 State_21/22 BMS |
 | `CalibrationResult` | Calibration status/result: GNSS lever arm + heading offset, `success` + `message` (failure reason) on `/calibration_manager/status` |
 | `RobotStatus` | Robot status for cloud reporting (state, battery, services, faults) |
-| `Heartbeat` | Per-node liveness + self-reported health (`/heartbeat`, `/monitor_heartbeat`) |
-| `NodeHealth` | One module's health as judged by `tractor_monitor` (self-report + liveness) |
-| `SystemHealth` | Whole-system snapshot: overall verdict + every `NodeHealth` (`/system_health`) |
+| `Heartbeat` | 预留的节点存活/健康消息，当前系统未使用 |
+| `NodeHealth` | 预留的单节点健康快照，当前系统未使用 |
+| `SystemHealth` | 预留的系统健康快照，当前系统未使用 |
 | `GnssStatus` | GNSS/RTK fix quality and solution status (`/gnss_driver/status`) |
 | `WorkMode` | Whole-vehicle work mode (`0`=manual / `1`=unmanned / `2`=calibration), latched so late joiners see the current mode |
 | `FaultReport` | Active fault codes of one node + per-code severity (`codes[]` / `levels[]`; 5-digit code = 3-digit module prefix + index) |
@@ -35,7 +35,7 @@
 
 ## Consumers
 
-当前工作区中的 `weeder_base`、`tractor_monitor`、`gnss_localization`、
+当前工作区中的 `weeder_base`、`gnss_localization`、
 `global_path_planner`、`lqr_control` 和 `sim_vehicle` 依赖本包。
 
 ## Build

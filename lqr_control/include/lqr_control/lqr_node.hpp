@@ -1,13 +1,12 @@
 // Copyright 2026. ROS 2 node wrapping the four-wheel-steering LQR controller.
 //
-// Replaces the Python stanley_control node. Subscribes to the RTK odometry from
+// Replaces the earlier Python Stanley controller. Subscribes to the RTK odometry from
 // gnss_localization and the coverage path from global_path_planner, and emits a
 // speed + front-wheel steering angle pair for the CAN bridge (weeder_base
 // chassis_node).
 //
-// Safety architecture matches MegaTrak: this node publishes on the shared
-// /heartbeat bus (tractor_monitor aggregates it), and motion is gated by the
-// system-wide /work_mode signal rather than a controller-private arm topic.
+// Motion is gated by the system-wide /work_mode signal rather than a
+// controller-private arm topic.
 #ifndef LQR_CONTROL__LQR_NODE_HPP_
 #define LQR_CONTROL__LQR_NODE_HPP_
 
@@ -18,7 +17,6 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <tractor_monitor/heartbeat_publisher.hpp>
 #include <weeder_msgs/msg/chassis_cmd.hpp>
 #include <weeder_msgs/msg/work_mode.hpp>
 #include <visualization_msgs/msg/marker.hpp>
@@ -89,10 +87,6 @@ private:
 
   // Core
   std::unique_ptr<LQR> lqr_;
-  /// Shared liveness bus publisher (header-only helper from tractor_monitor).
-  /// Must be declared after lqr_ so it is destroyed first.
-  std::unique_ptr<tractor_monitor::HeartbeatPublisher> heartbeat_;
-
   // Subscriptions / publications
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;

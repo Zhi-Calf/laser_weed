@@ -7,7 +7,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <string>
 #include <thread>
-#include <tractor_monitor/heartbeat_publisher.hpp>
 
 namespace gnss_localization {
 
@@ -51,7 +50,6 @@ private:
 
 private:
   std::unique_ptr<SerialPort> serial_;
-  std::unique_ptr<tractor_monitor::HeartbeatPublisher> heartbeat_;
   std::thread worker_thread_;
   std::atomic<bool> running_{false};
 
@@ -66,9 +64,7 @@ private:
   double gga_interval_sec_{1.0};                   // GGA 上传周期 (s)
   double reconnect_delay_sec_{1.0};                // NTRIP 连接失败后的重连延迟 (s); 串口打开/等待 GGA 等本地重试固定 200ms
   double first_rtcm_timeout_sec_{30.0};            // 等待首帧 RTCM 超时 (s)
-  double connect_fault_warmup_sec_{30.0};          // NTRIP 连续连接失败故障容忍期 (s): 超过才上报 FAULT_CONNECT
   double first_gga_timeout_sec_{30.0};             // 等待首个 GGA 超时 (s): 接收机定位收敛 (<35s)
-  double serial_fault_warmup_sec_{15.0};           // 串口打开失败容忍期 (s): 本地硬件, 失败语义与网络无关
   double data_timeout_sec_{10.0};                  // 正常后数据超时 (s)
   double connect_timeout_sec_{10.0};               // TCP 连接超时 (s)
   double header_timeout_sec_{15.0};                // 响应头读取累计超时 (s)

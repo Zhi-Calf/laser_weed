@@ -10,7 +10,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
-#include <tractor_monitor/heartbeat_publisher.hpp>
 #include <utility>
 #include <vector>
 
@@ -48,7 +47,6 @@ private:
   void handleGiavp(const GiavpData& d);
   void loadLogParameters();
   void loadParameters();
-  void updateHeartbeat();
 
 private:
   void publishFix(const GiavpData& d);
@@ -77,7 +75,6 @@ private:
   rclcpp::Publisher<weeder_msgs::msg::GnssStatus>::SharedPtr status_pub_;
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr origin_llh_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
-  std::unique_ptr<tractor_monitor::BasicHeartbeatPublisher<rclcpp::Node>> heartbeat_;
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr params_cb_handle_;
 
@@ -103,8 +100,6 @@ private:
   double calib_offset_max_xy_{2.5};        // calib_offset_x/y 范围上限 (m, 绝对杆臂长度)
   double calib_offset_max_heading_{0.6};   // calib_offset_heading 范围上限 (rad, ≈34°)
   mutable std::mutex calib_mutex_;         // 保护 calib_offset_* (参数回调 vs 定时器线程)
-  double startup_warmup_sec_{30.0};        // 启动宽限: 从未收到数据时, 超过该时长才判故障
-  double startup_data_timeout_sec_{0.3};   // 数据超时: 收到过数据后, 断流超过该时长判故障 (10Hz 约丢 3 帧)
   bool debug_giavp_{false};                // 是否打印 giavp 数据到日志
   int status_log_interval_{500};           // 状态日志条数间隔 (10Hz 下 500 条 = 50s)
   int odom_log_interval_{10};              // 里程计日志条数间隔 (10Hz 下 10 条 = 1s)
@@ -119,11 +114,7 @@ private:
 private:
   int status_log_counter_{0};                                   // 状态日志计数 (阈值见 status_log_interval_)
   int odom_log_counter_{0};                                     // 里程计日志计数 (阈值见 odom_log_interval_)
-  rclcpp::Time startup_begin_time_{0, 0, RCL_ROS_TIME};         // 启动时间
-  rclcpp::Time last_giavp_time_{0, 0, RCL_ROS_TIME};            // 最后一次收到 giavp 数据的时间
   rclcpp::Time last_origin_publish_time_{0, 0, RCL_ROS_TIME};   // 10Hz 节流
-  bool has_giavp_time_{false};                                  // 是否有 giavp 时间
-  int latest_status_{0};                                        // 最新状态
   double datum_lat_deg_{0.0};                                   // datum 纬度
   double datum_lon_deg_{0.0};                                   // datum 经度
   double datum_alt_m_{0.0};                                     // datum 高程

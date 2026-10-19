@@ -8,7 +8,7 @@
 干净了。) 文件名从 start.launch.py 改成 planner.launch.py 也是这个意思: 含义从"整套系统"变成
 "只起规划器", 老命令会直接报"文件不存在", 而不是静默地起一个底下没有车的规划器。
 
-节点发布 (节点名 global_path_planner —— 与参数文件顶层键、心跳名、tractor_monitor 的 required 名单一致):
+节点发布 (节点名 global_path_planner —— 与参数文件顶层键一致):
     /global_path_planner/path             整条弓形路径 (frame odom, 10 Hz, latched; 节点内写作 ~/path)
     ~/path_points, ~/key_points           RViz Marker (frame odom)
     ~/boundary_points, ~/inner_boundary_points
@@ -152,10 +152,9 @@ def launch_setup(context, *args, **kwargs):
         package="global_path_planner",
         executable="global_path_planner_node",
         # 节点名必须是 global_path_planner: 参数文件 config/global_path_planner.yaml 的顶层键、
-        # 节点注册的心跳名 (global_path_planner.cpp 的 HeartbeatPublisher)、tractor_monitor 的
-        # required 名单 (global_path_planner.required=true) 与 README 里的
-        # `ros2 service call /global_path_planner/set_source ...` 都得跟它一致。名字对不上时参数文件整体不生效
-        # (节点退回代码默认值: 手上没有地块顶点、垄宽 0 -> 根本排不出路径; 要等 set_source 请求), 监控也会判它缺席。
+        # 与 README 里的 `ros2 service call /global_path_planner/set_source ...` 都得跟它一致。
+        # 名字对不上时参数文件整体不生效 (节点退回代码默认值: 手上没有地块顶点、垄宽 0 -> 根本排不出路径;
+        # 要等 set_source 请求)。
         name="global_path_planner",
         output="screen",
         parameters=planner_params,

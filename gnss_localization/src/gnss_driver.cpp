@@ -126,11 +126,6 @@ void ConfigureLogger(const std::string& log_dir, size_t max_file_size_bytes, siz
   spdlog::flush_every(std::chrono::seconds(3));
 }
 
-// 本节点的故障**全部来自自身** (串口 / 接收机 / GIAVP 数据链路都是自己打交道的), 但来源仍要写清
-// 是**哪一个节点**: 故障会合并上报 (/monitor_heartbeat), APP 靠它定位责任方。
-// 值与本节点的 ROS 节点名一致 (构造函数里的 Node("gnss_driver", ...))。
-constexpr const char* kFaultSourceNode = "gnss_driver";
-
 }   // namespace
 
 GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver", options) {
@@ -153,10 +148,6 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
     SPDLOG_ERROR("打开串口 {} 失败, 心跳将报告串口故障", serial_port_path_);
   }
 
-  startup_begin_time_ = now();
-  has_giavp_time_     = false;
-  latest_status_      = 0;
-
   rclcpp::QoS qos_sensor = rclcpp::SensorDataQoS(rclcpp::KeepLast(5));
   fix_pub_               = create_publisher<sensor_msgs::msg::NavSatFix>("~/fix", qos_sensor);
   odom_pub_              = create_publisher<nav_msgs::msg::Odometry>("~/odom", qos_sensor);
@@ -166,7 +157,6 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   status_pub_            = create_publisher<weeder_msgs::msg::GnssStatus>("~/status", qos_sensor);
   origin_llh_pub_        = create_publisher<sensor_msgs::msg::NavSatFix>("~/origin", rclcpp::QoS(1).transient_local());
   tf_broadcaster_        = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
-  heartbeat_             = std::make_unique<tractor_monitor::BasicHeartbeatPublisher<rclcpp::Node>>(this, get_name());
   timer_                 = create_wall_timer(std::chrono::milliseconds(10), std::bind(&GnssDriver::timerCallback, this));
   params_cb_handle_      = add_on_set_parameters_callback(std::bind(&GnssDriver::onSetParameters, this, std::placeholders::_1));
 
@@ -207,8 +197,6 @@ void GnssDriver::loadParameters() {
   declare_parameter("calib_offset_max_xy", 2.5);        // calib_offset_x/y 范围上限 (m, 绝对杆臂)
   declare_parameter("calib_offset_max_heading", 0.6);   // calib_offset_heading 范围上限 (rad, ≈34°)
   declare_parameter("gnss_config_path", "");
-  declare_parameter("startup_warmup_sec", 30.0);
-  declare_parameter("startup_data_timeout_sec", 0.3);
   declare_parameter("debug_giavp", false);
   declare_parameter("status_log_interval", 500);
   declare_parameter("odom_log_interval", 10);
@@ -227,8 +215,6 @@ void GnssDriver::loadParameters() {
   calib_offset_max_xy_      = std::max(0.0, get_parameter("calib_offset_max_xy").as_double());
   calib_offset_max_heading_ = std::max(0.0, get_parameter("calib_offset_max_heading").as_double());
   gnss_config_path_         = get_parameter("gnss_config_path").as_string();
-  startup_warmup_sec_       = std::max(0.0, get_parameter("startup_warmup_sec").as_double());
-  startup_data_timeout_sec_ = std::max(0.05, get_parameter("startup_data_timeout_sec").as_double());
   debug_giavp_              = get_parameter("debug_giavp").as_bool();
   status_log_interval_      = static_cast<int>(std::max<int64_t>(1, get_parameter("status_log_interval").as_int()));
   odom_log_interval_        = static_cast<int>(std::max<int64_t>(1, get_parameter("odom_log_interval").as_int()));
@@ -246,7 +232,6 @@ void GnssDriver::loadParameters() {
     calib_offset_max_xy_,
     calib_offset_max_heading_);
   SPDLOG_INFO("参数持久化路径: {}", gnss_config_path_.empty() ? "(未配置, 跳过写回)" : gnss_config_path_);
-  SPDLOG_INFO("心跳预热/超时: 预热={}s 数据超时={}s", startup_warmup_sec_, startup_data_timeout_sec_);
   SPDLOG_INFO("debug_giavp: {}", debug_giavp_ ? "是" : "否");
   SPDLOG_INFO("状态日志间隔: {} 条 (10Hz 下约 {:.1f}s), 里程计日志间隔: {} 条 (10Hz 下约 {:.1f}s)", status_log_interval_, status_log_interval_ / 10.0, odom_log_interval_, odom_log_interval_ / 10.0);
   SPDLOG_INFO("日志级别: {}, 目录: {}, 文件上限: {} MB, 文件数量: {}, 控制台: {}", log_level_, log_dir_, log_file_size_mb_, log_file_count_, log_enable_console_ ? "是" : "否");
@@ -393,59 +378,6 @@ GnssDriver::PersistOutcome GnssDriver::persistParamsToYaml(const std::vector<std
   }
 }
 
-// 更新心跳状态
-void GnssDriver::updateHeartbeat() {
-  if (!heartbeat_) {
-    return;
-  }
-
-  // 串口未打开或已掉线 → 立即报 FAULT (停作业 + 停车), 不等待 GIAVP 超时。
-  if (!serial_.is_open()) {
-    heartbeat_->setFaultCodes({static_cast<uint32_t>(gnss_driver::FAULT_SERIAL)});
-    heartbeat_->setFault("串口打开失败/掉线", kFaultSourceNode);
-    return;
-  }
-
-  const auto now_t = now();
-
-  // 串口彻底不出数 = 没有位姿 = FAULT (停作业 + 停车), 整车立即安全停下。
-  // 超时判定分两种情况 (与 tractor_base 的 watchdogs 一致):
-  //   - 从未收到过数据: 用启动宽限 (startup_warmup_sec), 上电后一段时间内
-  //     还没出数是正常的, 不判故障。
-  //   - 收到过数据后中断: 用数据超时 (startup_data_timeout_sec), 一旦断流
-  //     立即判异常 (GIAVP 10Hz 下丢几帧就应告警)。
-  const double age_s = (now_t - startup_begin_time_).seconds();
-  const bool stale   = has_giavp_time_ ? (now_t - last_giavp_time_).seconds() > startup_data_timeout_sec_ : age_s > startup_warmup_sec_;
-
-  if (stale) {
-    heartbeat_->setFaultCodes({static_cast<uint32_t>(gnss_driver::FAULT_GIAVP_TIMEOUT)});
-    if (has_giavp_time_) {
-      heartbeat_->setFault("GIAVP 数据中断/超时", kFaultSourceNode);
-    } else {
-      heartbeat_->setFault("启动后未收到 GIAVP 数据", kFaultSourceNode);
-    }
-    return;
-  }
-
-  // 尚未收到数据且在启动宽限期内: 不判故障, 保持 OK 状态 (预热中)。
-  if (!has_giavp_time_) {
-    heartbeat_->setFaultCodes({});
-    heartbeat_->setOk();
-    return;
-  }
-
-  // 有数据但解算精度不够跑自动驾驶: 定位质量不足以安全跟踪 -> 停止跟踪。
-  // 本节点以 RTK 固定解 (status=4) 作为健康门槛 (ENU 原点/修正经纬度都依赖它)。
-  if (statusRank(latest_status_) < statusRank(kStatusRtkFixed)) {
-    heartbeat_->setFaultCodes({static_cast<uint32_t>(gnss_driver::FAULT_STATUS_LOW)});
-    heartbeat_->setFault("解算状态 " + std::to_string(latest_status_) + " 低于 RTK 固定解", kFaultSourceNode);
-    return;
-  }
-
-  heartbeat_->setFaultCodes({});
-  heartbeat_->setOk();
-}
-
 // 定时器回调
 void GnssDriver::timerCallback() {
   serial_.read_lines([this](const std::string& line) {
@@ -462,7 +394,6 @@ void GnssDriver::timerCallback() {
     }
   }
 
-  updateHeartbeat();
 }
 
 // 处理一行数据
@@ -475,9 +406,6 @@ void GnssDriver::processLine(const std::string& line) {
   if (!parser_.parse(line))
     return;
 
-  last_giavp_time_ = now();
-  has_giavp_time_  = true;
-  latest_status_   = parser_.data().status;
 
   handleGiavp(parser_.data());
 }

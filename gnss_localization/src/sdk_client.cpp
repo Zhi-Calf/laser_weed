@@ -237,11 +237,6 @@ void sdkDataCallback(qxwz_sdk_data_type_e type, const qxwz_void_t* data, qxwz_ui
   }
 }
 
-// 本节点的故障**全部来自自身** (串口 / 接收机 / 千寻 SDK 服务链路都是自己打交道的), 但来源仍要
-// 写清是**哪一个节点**: 故障会合并上报 (/monitor_heartbeat), APP 靠它定位责任方。
-// 值与本节点的 ROS 节点名一致 (构造函数里的 Node("sdk_client", ...))。
-constexpr const char* kFaultSourceNode = "sdk_client";
-
 }   // namespace
 
 SdkClient::SdkClient(const rclcpp::NodeOptions& options) : Node("sdk_client", options) {
@@ -259,9 +254,7 @@ SdkClient::SdkClient(const rclcpp::NodeOptions& options) : Node("sdk_client", op
 
   loadParameters();
 
-  serial_    = std::make_unique<SerialPort>();
-  heartbeat_ = std::make_unique<tractor_monitor::HeartbeatPublisher>(this, get_name());
-  heartbeat_->setOk();
+  serial_ = std::make_unique<SerialPort>();
 
   running_       = true;
   worker_thread_ = std::thread(&SdkClient::workerLoop, this);
@@ -309,8 +302,6 @@ void SdkClient::loadParameters() {
   declare_parameter("rtcm_timeout_sec", 10.0);
   declare_parameter("serial_write_fail_count", 10);
   declare_parameter("sdk_transient_error_max", 20);
-  declare_parameter("serial_fault_warmup_sec", 15.0);
-  declare_parameter("sdk_init_fault_warmup_sec", 30.0);
 
   serial_port_               = get_parameter("serial_port").as_string();
   serial_baud_               = get_parameter("serial_baud").as_int();
@@ -328,8 +319,6 @@ void SdkClient::loadParameters() {
   rtcm_timeout_sec_          = get_parameter("rtcm_timeout_sec").as_double();
   serial_write_fail_count_   = get_parameter("serial_write_fail_count").as_int();
   sdk_transient_error_max_   = get_parameter("sdk_transient_error_max").as_int();
-  serial_fault_warmup_sec_   = get_parameter("serial_fault_warmup_sec").as_double();
-  sdk_init_fault_warmup_sec_ = get_parameter("sdk_init_fault_warmup_sec").as_double();
 
   SPDLOG_INFO("========== 千寻 SDK 客户端参数加载 ==========");
   SPDLOG_INFO("串口: {}@{}", serial_port_, serial_baud_);
@@ -337,13 +326,11 @@ void SdkClient::loadParameters() {
   SPDLOG_INFO("GGA 上传周期: {:.1f}s, 重连延迟: {:.1f}s, 首 GGA 超时: {:.1f}s, 首 RTCM 超时: {:.1f}s", gga_interval_sec_, sdk_reconnect_delay_sec_, first_gga_timeout_sec_, first_rtcm_timeout_sec_);
   SPDLOG_INFO("GGA 停摆超时: {:.1f}s, RTCM 停摆超时: {:.1f}s", gga_timeout_sec_, rtcm_timeout_sec_);
   SPDLOG_INFO(
-    "SDK 认证超时: {:.1f}s, 设置坐标系超时: {:.1f}s, 串口写失败容忍帧数: {}, SDK 瞬时错误累计上限: {}, 串口打开失败容忍期: {:.1f}s, SDK 初始化/认证失败容忍期: {:.1f}s",
+    "SDK 认证超时: {:.1f}s, 设置坐标系超时: {:.1f}s, 串口写失败容忍帧数: {}, SDK 瞬时错误累计上限: {}",
     sdk_auth_timeout_sec_,
     coordsys_timeout_sec_,
     serial_write_fail_count_,
-    sdk_transient_error_max_,
-    serial_fault_warmup_sec_,
-    sdk_init_fault_warmup_sec_);
+    sdk_transient_error_max_);
   SPDLOG_INFO("日志级别: {}, 目录: {}, 文件上限: {} MB, 文件数量: {}, 控制台: {}", log_level_, log_dir_, log_file_size_mb_, log_file_count_, log_enable_console_ ? "是" : "否");
   const char* sdk_ver = qxwz_sdk_version();
   SPDLOG_INFO("千寻 SDK 版本: {}", sdk_ver ? sdk_ver : "(未知)");
@@ -524,57 +511,37 @@ bool SdkClient::startNosr() {
 
 // 主线程
 void SdkClient::workerLoop() {
-  auto serial_fail_begin  = std::chrono::steady_clock::now();
-  auto connect_fail_begin = std::chrono::steady_clock::now();
-  bool serial_failing     = false;   // 处于串口连续失败序列中
-  bool connect_failing    = false;   // 处于 SDK 初始化/认证连续失败序列中
+  bool serial_failing  = false;   // 处于串口连续失败序列中
+  bool connect_failing = false;   // 处于 SDK 初始化/认证连续失败序列中
 
   while (running_) {
     // ---- 1. 打开串口 (固定 200ms 重试节奏) ----
     if (!openSerial()) {
       if (!serial_failing) {
-        serial_failing    = true;
-        serial_fail_begin = std::chrono::steady_clock::now();
+        serial_failing = true;
         SPDLOG_WARN("串口打开失败: {}, 以 200ms 节奏重试", serial_port_);
-      }
-      const double fail_dur = std::chrono::duration<double>(std::chrono::steady_clock::now() - serial_fail_begin).count();
-      if (fail_dur >= serial_fault_warmup_sec_) {
-        heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_SERIAL)});
-        heartbeat_->setFault("串口持续打开失败: " + serial_port_, kFaultSourceNode);
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
       continue;
     }
     serial_failing = false;
     SPDLOG_INFO("串口打开成功: {}", serial_port_);
-    heartbeat_->setFaultCodes({});
-    heartbeat_->setOk();
 
     // ---- 2. 等待首个 GGA (确认串口+接收机链路正常; GGA 由接收机独立吐出, 不依赖 SDK) ----
     SPDLOG_INFO("等待串口 GGA ...");
     const auto first_gga = waitForGga(first_gga_timeout_sec_);
     if (!first_gga) {
-      heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_GGA_TIMEOUT)});
-      heartbeat_->setFault("等待首个 GGA 超时 (接收机无输出)", kFaultSourceNode);
       SPDLOG_WARN("等待首个 GGA 超时, 200ms 后重试");
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
       continue;
     }
     SPDLOG_INFO("收到首个 GGA");
-    heartbeat_->setFaultCodes({});
-    heartbeat_->setOk();
 
     // ---- 3. 初始化 + 认证 SDK ----
     if (!initSdk()) {
       if (!connect_failing) {
-        connect_failing    = true;
-        connect_fail_begin = std::chrono::steady_clock::now();
+        connect_failing = true;
         SPDLOG_WARN("千寻 SDK 初始化/认证调用失败, 以 {}s 重试", sdk_reconnect_delay_sec_);
-      }
-      const double fail_dur = std::chrono::duration<double>(std::chrono::steady_clock::now() - connect_fail_begin).count();
-      if (fail_dur >= sdk_init_fault_warmup_sec_) {
-        heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_SDK_INIT_FAIL)});
-        heartbeat_->setFault("千寻 SDK 持续初始化/认证失败", kFaultSourceNode);
       }
       std::this_thread::sleep_for(std::chrono::duration<double>(sdk_reconnect_delay_sec_));
       continue;
@@ -590,19 +557,14 @@ void SdkClient::workerLoop() {
     }
     if (!sdk_auth_ready_.load()) {
       if (!connect_failing) {
-        connect_failing    = true;
-        connect_fail_begin = std::chrono::steady_clock::now();
+        connect_failing = true;
       }
       const int32_t auth_err = sdk_error_code_.load();
       if (auth_err != 0) {
-        // 认证失败 (回调已返回错误码): 立即上报 SDK 错误, 而非等超时。
-        heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_SDK_ERROR)});
-        heartbeat_->setFault("千寻 SDK 认证失败", kFaultSourceNode);
+        // 认证失败 (回调已返回错误码)。
         SPDLOG_ERROR("千寻 SDK 认证失败, code={}, {:.0f}s 后重连", auth_err, sdk_reconnect_delay_sec_);
       } else {
         // 认证回调迟迟未到: 真正的超时。
-        heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_SDK_AUTH_TIMEOUT)});
-        heartbeat_->setFault("千寻 SDK 认证超时", kFaultSourceNode);
         SPDLOG_WARN("等待 SDK 认证超时, {:.0f}s 后重连", sdk_reconnect_delay_sec_);
       }
       qxwz_sdk_cleanup();
@@ -613,8 +575,6 @@ void SdkClient::workerLoop() {
     }
     connect_failing = false;
     SPDLOG_INFO("千寻 SDK 认证成功");
-    heartbeat_->setFaultCodes({});
-    heartbeat_->setOk();
 
     // ---- 5. 设置坐标系为 WGS84  ----
     sdk_coordsys_done_.store(false);
@@ -637,23 +597,16 @@ void SdkClient::workerLoop() {
 
     // ---- 6. 启动 NOSR 能力 (失败则无法收 RTCM, 直接重连)。  ----
     if (!startNosr()) {
-      heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_SDK_NOSR_FAIL)});
-      heartbeat_->setFault("千寻 SDK 启动 NOSR 能力失败", kFaultSourceNode);
       SPDLOG_WARN("启动 NOSR 失败, {:.0f}s 后重连", sdk_reconnect_delay_sec_);
       qxwz_sdk_stop(QXWZ_SDK_CAP_ID_NOSR);
       qxwz_sdk_cleanup();
       std::this_thread::sleep_for(std::chrono::duration<double>(sdk_reconnect_delay_sec_));
       continue;
     }
-    heartbeat_->setFaultCodes({});
-    heartbeat_->setOk();
-
     // NOSR 启动失败检查 (进入数据交互前的同步快照): start_cb 可能已早于 startNosr()
     // 返回就被调用, 这里先行捕获, 避免无谓进入 runSession。若 start_cb 延迟到运行期
     // 才回调, 则由 runSession 内部的持续检查兜底 (见 runSession)。
     if (sdk_nosr_start_failed_.load()) {
-      heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_SDK_NOSR_FAIL)});
-      heartbeat_->setFault("千寻 SDK NOSR 启动异步失败", kFaultSourceNode);
       SPDLOG_ERROR("NOSR 启动异步失败, {:.0f}s 后重连", sdk_reconnect_delay_sec_);
       qxwz_sdk_stop(QXWZ_SDK_CAP_ID_NOSR);
       qxwz_sdk_cleanup();
@@ -661,29 +614,8 @@ void SdkClient::workerLoop() {
       continue;
     }
 
-    // ---- 7. 数据交互阶段: 返回结束原因, 据此上报对应故障码。  ----
-    const auto end = runSession(first_gga->first, first_gga->second);
-    if (end == SessionEnd::kGgaTimeout) {
-      heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_GGA_TIMEOUT)});
-      heartbeat_->setFault("GGA 数据停摆 (超时)", kFaultSourceNode);
-    } else if (end == SessionEnd::kRtcmTimeout) {
-      heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_RTCM_TIMEOUT)});
-      heartbeat_->setFault("RTCM 数据停摆 (超时)", kFaultSourceNode);
-    } else if (end == SessionEnd::kSdkError) {
-      heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_SDK_ERROR)});
-      heartbeat_->setFault("SDK 内部错误 (认证/服务/网络)", kFaultSourceNode);
-    } else if (end == SessionEnd::kSdkTransientError) {
-      heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_SDK_ERROR)});
-      heartbeat_->setFault("差分链路质量持续差 (SDK 瞬时错误累计超阈值)", kFaultSourceNode);
-    } else if (end == SessionEnd::kSerialWriteFail) {
-      heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_SERIAL_WRITE)});
-      heartbeat_->setFault("串口写 RTCM 失败 (接收机可能拔出/串口异常)", kFaultSourceNode);
-    } else if (end == SessionEnd::kNosrStartFail) {
-      heartbeat_->setFaultCodes({static_cast<uint32_t>(sdk_client::FAULT_SDK_NOSR_FAIL)});
-      heartbeat_->setFault("千寻 SDK NOSR 启动异步失败", kFaultSourceNode);
-    } else {
-      // kDisconnected: running_ 变 false (正常停机), 不属故障, 无需上报。
-    }
+    // ---- 7. 数据交互阶段。 ----
+    runSession(first_gga->first, first_gga->second);
 
     // 重置 SDK 错误状态, 避免下一轮会话误判 (重连时 initSdk 也会重置)。
     sdk_error_code_.store(0);

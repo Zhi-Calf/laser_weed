@@ -1,16 +1,7 @@
-# 节点心跳 / Per-node liveness and self-reported health.
+# 节点心跳 / 健康消息（预留）。
 #
-# Published on the shared /heartbeat topic by every monitored module.
-# tractor_monitor keys its watch table by node_name and aggregates the lot
-# into a single verdict, which it republishes AS THIS SAME TYPE on
-# /monitor_heartbeat. tractor_base consumes that one as its stop condition:
-# STATUS_FAULT or a stale /monitor_heartbeat zeroes the chassis command and
-# asserts e-stop.
-#
-# Both topics are ABSOLUTE names on purpose. They are system-wide buses whose
-# whole point is that they cannot be split by namespace -- a relative name
-# resolving into some node's private namespace would yield a monitor that
-# watches nothing and reports healthy.
+# 当前系统已移除 tractor_monitor 和心跳发布/消费逻辑，本消息仅保留接口定义，
+# 供后续接入外部健康监控时使用。
 
 std_msgs/Header header      # header.stamp IS the liveness timestamp
 

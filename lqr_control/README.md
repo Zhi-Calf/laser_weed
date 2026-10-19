@@ -4,7 +4,7 @@
 
 从 MegaTrak 履带拖拉机项目 `control_node/path_controller` 移植而来，**状态方程按阿克曼/四轮转向运动学重新推导**。本包依赖项目统一的 `weeder_msgs` 接口包。
 
-替代原有的 Python 版 `stanley_control`。
+替代早期 Python Stanley 控制器。
 
 ---
 
@@ -97,7 +97,6 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 | 订阅 | `/global_path_planner/path` | `nav_msgs/Path` | `global_path_planner`（transient_local） |
 | 订阅 | `/work_mode` | `weeder_msgs/WorkMode` | 模式管理方/APP（transient_local） |
 | 发布 | `/weeder/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
-| 发布 | `/heartbeat` | `weeder_msgs/Heartbeat` | → `tractor_monitor` 汇总 |
 | 发布 | `/lqr_control/target_point` | `visualization_msgs/Marker` | RViz |
 
 **QoS 匹配是硬要求**：`gnss_driver` 用 `SensorDataQoS`（best effort）发 odom，订阅端必须是 best effort，否则一条都收不到；规划器的 path 和 `/work_mode` 都是 `transient_local`（latched），订阅端必须匹配 durability 才能让晚加入的订阅者立刻收到最后一条。本节点已按此配置。
@@ -114,19 +113,7 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: un
 
 不想启用门控就把 `require_unmanned` 设为 `false`（仅台架调试用，实车务必开着）。
 
-### 心跳（/heartbeat）
-
-本节点通过 `tractor_monitor::HeartbeatPublisher` 以 5Hz 向 `/heartbeat` 发 `Heartbeat`（`node_name="lqr_control"`），由 `tractor_monitor` 汇总成 `/monitor_heartbeat`。故障码沿用 MegaTrak 的 **101xx 段**（与 `path_controller` 同义），所以现有的故障表和 watch table 能直接套用：
-
-| 码 | 含义 | fault_source |
-|---|---|---|
-| 10101 | 无工作模式/超时/非无人 | app |
-| 10102 | 无 RTK 位姿（缺失/超时/非固定解） | gnss_driver |
-| 10103 | 无路径（缺失/超时） | global_path_planner |
-| 10104 | 转向模式与阿克曼不兼容 | 自身 |
-| 10105 | 路径走完 | 自身 |
-
-`fault_source_node` 按责任归属填上游节点名（见 `tractor_monitor/fault_source.hpp`），APP 靠它定位是谁造成的故障。若整包移植了 `tractor_monitor`，**务必同时起 monitor 节点**，否则没人汇总，APP 看不到本节点健康状态。
+安全门控失败时只在节点日志中告警并输出停车，不再发布心跳消息。
 
 ---
 
@@ -160,11 +147,11 @@ LQR 的状态量只有 `[横向误差, 航向误差]`，**没有沿路径方向�
 
 ## 5. 构建与运行
 
-**依赖前置**：本包依赖 `weeder_msgs`（WorkMode/Heartbeat）和 `tractor_monitor`（心跳库），必须先在工作区里有这两个包。
+**依赖前置**：本包依赖 `weeder_msgs`（WorkMode/ChassisCmd）。
 
 > ⚠️ **前提：`MegaTrak-main` 整棵树不能放在 `~/ros2_ws/src/` 里面。**
 > colcon 会递归扫描 `src/` 下所有 `package.xml`；如果 MegaTrak 树在 `src/` 内，
-> 它自带的旧消息包、`tractor_monitor` 等包会被扫到，再和下面 `cp` 到 `src/`
+> 它自带的旧消息包等会被扫到，再和下面 `cp` 到 `src/`
 > 顶层的副本**重名**，报 `Duplicate package names not supported`。
 > 把 MegaTrak-main 放在 `src/` **外面**（如 `~/MegaTrak-main`），下面的 `cp` 才安全。
 > 推荐直接用 `port_to_weeder.sh`（已内置此护栏），别手动逐条 cp。
@@ -175,7 +162,6 @@ LQR 的状态量只有 `[横向误差, 航向误差]`，**没有沿路径方向�
 #      mv ~/ros2_ws/src/MegaTrak-main ~/MegaTrak-main
 
 # 1) 把依赖包放进工作区（weeder_msgs 已由本项目提供）
-cp -r ~/MegaTrak-main/monitoring_node/tractor_monitor ~/ros2_ws/src/
 cp -r lqr_control ~/ros2_ws/src/
 
 # 2) 先建依赖包，再建本包（colcon 会按拓扑顺序自动处理，但首次建议显式建依赖）
@@ -219,7 +205,6 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 | 包 | 位置 | 移植动作 |
 |---|---|---|
 | `weeder_msgs` | 消息定义 | 项目自有，`colcon build` 生成接口 |
-| `tractor_monitor` | `monitoring_node/` | 原样拷，header-only 心跳库 + monitor 节点 |
 | `gnss_localization` | `sensor_node/` | 原样拷，改 config |
 | `global_path_planner` | `navigation_node/` | 原样拷，改 config |
 | `lqr_control` | 本包 | 替代 path_controller，已统一到 WorkMode |

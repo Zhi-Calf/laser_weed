@@ -50,8 +50,6 @@ if(NOT GEOGRAPHIC_LIBRARY)
     "libgeographic-dev (Jammy/Humble).")
 endif()
 
-find_package(tractor_monitor REQUIRED)
-
 # 千寻 SDK (libqxwz-pssdk)。按 CPU 架构选择静态库:
 #   aarch64: 1.15.1 (车机/工控机)
 #   x86_64:  1.9.1  (开发机)
@@ -90,7 +88,6 @@ ament_target_dependencies(gnss_driver_node
   tf2_ros
   tf2_geometry_msgs
   weeder_msgs
-  tractor_monitor
 )
 
 target_link_libraries(gnss_driver_node ${GEOGRAPHIC_LIBRARY} spdlog::spdlog yaml-cpp)
@@ -113,7 +110,6 @@ target_include_directories(ntrip_client_node PUBLIC
 
 ament_target_dependencies(ntrip_client_node
   rclcpp
-  tractor_monitor
 )
 
 target_link_libraries(ntrip_client_node spdlog::spdlog)
@@ -137,7 +133,6 @@ target_include_directories(sdk_client_node PUBLIC
 
 ament_target_dependencies(sdk_client_node
   rclcpp
-  tractor_monitor
 )
 
 target_link_libraries(sdk_client_node spdlog::spdlog ${QXWZ_SDK_LIB})

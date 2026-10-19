@@ -22,7 +22,6 @@ lqr_control ──/weeder/chassis/cmd──► weeder_base ──CAN──► VC
                                            └──/weeder/chassis/state_text
 
 /work_mode：系统级驾驶模式使能
-/heartbeat → tractor_monitor → /monitor_heartbeat
 ```
 
 仿真时，`sim_vehicle` 同时替代 `gnss_localization` 和真实底盘，形成闭环：
@@ -42,9 +41,7 @@ sim_vehicle ──/gnss_driver/odom──► lqr_control
 | `lqr_control` | 四轮转向 LQR 路径跟踪，输出统一底盘指令 `/weeder/chassis/cmd` |
 | `weeder_base` | CAN 协议编解码、SocketCAN 驱动、20ms 指令发送、全部底盘/BMS 状态接收 |
 | `weeder_msgs` | 车辆、BMS、GNSS、心跳、路径规划等 ROS2 消息、服务与 Action |
-| `tractor_monitor` | 汇总各节点 `/heartbeat`，发布系统健康状态和 `/monitor_heartbeat` |
 | `sim_vehicle` | 无硬件仿真：模拟 RTK、车辆运动学、工作模式，并可一键启动完整链路 |
-| `stanley_control` | 早期 Python Stanley 控制器，已由 `lqr_control` 取代，仅作历史参考 |
 
 ## 底盘指令
 
@@ -212,7 +209,7 @@ colcon test-result --verbose
 
 ## 来源与许可证
 
-- `gnss_localization`、`global_path_planner`、`tractor_monitor` 的部分实现移植自
+- `gnss_localization`、`global_path_planner` 的部分实现移植自
   组织内部履带拖拉机项目 MegaTrak
 - `weeder_base`、`weeder_msgs` 为激光除草机器人项目自有实现
 - 弓字形覆盖算法部分概念借鉴 [Fields2Cover](https://github.com/Fields2Cover/Fields2Cover)
