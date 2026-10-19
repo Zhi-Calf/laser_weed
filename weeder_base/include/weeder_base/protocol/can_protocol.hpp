@@ -25,10 +25,6 @@ constexpr uint32_t CHASSIS_STATE_10 = 0x180A1CD0;   // 500ms 转向电机 RL
 constexpr uint32_t CHASSIS_STATE_11 = 0x180B1CD0;   // 500ms 转向电机 RR
 constexpr uint32_t CHASSIS_STATE_21 = 0x18211CD0;   // 500ms BMS1
 constexpr uint32_t CHASSIS_STATE_22 = 0x18221CD0;   // 500ms BMS2
-// 第二版协议已取消 State_23 (0x18231CD0):
-//   max_cell_voltage → State_22 BMS_MaxVoltage
-//   system_voltage   → State_22 System_Voltage
-//   min_cell_voltage / max_cell_pos / min_cell_pos 无对应信号, 直接丢失
 
 // ADCU -> VCU
 constexpr uint32_t ADCU_TO_VCU_01 = 0x0C01D01C;   // 节点发送周期固定 100ms

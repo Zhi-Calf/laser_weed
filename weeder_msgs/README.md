@@ -6,7 +6,7 @@
 
 | Message | Description |
 |---------|-------------|
-| `ChassisCmd` | 车辆运动控制指令：速度 `speed_m_s` + 前轮转角 `steer_angle_rad` + 转向模式 `steer_mode` |
+| `ChassisCmd` | 完整底盘指令：档位、转向模式、抱闸、急停、驾驶模式、速度与前轮转角 |
 | `ChassisState` | 激光除草机底盘完整状态：State_01~11 四轮底盘/电机数据与 State_21/22 BMS |
 | `CalibrationResult` | Calibration status/result: GNSS lever arm + heading offset, `success` + `message` (failure reason) on `/calibration_manager/status` |
 | `RobotStatus` | Robot status for cloud reporting (state, battery, services, faults) |

@@ -1,7 +1,7 @@
 // 底盘 ROS2 节点实现。
 //
 // 下行: /chassis/cmd (速度 + 转角) -> ADCU_toVCU_01 (10Hz)
-// 上行: VCU Chassis_State_01~11/21/22 -> /weeder/chassis/state
+// 上行: VCU Chassis_State_01~11/21/22 -> /chassis/state
 //
 // 时钟约定 (踩过的坑, 别改回去):
 //   - 全部时间戳用 this->now() (RCL_ROS_TIME)。跨时钟源相减会抛
@@ -31,8 +31,22 @@ using namespace std::chrono_literals;
 namespace {
 
 // 默认值 (与 config/weeder_base.yaml 保持一致, 改一边记得改另一边)
-constexpr double kDefaultVcuTimeoutS   = 1.0;
+constexpr double kDefaultCmdTimeoutS   = 0.3;
 constexpr const char* kDefaultCmdTopic = "/chassis/cmd";
+
+// 未收到有效指令时的安全状态: N 档、遥控模式、抱闸未释放、速度/转角为 0。
+weeder_base::protocol::AdcuCommand01 MakeSafeStopCommand() {
+  weeder_base::protocol::AdcuCommand01 cmd{};
+  cmd.gear          = 0;
+  cmd.steer_mode    = 0;
+  cmd.release_brake = 0;
+  cmd.estop         = 0;
+  cmd.reset         = 0;
+  cmd.ctrl_mode     = 0;
+  cmd.speed_raw     = 0;
+  cmd.steer_angle   = 0;
+  return cmd;
+}
 
 }   // namespace
 
@@ -137,6 +151,7 @@ ChassisNode::ChassisNode(const rclcpp::NodeOptions& options) : Node("weeder_chas
   }
 
   loadParameters();
+  cmd01_ = MakeSafeStopCommand();
 
   // ---- CAN 驱动 ----
   // CAN 是底盘控制的命根子, 打不开即快速失败 (进程退出, 由 launch respawn 拉起):
@@ -167,25 +182,19 @@ ChassisNode::ChassisNode(const rclcpp::NodeOptions& options) : Node("weeder_chas
   });
   can_driver_->startReceiveThread();
 
-  // ---- 时间基准 ----
-  // 必须与 this->now() 同为 RCL_ROS_TIME: 跨时钟源相减会抛 std::runtime_error,
-  // 异常从定时器回调冒出会直接 terminate 进程。
-  const rclcpp::Time now = this->now();
-  last_vcu_ns_.store(now.nanoseconds(), std::memory_order_relaxed);
-  last_vcu_alive_change_ns_.store(now.nanoseconds(), std::memory_order_relaxed);
+  last_cmd_time_ = this->now();
 
   // ---- ROS 话题 ----
   // 速度与转角必须来自同一条消息、同一控制周期。
-  cmd_sub_        = create_subscription<weeder_msgs::msg::ChassisCmd>(cmd_topic_, 10, std::bind(&ChassisNode::onChassisCmd, this, std::placeholders::_1));
-  state_pub_      = create_publisher<weeder_msgs::msg::ChassisState>("/weeder/chassis/state", 10);
-  state_text_pub_ = create_publisher<std_msgs::msg::String>("/weeder/chassis/state_text", 10);
+  cmd_sub_   = create_subscription<weeder_msgs::msg::ChassisCmd>(cmd_topic_, 10, std::bind(&ChassisNode::onChassisCmd, this, std::placeholders::_1));
+  state_pub_ = create_publisher<weeder_msgs::msg::ChassisState>("/chassis/state", 10);
 
   // ---- 定时器 ----
   // CAN 下发与 ROS 状态上报统一固定为 10 Hz。
   send_timer_ = create_wall_timer(100ms, std::bind(&ChassisNode::sendCommand, this));
   pub_timer_  = create_wall_timer(100ms, std::bind(&ChassisNode::publishState, this));
 
-  SPDLOG_INFO("ChassisNode 启动: 接口={} vcu_timeout={:.2f}s rate=10Hz", can_interface_, vcu_timeout_s_);
+  SPDLOG_INFO("ChassisNode 启动: 接口={} rate=10Hz", can_interface_);
   SPDLOG_INFO("底盘指令: {}", cmd_topic_);
 }
 
@@ -218,45 +227,47 @@ void ChassisNode::loadLogParameters() {
 
 void ChassisNode::loadParameters() {
   declare_parameter("can_interface", "vcan0");
-  declare_parameter("vcu_timeout_s", kDefaultVcuTimeoutS);
+  declare_parameter("cmd_timeout_s", kDefaultCmdTimeoutS);
   declare_parameter("cmd_topic", kDefaultCmdTopic);
 
-  can_interface_                 = get_parameter("can_interface").as_string();
-  vcu_timeout_s_                 = get_parameter("vcu_timeout_s").as_double();
-  cmd_topic_                     = get_parameter("cmd_topic").as_string();
+  can_interface_ = get_parameter("can_interface").as_string();
+  cmd_timeout_s_ = get_parameter("cmd_timeout_s").as_double();
+  cmd_topic_     = get_parameter("cmd_topic").as_string();
 
   // ---- 参数边界校验 ----
   // 参数非法时回退到默认值并告警, 不用静默吸收错误值。
-  if (vcu_timeout_s_ <= 0.0) {
-    SPDLOG_WARN("vcu_timeout_s={:.3f} 非法, 回退为 {:.1f} s", vcu_timeout_s_, kDefaultVcuTimeoutS);
-    vcu_timeout_s_ = kDefaultVcuTimeoutS;
+  if (cmd_timeout_s_ <= 0.0) {
+    SPDLOG_WARN("cmd_timeout_s={:.3f} 非法, 回退为 {:.1f} s", cmd_timeout_s_, kDefaultCmdTimeoutS);
+    cmd_timeout_s_ = kDefaultCmdTimeoutS;
   }
   if (cmd_topic_.empty()) {
     SPDLOG_WARN("cmd_topic 为空, 回退为 {}", kDefaultCmdTopic);
     cmd_topic_ = kDefaultCmdTopic;
   }
-  SPDLOG_INFO("参数: vcu_timeout={:.2f}s", vcu_timeout_s_);
 }
 
 // ---- 下行: 速度 + 前轮转角合并指令 ----
 void ChassisNode::onChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr msg) {
   std::lock_guard<std::mutex> lock(cmd_mutex_);
+  last_cmd_time_ = this->now();
+  cmd_timed_out_ = false;
 
-  cmd01_.gear      = 1;   // D 档
-  cmd01_.ctrl_mode = 1;   // 无人驾驶
-  cmd01_.estop     = 0;
-  cmd01_.steer_mode = msg->steer_mode & 0x03;
+  cmd01_.gear          = msg->gear & 0x03;
+  cmd01_.steer_mode    = msg->steer_mode & 0x03;
+  cmd01_.release_brake = msg->release_brake ? 1 : 0;
+  cmd01_.estop         = msg->estop ? 1 : 0;
+  cmd01_.ctrl_mode     = msg->ctrl_mode ? 1 : 0;
 
   // m/s -> mm/s (协议速度 uint16, 分辨率 1 mm/s)
   const double max_speed_mps = static_cast<double>(protocol::limits::kMaxSpeedMmps) / 1000.0;
   const double v             = std::clamp(msg->speed_m_s, 0.0, max_speed_mps);
-  cmd01_.speed_raw = static_cast<uint16_t>(std::llround(v * 1000.0));
+  cmd01_.speed_raw           = static_cast<uint16_t>(std::llround(v * 1000.0));
 
   // rad -> 0.1°。左正右负与协议同向, 不取反。
   const double max_steer_deg = static_cast<double>(protocol::limits::kMaxSteerAngleRaw) * 0.1;
   const double steer_deg     = msg->steer_angle_rad * 180.0 / M_PI;
   const double clamped_deg   = std::clamp(steer_deg, -max_steer_deg, max_steer_deg);
-  cmd01_.steer_angle       = static_cast<int16_t>(std::llround(clamped_deg * 10.0));
+  cmd01_.steer_angle         = static_cast<int16_t>(std::llround(clamped_deg * 10.0));
 }
 
 // ---- 10Hz 周期下发 ADCU_toVCU_01 ----
@@ -268,41 +279,18 @@ void ChassisNode::sendCommand() {
   protocol::AdcuCommand01 out_cmd{};
   {
     std::lock_guard<std::mutex> lock(cmd_mutex_);
-    const rclcpp::Time now     = this->now();
-    const double vcu_age       = static_cast<double>(now.nanoseconds() - last_vcu_ns_.load(std::memory_order_relaxed)) * 1e-9;
-    const double vcu_alive_age = static_cast<double>(now.nanoseconds() - last_vcu_alive_change_ns_.load(std::memory_order_relaxed)) * 1e-9;
-
-    // motion_inhibit: VCU 异常时禁止运动, 转向强制回正。
-    bool motion_inhibit = false;
-
-    // VCU 状态帧超时 -> 停车。
-    // 不锁存 estop: VCU 恢复上报后自动回到正常控制, 无需人工干预。
-    if (vcu_age > vcu_timeout_s_) {
-      cmd01_.speed_raw  = 0;
-      motion_inhibit    = true;
-      vcu_stuck_logged_ = false;
-      if (!vcu_stale_logged_) {
-        vcu_stale_logged_ = true;
-        SPDLOG_WARN("VCU 状态帧超时 {:.2f}s > {:.2f}s, 已停车", vcu_age, vcu_timeout_s_);
-      }
-    } else if (vcu_alive_age > vcu_timeout_s_) {
-      // State_01 还在发, 但 AliveCounter 不递增: 说明 VCU 控制程序卡死。
-      cmd01_.speed_raw  = 0;
-      motion_inhibit    = true;
-      vcu_stale_logged_ = false;
-      if (!vcu_stuck_logged_) {
-        vcu_stuck_logged_ = true;
-        SPDLOG_WARN("VCU alive_counter 已 {:.2f}s 未变化 (>{:.2f}s), 已停车", vcu_alive_age, vcu_timeout_s_);
+    const double cmd_age = (this->now() - last_cmd_time_).seconds();
+    if (cmd_age > cmd_timeout_s_) {
+      const uint8_t alive_counter = cmd01_.alive_counter;
+      cmd01_                      = MakeSafeStopCommand();
+      cmd01_.alive_counter        = alive_counter;
+      if (!cmd_timed_out_) {
+        cmd_timed_out_ = true;
+        SPDLOG_WARN("底盘指令超时 {:.2f}s > {:.2f}s, 已清零并停车", cmd_age, cmd_timeout_s_);
       }
     } else {
-      vcu_stale_logged_ = false;
-      vcu_stuck_logged_ = false;
+      cmd_timed_out_ = false;
     }
-
-    if (motion_inhibit) {
-      cmd01_.steer_angle = 0;
-    }
-
     cmd01_.alive_counter = static_cast<uint8_t>((cmd01_.alive_counter + 1) & 0xFF);
     out_cmd              = cmd01_;   // 复制出临界区, CAN 发送不持锁
   }
@@ -321,16 +309,7 @@ void ChassisNode::onCanReceive(const protocol::CanFrame& frame) {
       if (!protocol::CanProtocol::decodeState01(frame, s)) {
         return;
       }
-      const int64_t now_ns = this->now().nanoseconds();
-      // VCU 状态时间戳用 atomic 记录, sendCommand() 无需为读时间戳抢 state_mutex_。
-      last_vcu_ns_.store(now_ns, std::memory_order_relaxed);
-
       std::lock_guard<std::mutex> lock(state_mutex_);
-      if (!vcu_alive_initialized_ || s.alive_counter != last_vcu_alive_counter_) {
-        last_vcu_alive_counter_ = s.alive_counter;
-        vcu_alive_initialized_  = true;
-        last_vcu_alive_change_ns_.store(now_ns, std::memory_order_relaxed);
-      }
       state01_       = s;
       state01_valid_ = true;
 
@@ -430,14 +409,11 @@ void ChassisNode::onCanReceive(const protocol::CanFrame& frame) {
   }
 }
 
-// ---- 上行: 完整状态 + 兼容文本发布 (10Hz) ----
+// ---- 上行: 完整状态发布 (10Hz) ----
 void ChassisNode::publishState() {
   auto msg             = std::make_unique<weeder_msgs::msg::ChassisState>();
   msg->header.stamp    = this->now();
   msg->header.frame_id = "base_link";
-  protocol::ChassisState01 text_state01;
-  protocol::ChassisState02 text_state02;
-  protocol::ChassisState03 text_state03;
   {
     // 与 CAN 接收线程共享全部状态, 读取必须加锁, 否则是数据竞争 (UB)。
     std::lock_guard<std::mutex> lock(state_mutex_);
@@ -503,40 +479,8 @@ void ChassisNode::publishState() {
     msg->bms_error_code       = state22_.error_code;
     msg->bms_max_cell_voltage = state22_.max_cell_voltage;
     msg->system_voltage       = state22_.system_voltage;
-
-    text_state01 = state01_;
-    text_state02 = state02_;
-    text_state03 = state03_;
   }
   state_pub_->publish(std::move(msg));
-
-  std_msgs::msg::String text;
-  text.data = fmtState(text_state01, text_state02, text_state03);
-  state_text_pub_->publish(text);
-}
-
-std::string ChassisNode::fmtState(const protocol::ChassisState01& s1, const protocol::ChassisState02& s2, const protocol::ChassisState03& s3) {
-  char buf[384];
-  std::snprintf(
-    buf,
-    sizeof(buf),
-    "speed=%u mm/s gear=%u estop=%u mode=%u alive=%u bumper=%u "
-    "rpm=[%u,%u,%u,%u] steer=[%.1f,%.1f,%.1f,%.1f]",
-    static_cast<unsigned>(s1.speed_raw),
-    static_cast<unsigned>(s1.gear),
-    static_cast<unsigned>(s1.estop),
-    static_cast<unsigned>(s1.ctrl_mode),
-    static_cast<unsigned>(s1.alive_counter),
-    static_cast<unsigned>(s1.bumper),
-    static_cast<unsigned>(s2.motor_speed_fl),
-    static_cast<unsigned>(s2.motor_speed_fr),
-    static_cast<unsigned>(s2.motor_speed_rl),
-    static_cast<unsigned>(s2.motor_speed_rr),
-    static_cast<double>(s3.steer_angle_fl) * 0.1,
-    static_cast<double>(s3.steer_angle_fr) * 0.1,
-    static_cast<double>(s3.steer_angle_rl) * 0.1,
-    static_cast<double>(s3.steer_angle_rr) * 0.1);
-  return std::string(buf);
 }
 
 }   // namespace weeder_base

@@ -18,8 +18,7 @@ gnss_localization ──/gnss_driver/odom──► lqr_control
 
 lqr_control ──/chassis/cmd──► weeder_base ──CAN──► VCU
                 (速度 + 前轮转角)          │
-                                           ├──/weeder/chassis/state
-                                           └──/weeder/chassis/state_text
+                                           └──/chassis/state
 
 /work_mode：系统级驾驶模式使能
 ```
@@ -53,6 +52,11 @@ sim_vehicle ──/gnss_driver/odom──► lqr_control
 
 float64 speed_m_s
 float64 steer_angle_rad    # 左转为正
+uint8 gear                 # 0=N, 1=D, 2=R
+uint8 steer_mode           # 0~3
+bool release_brake
+bool estop
+bool ctrl_mode
 ```
 
 `lqr_control` 每拍发布一次该消息，`weeder_base/chassis_node` 接收后转换为
@@ -71,8 +75,7 @@ float64 steer_angle_rad    # 左转为正
 统一发布为：
 
 ```text
-/weeder/chassis/state       weeder_msgs/msg/ChassisState
-/weeder/chassis/state_text  std_msgs/msg/String（兼容旧订阅者）
+/chassis/state  weeder_msgs/msg/ChassisState
 ```
 
 每个状态块带有 `*_valid` 标志，用于区分“值为 0”和“尚未收到该帧”。
@@ -183,9 +186,7 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 
 `weeder_base` 另有：
 
-- VCU `State_01` 超时：停车
-- VCU `alive_counter` 不递增：判定 VCU 卡死并停车
-- VCU 状态超时或 alive 卡死：目标转角强制回正
+- 未收到指令或 `/chassis/cmd` 超过 `0.3s` 未更新：N 档、遥控模式、不释放抱闸、车速和转角清零
 - 协议层最终限幅：车速 `0~1400 mm/s`、转角 `±90.0°`
 
 ## 测试

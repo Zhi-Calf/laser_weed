@@ -1,12 +1,10 @@
 #pragma once
 
 #include <array>
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <rclcpp/rclcpp.hpp>
-#include <std_msgs/msg/string.hpp>
 #include <string>
 
 #include "weeder_base/can_driver.hpp"
@@ -22,12 +20,8 @@ namespace weeder_base {
 //
 // 下行: /chassis/cmd (速度 + 前轮转角) -> ADCU_toVCU_01 (10Hz)
 // 上行: VCU Chassis_State_01~11/21/22
-//       -> /weeder/chassis/state (类型化完整状态)
-//       -> /weeder/chassis/state_text (兼容旧监控的一行文本)
+//       -> /chassis/state (类型化完整状态)
 //
-// 安全策略集中在 sendCommand() 一处裁决 (见 .cpp 注释):
-//   VCU 看门狗 (vcu_timeout_s) -> 停车, 不锁存 (VCU 恢复即自动恢复);
-//   VCU 看门狗触发 -> 转向强制回正。
 class ChassisNode : public rclcpp::Node {
 public:
   explicit ChassisNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
@@ -42,15 +36,12 @@ private:
   void sendCommand();
   void publishState();
 
-  static std::string fmtState(const protocol::ChassisState01& s1, const protocol::ChassisState02& s2, const protocol::ChassisState03& s3);
-
 private:
   static constexpr size_t kWheelCount = 4;
 
   std::unique_ptr<CanDriver> can_driver_;
   rclcpp::Subscription<weeder_msgs::msg::ChassisCmd>::SharedPtr cmd_sub_;
   rclcpp::Publisher<weeder_msgs::msg::ChassisState>::SharedPtr state_pub_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_text_pub_;
   rclcpp::TimerBase::SharedPtr send_timer_;
   rclcpp::TimerBase::SharedPtr pub_timer_;
 
@@ -73,23 +64,18 @@ private:
   bool state21_valid_ = false;
   bool state22_valid_ = false;
 
-  std::atomic<int64_t> last_vcu_ns_{0};                // 最近一帧 State_01 的时刻 (ns, RCL_ROS_TIME)
-  std::atomic<int64_t> last_vcu_alive_change_ns_{0};   // alive_counter 最近变化的时刻
+private:
+  uint8_t last_logged_ctrl_mode_ = 0;
+  bool ctrl_mode_logged_once_    = false;
+  bool cmd_timed_out_            = false;
+  uint16_t last_bms_error_code_  = 0;
+  bool bms_error_logged_once_    = false;
 
 private:
-  uint8_t last_vcu_alive_counter_ = 0;
-  bool vcu_alive_initialized_     = false;
-  bool vcu_stale_logged_          = false;
-  bool vcu_stuck_logged_          = false;
-  uint8_t last_logged_ctrl_mode_  = 0;
-  bool ctrl_mode_logged_once_     = false;
-  uint16_t last_bms_error_code_   = 0;
-  bool bms_error_logged_once_     = false;
-
-private:
-  std::string can_interface_;   // CAN 接口名
-  std::string cmd_topic_;       // 速度 + 转角合并指令话题
-  double vcu_timeout_s_;        // VCU 状态帧超时 (s) -> 停车
+  std::string can_interface_;    // CAN 接口名
+  std::string cmd_topic_;        // 速度 + 转角合并指令话题
+  double cmd_timeout_s_;         // 底盘指令超时 (s)
+  rclcpp::Time last_cmd_time_;   // 最近一次收到底盘指令的时刻
 
 private:
   std::string log_dir_;       // spdlog 滚动日志目录

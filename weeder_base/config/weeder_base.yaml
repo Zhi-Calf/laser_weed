@@ -3,9 +3,9 @@ weeder_chassis:
     # CAN 总线
     can_interface: "vcan0"        # vcan0 = 仿真/台架虚拟总线, can0 = 实车
 
-    # 指令与 VCU 状态
+    # 控制指令
     cmd_topic: "/chassis/cmd"  # 速度 + 前轮转角合并指令 (weeder_msgs/ChassisCmd)
-    vcu_timeout_s: 1.0            # VCU 状态帧超时 (s) -> 停车 (不锁存, VCU 恢复即恢复)
+    cmd_timeout_s: 0.3             # 超过该时长未收到新指令 -> 清零停车
 
     # spdlog 滚动日志
     log_dir: "/opt/agri/logs"     # 目录不可写时自动回退到 $ROS_HOME/logs

@@ -299,9 +299,13 @@ bool LqrNode::rtkQualityOk(double & worst_sigma) const
 void LqrNode::publishStop()
 {
   weeder_msgs::msg::ChassisCmd zero;
+  zero.gear = 0;
+  zero.steer_mode = 0;
+  zero.release_brake = false;
+  zero.estop = true;
+  zero.ctrl_mode = false;
   zero.speed_m_s = 0.0;
   zero.steer_angle_rad = 0.0;
-  zero.steer_mode = static_cast<uint8_t>(steer_mode_);
   cmd_pub_->publish(zero);
 }
 
@@ -434,9 +438,13 @@ void LqrNode::controlTick()
   // 速度与转角在同一帧发布，保证 CAN 桥使用的是同一控制周期内的运动学组合。
   // 转角单位为 rad、左正，与 ADCU_toVCU_01 的符号约定一致。
   weeder_msgs::msg::ChassisCmd cmd;
+  cmd.gear = 1;
+  cmd.steer_mode = static_cast<uint8_t>(steer_mode_);
+  cmd.release_brake = true;
+  cmd.estop = false;
+  cmd.ctrl_mode = true;
   cmd.speed_m_s = v;
   cmd.steer_angle_rad = delta;
-  cmd.steer_mode = static_cast<uint8_t>(steer_mode_);
   cmd_pub_->publish(cmd);
 
   RCLCPP_DEBUG(get_logger(),

@@ -12,7 +12,6 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(std_msgs REQUIRED)
 find_package(weeder_msgs REQUIRED)
 find_package(spdlog_vendor REQUIRED)
 find_package(spdlog REQUIRED)
@@ -44,7 +43,6 @@ target_include_directories(${PROJECT_NAME}_lib PUBLIC
 
 ament_target_dependencies(${PROJECT_NAME}_lib
   rclcpp
-  std_msgs
   weeder_msgs
 )
 
@@ -88,7 +86,7 @@ install(DIRECTORY config/
 
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME}_lib weeder_base_protocol)
-ament_export_dependencies(rclcpp std_msgs weeder_msgs)
+ament_export_dependencies(rclcpp weeder_msgs)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)

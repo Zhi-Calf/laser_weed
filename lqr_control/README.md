@@ -68,6 +68,11 @@ MegaTrak 的 `lqr_R_w` 是**角速度代价**，本包的 `lqr_R_steer` 是**转
 
 | 字段 | 单位 | 约定 |
 |---|---|---|
+| `gear` | — | 0=N，1=D，2=R |
+| `steer_mode` | — | 0=单阿克曼，1=双阿克曼，2=平移，3=原地 |
+| `release_brake` | — | 是否释放抱闸 |
+| `estop` | — | 是否远程急停 |
+| `ctrl_mode` | — | false=遥控，true=无人驾驶 |
 | `speed_m_s` | m/s | 前进速度 |
 | `steer_angle_rad` | rad | 前轮转角，左正右负 |
 
