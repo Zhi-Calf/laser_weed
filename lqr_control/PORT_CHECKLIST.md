@@ -76,10 +76,10 @@
 
 | 参数 | 履带车原值 | 除草机要改成 | 级别 |
 |---|---|---|---|
-| `log_dir` | `/home/asd/logs` | 除草机日志目录 | 🟡 |
+| `log_dir` | `~/.ros/logs` | 默认用户目录可写；实车固定目录按部署改 | 🟢 |
 | `path_resolution` | `0.2` | 路径插值分辨率(m)，按除草机跟踪精度调；只读参数，改后重启 | 🟡 |
 | `first_row_margin` | `0.005` | 首行离内缩边界余量；**必须与 YAML 里的 ridge_width 相容**，落在 [0.001, ridge_width/2] | 🟡 |
-| `miter_limit` | `2.0` | 实测改它不改变路径（见 yaml 注释），保持默认 | 🟢 |
+| `miter_limit` | `2.0` | 预留参数，实测改它不改变向内偏置结果，保持默认 | 🟢 |
 
 `poly`、`ridge_width` 和 `field_margin` 都在 YAML 中配置，
 按除草机实际田块和激光作业幅宽填写。`ridge_width` 是全覆盖行距，直接决定除草覆盖率。

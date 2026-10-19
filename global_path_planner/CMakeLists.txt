@@ -200,8 +200,8 @@ if(BUILD_TESTING)
   target_link_libraries(test_bow_detail ${PROJECT_NAME}_lib)
   target_include_directories(test_bow_detail PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-  # 全覆盖 (弓字形) 路径规划的行为契约测试: 覆盖率、垄间距、分辨率、凸性校验、顶点乱序/逆序
-  # 输入、余量内缩。几何引擎换成 Clipper2 + Boost.Geometry 之后, 这些是"没有被换坏"的可执行
+  # 全覆盖 (弓字形) 路径规划的行为契约测试: 覆盖率、垄间距、分辨率、凸性校验、简单多边形校验、
+  # 逆序/旋转起点输入、余量内缩。几何引擎换成 Clipper2 + Boost.Geometry 之后, 这些是"没有被换坏"的可执行
   # 证据 —— 覆盖率那条尤其重要: 旧版首垄锚在 0.3 m 处, 首末垄之间是 ridge_width 的整数倍间
   # 距, 田块宽度不是整数倍时会在远端留下最多 ridge_width/2 的漏覆盖带。
   # 链 ${PROJECT_NAME}_lib: 算法只编一遍, 与节点里跑的是同一份实现。

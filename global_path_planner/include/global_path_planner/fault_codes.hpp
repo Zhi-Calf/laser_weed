@@ -26,8 +26,10 @@ namespace global_path_planner {
 //   10407  路径规划失败: ridge_width 不合理 (<= 0, 或内缩区域里排不出垄线——区域相对垄宽太窄,
 //          kBadRidgeWidth)
 //   10408  路径规划失败: 内部兜底 (流程跑完仍无路点, kInternal)
+//   10409  路径规划失败: 输入边界自相交 (按给定顶点顺序不是简单多边形, kSelfIntersecting)
 //
 // 顺序与分组: 通用/兜底 -> 规划失败·输入类 -> 规划失败·参数类 -> 规划失败·内部兜底。
+// 自相交码 10409 是后加的输入类细分, 编号追加在末尾以保持已有码不变。
 // 规划失败细分与 PlanStatus 的两组 (isBadInput() / isBadParams()) 一一对应。
 // **PlanStatus 的取值重排不影响这里**: 心跳发出去的是本表的 ID, 与枚举内部的号无关 —— 枚举
 // 重排后这一列一个字都不用动 (planStatusFaultCode 按符号映射)。
@@ -46,14 +48,15 @@ enum GlobalPathPlannerFaultCode : uint32_t {
   FAULT_PLAN_BAD_FIELD_MARGIN = 10406,   // kBadFieldMargin: field_margin 不合理
   FAULT_PLAN_BAD_RIDGE_WIDTH  = 10407,   // kBadRidgeWidth : ridge_width 不合理
   FAULT_PLAN_INTERNAL         = 10408,   // kInternal      : 内部兜底
+  FAULT_PLAN_SELF_INTERSECTING = 10409,  // kSelfIntersecting: 输入边界自相交 (非简单多边形)
 };
 
 // PlanStatus -> 故障码: 心跳里 fault_codes 发出去的就是这些 ID, APP/云端据此区分"为什么没有
-// 路径"(点数不够 / 重复点太多 / 退化共线 / 非凸 / field_margin 不合理 / ridge_width 不合理 /
-// 内部错误), 不必去看日志文本。
+// 路径"(点数不够 / 重复点太多 / 退化共线 / 非凸 / 自相交 / field_margin 不合理 /
+// ridge_width 不合理 / 内部错误), 不必去看日志文本。
 // 三点约定:
 //   * kOk 映射到 FAULT_NONE —— 函数是全的, 调用方不用特判"成功"这一支;
-//   * 每个失败状态都有**唯一**专码 (10402..10408), 不与通用码 10401 混用;
+//   * 每个失败状态都有**唯一**专码 (10402..10409), 不与通用码 10401 混用;
 //   * 新增 PlanStatus 细分时**必须**在这里登记: 漏了 case 会被 -Wswitch 警告顶出来, 真漏了
 //     也还有末尾的 FAULT_PLAN_FAILED 兜底 (退化成通用码), 不会静默丢故障。
 inline uint32_t planStatusFaultCode(PlanStatus status) {
@@ -68,6 +71,8 @@ inline uint32_t planStatusFaultCode(PlanStatus status) {
       return static_cast<uint32_t>(FAULT_PLAN_HULL_TOO_FEW);
     case PlanStatus::kNonConvex:
       return static_cast<uint32_t>(FAULT_PLAN_NON_CONVEX);
+    case PlanStatus::kSelfIntersecting:
+      return static_cast<uint32_t>(FAULT_PLAN_SELF_INTERSECTING);
     case PlanStatus::kBadFieldMargin:
       return static_cast<uint32_t>(FAULT_PLAN_BAD_FIELD_MARGIN);
     case PlanStatus::kBadRidgeWidth:

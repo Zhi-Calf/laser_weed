@@ -152,13 +152,11 @@ TEST(BowMinWidthDirection, ExtremelyTallRectangle) {
   EXPECT_NEAR(probe.deg, 90.0, 1e-9);
 }
 
-// 相邻边短于 kMinVertexSpacing (1e-6) 时跳过: 构造近似 20 x 5 的矩形, 左上角多一个距原顶点
-// ~7.1e-7 的顶点, 规范化后多边形里因此有一条亚微米边 (它若参与比较, 垂直宽度会是 20 ——
-// 一个毫无意义的"扫描方向候选")。断言跳过退化边后仍取水平长边方向 0°, 且规划照常成功。
-TEST(BowMinWidthDirection, SkipsSubMicronEdge) {
-  // 输入顺序刻意让两个近重合点 (0.0000005, 5.0000005) 与 (0,5) 不相邻 —— 否则 preparePolygon 的去重
-  // 会先把它们合并, 亚微米边就构造不出来了。
-  const Polygon_2 field  = {Point_2(0.0, 0.0), Point_2(20.0, 0.0), Point_2(0.0000005, 5.0000005), Point_2(20.0, 5.0), Point_2(0.0, 5.0)};
+// 亚微米边在简单多边形校验之前由去重处理掉: 左上角多出的近重合顶点与相邻顶点相距 ~7.1e-7,
+// removeDuplicateVertices 会先合并它, 因此不会留下参与扫描方向比较的退化边, 也不会被
+// is_simple 误判为自相交。断言合并后仍取水平长边方向 0°, 且规划照常成功。
+TEST(BowMinWidthDirection, DedupsNearDuplicateVertexBeforePlan) {
+  const Polygon_2 field  = {Point_2(0.0, 0.0), Point_2(20.0, 0.0), Point_2(20.0, 5.0), Point_2(0.0, 5.0), Point_2(0.0000005, 5.0000005)};
   const SweepProbe probe = Probe(field);
   ASSERT_EQ(probe.status, PlanStatus::kOk);
   EXPECT_NEAR(AngleGapMod180(probe.deg, 0.0), 0.0, 1e-4);

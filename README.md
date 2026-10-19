@@ -58,7 +58,8 @@ uint8[] waypoint_types
 - `1` = 掉头段
 
 规划器以 `transient_local` QoS 按 10Hz 重发该消息；LQR 控制器根据
-`x/y` 计算曲率、航向和跟踪目标。
+`x/y` 计算曲率、航向和跟踪目标。当前 `lqr_control` 不读取
+`waypoint_types`，该字段保留给后续机具/激光分段控制。
 
 ## 底盘指令
 
@@ -246,6 +247,8 @@ colcon test-result --verbose
 ## 已知限制
 
 - `global_path_planner` 仅支持凸多边形田块，不支持田块内障碍物挖空
+- `global_path_planner` 的 `poly` 必须按边界顺序给出且不能自相交；只允许逆序/旋转起点，
+  顶点乱序会被拒绝（`is_simple` 校验，状态码 `self_intersecting`）
 - ENU 原点同时配置在 `poly` 第一个顶点和 `gnss_driver.yaml` 的 `origin_*` 中，
   两处不一致时路径与 odom 会产生固定偏移，当前没有运行时一致性校验
 - `lqr_control` 仅适用于 `steer_mode=0`（单阿克曼）和 `1`（双阿克曼）

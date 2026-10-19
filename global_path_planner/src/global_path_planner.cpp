@@ -141,7 +141,7 @@ GlobalPathPlannerNode::GlobalPathPlannerNode(const rclcpp::NodeOptions& options)
 }
 
 void GlobalPathPlannerNode::loadLogParameters() {
-  declare_parameter("log_dir", "/opt/agri/logs");
+  declare_parameter("log_dir", "~/.ros/logs");
   declare_parameter("log_file_size_mb", 50);
   declare_parameter("log_file_count", 10);
   declare_parameter("log_enable_console", true);
@@ -194,14 +194,14 @@ void GlobalPathPlannerNode::loadParameters() {
     throw std::runtime_error(reason);
   }
   if (field_margin_ < 0.5 * ridge_width_) {
-    SPDLOG_WARN("field_margin({:.2f} m) < ridge_width/2({:.2f} m): 地头半圆掉头可能超出田块边界, 建议 field_margin >= ridge_width/2", field_margin_, 0.5 * ridge_width_);
+    SPDLOG_WARN("field_margin({:.2f} m) < ridge_width/2({:.2f} m): 机具半幅可能越过田块边界 (掉头弧本身切在内缩边界上), 建议 field_margin >= ridge_width/2", field_margin_, 0.5 * ridge_width_);
   }
 
   // ---- 打印生效值 ----
   SPDLOG_INFO("========== 全局路径规划参数加载 ==========");
   SPDLOG_INFO("日志目录: {}, 文件上限: {} MB, 文件数量: {}, 控制台: {}, 级别: {}", log_dir_, log_file_size_mb_, log_file_count_, log_enable_console_ ? "开启" : "关闭", log_level_);
   SPDLOG_INFO("路径分辨率: {:.3f} m (/path 的插值步长; yaml 参数, 只在启动时读一次)", path_resolution_);
-  SPDLOG_INFO("拐角上限 miter_limit: {:.3f}; first_row_margin: {:.3f} m", miter_limit_, first_row_margin_);
+  SPDLOG_INFO("拐角上限 miter_limit: {:.3f} (预留参数, 对向内偏置无影响); first_row_margin: {:.3f} m", miter_limit_, first_row_margin_);
   SPDLOG_INFO("田块: 顶点 {} 个, 垄宽 {:.3f} m, 田边余量 {:.3f} m", raw_vertices_.size(), ridge_width_, field_margin_);
   SPDLOG_INFO("===========================================");
 }
@@ -228,11 +228,15 @@ void GlobalPathPlannerNode::planGeometry() {
   input.first_row_margin = first_row_margin_;
   const BowOutput out    = planner_.plan(input);
   if (!out.ok()) {
+    // 清空当前生效路径: 定时器会无条件重发, 失败后不能继续把上一条旧路径当成有效路径发布。
+    waypoints_.clear();
+    waypoint_types_.clear();
+    key_waypoints_.clear();
+    inner_cell_.clear();
     const std::string reason = out.message.empty() ? "未知原因" : out.message;
     SPDLOG_ERROR("弓字形路径规划失败: {} (状态码 {}/{} 故障码 {})", reason, planStatusName(out.status), static_cast<int>(out.status), planStatusFaultCode(out.status));
     return;
   }
-
   waypoints_      = out.waypoints;
   waypoint_types_ = out.waypoint_types;   // 与 waypoints_ 1:1 的段类型
   key_waypoints_  = out.key_waypoints;

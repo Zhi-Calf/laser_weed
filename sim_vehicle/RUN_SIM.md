@@ -61,11 +61,13 @@ global_path_planner:
 ```
 
 - `poly` 是扁平数组，每 3 个数为一个顶点：`lat, lon, alt`。
+- `poly` 顶点必须按田块边界顺序给出（逆序/旋转起点可以），不能自相交；乱序输入会被拒绝。
 - `poly` 的第一个顶点同时作为 ENU 原点；实车还要把
   `gnss_localization/config/gnss_driver.yaml` 的 `origin_lat/lon/alt`
   配成同一个坐标。
 - `ridge_width` 必须大于 0，决定弓字形行距。
-- `field_margin` 必须大于等于 0；建议不小于 `ridge_width/2`，否则地头半圆掉头可能出界。
+- `field_margin` 必须大于等于 0；建议不小于 `ridge_width/2`，保证机具半幅不越过田边
+  （掉头弧本身切在内缩边界上）。
 - 所有参数在启动时读取，修改后需要重启规划器。
 
 ## 三、启动时序

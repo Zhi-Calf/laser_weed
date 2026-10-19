@@ -98,7 +98,8 @@ inline bool parseFirstRowMarginForRidge(double first_row_margin, double ridge_wi
 ///
 /// 发布以下话题 (均为节点相对名, 完整名为 /global_path_planner/<topic>):
 ///   ~/path                  全局路径 (weeder_msgs/Path, transient_local; x/y + waypoint_types,
-///                           0=作业 / 1=掉头), 供 path_controller 跟踪
+///                           0=作业 / 1=掉头), 供 path_controller 跟踪; 当前 lqr_control
+///                           只读 x/y, waypoint_types 预留给机具/激光分段控制
 ///   ~/path_points           路径点的 RViz marker
 ///   ~/key_points            关键点的 RViz marker (每条垄的两个端点)
 ///   ~/boundary_points       地块边界点的 RViz marker
@@ -144,7 +145,7 @@ private:
 
 private:
   // 日志参数 (启动时读一次; 名字与其它节点保持一致)
-  std::string log_dir_     = "/opt/agri/logs";   // 日志目录 (支持 ~ 与 $VAR 展开)
+  std::string log_dir_     = "~/.ros/logs";      // 日志目录 (支持 ~ 与 $VAR 展开)
   std::string log_level_   = "info";             // 日志级别 (info/warn/error)
   int log_file_size_mb_    = 50;                 // 单个日志文件最大大小 (MB)
   int log_file_count_      = 10;                 // 保留的日志文件个数

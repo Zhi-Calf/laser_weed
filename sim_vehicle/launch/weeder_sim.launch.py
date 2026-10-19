@@ -44,9 +44,9 @@ def generate_launch_description():
     # 垄宽决定弓字形行距，也决定地头掉头半径（= 垄宽/2）。
     ridge_width = ParameterValue(
         LaunchConfiguration('ridge_width'), value_type=float)
-    # ⚠️ field_margin 必须 >= ridge_width/2，否则半圆掉头会鼓出田块边界
-    #    （2026-10-15 仿真里绿箭飞出田块就是这个原因：掉头半径 1.25m > 内缩 0.5m）。
-    #    默认 2.5/2=1.25，给 1.5 留了余量。
+    # field_margin 建议 >= ridge_width/2，保证机具半幅不越过田边。
+    # 半圆掉头本身切在内缩边界上，不会因半径 1.25m > 内缩 0.5m 而单独鼓出田块；
+    # 默认 2.5/2=1.25，给 1.5 留了余量。
     field_margin = ParameterValue(
         LaunchConfiguration('field_margin'), value_type=float)
     target_v = ParameterValue(LaunchConfiguration('target_v'), value_type=float)
@@ -64,7 +64,7 @@ def generate_launch_description():
             description='垄宽/行距(m)，决定弓字形行距与地头掉头半径(=垄宽/2)'),
         DeclareLaunchArgument(
             'field_margin', default_value='1.5',
-            description='田边内缩余量(m)，必须 >= ridge_width/2 否则掉头出界'),
+            description='田边内缩余量(m)，建议 >= ridge_width/2 以保证机具半幅不越过田边'),
         DeclareLaunchArgument(
             'target_v', default_value='0.5',
             description='目标线速度(m/s)，协议上限 1.4'),

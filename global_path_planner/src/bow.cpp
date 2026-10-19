@@ -54,6 +54,19 @@ bool PlanBowShapedPath::preparePolygon(const Polygon_2& cell, Polygon_2& out) {
     return false;
   }
 
+  // 输入边界必须是简单多边形: 上面的凸包只检查"点集"的凸性, 自相交的顶点序列
+  // (例如四个角按对角交叉顺序给出) 仍会得到同一个凸包, 必须按给定顺序单独校验。
+  // 这里校验的是输入顺序, 因此有效的逆序/旋转起点仍然通过; 顶点乱序不再接受。
+  // 注意: 对注册成 ring 的 std::vector<Vector2d> 调 bg::is_simple 在 Boost 1.74 上恒为 true
+  // (它走的是 areal 几何的重载), 必须显式转成闭合 linestring 才会做线段相交检查。
+  bg::model::linestring<Point_2> input_line(pts.begin(), pts.end());
+  input_line.push_back(pts.front());
+  if (!bg::is_simple(input_line)) {
+    SPDLOG_ERROR("地块边界自相交: 顶点按给定顺序连接后不是简单多边形 (is_simple == false)");
+    fail(PlanStatus::kSelfIntersecting, "地块边界自相交: 顶点必须按边界顺序给出, 相邻边不能交叉 (自相交/乱序输入会被拒绝)");
+    return false;
+  }
+
   // 地块非凸
   for (const auto& p : pts) {
     if (bg::within(p, hull)) {
@@ -63,9 +76,9 @@ bool PlanBowShapedPath::preparePolygon(const Polygon_2& cell, Polygon_2& out) {
     }
   }
 
-  // 起点固定到"最小 x, 再最小 y"的顶点 (而不是跟着输入的第一个顶点)。这样同一地块无论输入
-  // 顶点顺序如何, 喂给 Clipper2 的路径完全一致 —— 1 mm 量化下的内缩结果、以及端部补点那种
-  // "阈值判定"才是确定的; 否则"顶点顺序无关"会被放大成可见差异。
+  // 起点固定到"最小 x, 再最小 y"的顶点 (而不是跟着输入的第一个顶点)。这样同一个简单地块
+  // 无论起点/绕向如何, 喂给 Clipper2 的路径完全一致 —— 1 mm 量化下的内缩结果、以及端部补点
+  // 那种"阈值判定"才是确定的; 否则"起点/绕向无关"会被放大成可见差异。
   size_t start = 0;
   for (size_t i = 1; i < ordered.size(); ++i) {
     const double dx = ordered[i].x() - ordered[start].x();
@@ -498,10 +511,11 @@ std::optional<std::vector<Point_2>> PlanBowShapedPath::tryTangentArc(const TurnG
     return std::nullopt;
   }
 
-  const double half_swath = (ridge_width_ > kEpsilon) ? 0.5 * ridge_width_ : geometry.radius;
-  const double pocket     = std::max(
-    std::max(0.0, P2.dot(geometry.in_dir) - (t1.dot(geometry.in_dir) + half_swath)),
-    std::max(0.0, P3.dot(geometry.in_dir) - (t2.dot(geometry.in_dir) + half_swath)));
+  // 盲带定义与半圆分支保持一致: 沿垄向，掉头切点 (路径中心线) 到垄端的最大缺口。
+  // 不能用 half_swath 抵扣: 切点处车头沿垄向，机具横杆垂直于垄向，覆盖的是横向而不是这段纵向缺口。
+  const double pocket = std::max(
+    std::max(0.0, P2.dot(geometry.in_dir) - t1.dot(geometry.in_dir)),
+    std::max(0.0, P3.dot(geometry.in_dir) - t2.dot(geometry.in_dir)));
   if (pocket > output_.turn_max_pocket) {
     updateTurnPocket(pocket, field_margin_);
   }
@@ -698,7 +712,8 @@ void PlanBowShapedPath::generateWaypoints() {
   //  (把内缩区域收小, 让半圆有地方伸出去) 或减小垄宽 (半圆半径跟着变小) 来消。
   if (output_.turn_max_pocket > 0.05) {
     SPDLOG_WARN(
-      "斜地头处每个掉头最多有 {:.2f} m 宽的带作业不到 (半径 {:.2f} m 的半圆掉头够不到靠外的那个垄端)。想盖住: 把 field_margin_ 加大到 >= {:.2f} m (当前 {:.2f} m; ",
+      "斜地头处每个掉头最多有 {:.2f} m 宽的带作业不到 (半圆掉头半径 {:.2f} m, 够不到沿垄向靠外的那个垄端)。"
+      "想盖住: 把 field_margin 加大到 >= {:.2f} m (当前 {:.2f} m)。",
       output_.turn_max_pocket,
       0.5 * ridge_width_,
       output_.turn_pocket_margin_hint,

@@ -27,16 +27,17 @@ enum class PlanStatus : uint8_t {
   kDedupTooFew = 2,   // 去重后的边界点不足 (< 3 个)
   kHullTooFew  = 3,   // 凸包点不足 (< 3 个或退化成线)
   kNonConvex   = 4,   // 地块非凸 (顶点落在地块凸包内部)
+  kSelfIntersecting = 5,   // 输入边界自相交 (按给定顶点顺序不是简单多边形)
 
   // ---- 参数配置不合理的细分 (与 insetPolygon / makeRidgeSegments 的判定对应) ----
-  kBadFieldMargin = 5,   // field_margin 不合理: 内缩把可作业区域吃没 / 内缩后区域退化
-  kBadRidgeWidth  = 6,   // ridge_width 不合理: <= 0 (plan() 入口) / 内缩区域里排不出垄线 (区域太窄)
+  kBadFieldMargin = 6,   // field_margin 不合理: 内缩把可作业区域吃没 / 内缩后区域退化
+  kBadRidgeWidth  = 7,   // ridge_width 不合理: <= 0 (plan() 入口) / 内缩区域里排不出垄线 (区域太窄)
 
   // ---- 内部兜底 ----
-  kInternal = 7,   // 流程跑完仍无路点 (未知原因)
+  kInternal = 8,   // 流程跑完仍无路点 (未知原因)
 };
 
-// 是否属于"输入数据异常"这一类 (含它的四个细分)。调用方要按类别分支时用它 —— 免得每加一个
+// 是否属于"输入数据异常"这一类 (含它的五个细分)。调用方要按类别分支时用它 —— 免得每加一个
 // 细分状态都要回头改调用点, 那正是细分最容易漏判的地方。
 inline bool isBadInput(PlanStatus status) {
   switch (status) {
@@ -44,6 +45,7 @@ inline bool isBadInput(PlanStatus status) {
     case PlanStatus::kDedupTooFew:
     case PlanStatus::kNonConvex:
     case PlanStatus::kHullTooFew:
+    case PlanStatus::kSelfIntersecting:
       return true;
     default:
       return false;
@@ -69,6 +71,8 @@ inline const char* planStatusName(PlanStatus status) {
       return "hull_too_few";
     case PlanStatus::kNonConvex:
       return "non_convex";
+    case PlanStatus::kSelfIntersecting:
+      return "self_intersecting";
     case PlanStatus::kBadFieldMargin:
       return "bad_field_margin";
     case PlanStatus::kBadRidgeWidth:
@@ -92,11 +96,11 @@ inline constexpr uint8_t kSegTurn          = 1;       // 掉头弧 (地头转弯
 // 因此: 同一个 `PlanBowShapedPath` 实例可被**多线程并发调用**, 没有共享可变状态, 也不会出现
 // "读到上一轮结果 / 半成品状态"这类问题 (见 test/test_bow_parallel.cpp)。
 struct BowInput {
-  Polygon_2 cell;                    // 地块顶点 (凸, ENU, 单位 m)
+  Polygon_2 cell;                    // 地块顶点 (凸、按边界顺序、简单多边形, ENU, 单位 m)
   double ridge_width      = 0.0;     // 垄宽 (m, 必须 > 0)
   double path_resolution  = 0.0;     // 跟踪路径 (/path) 的插值分辨率 (m)
   double field_margin     = 0.0;     // 四周统一内缩的田边余量 (m)
-  double miter_limit      = 2.0;     // 内缩偏置的拐角上限 (Clipper2 语义)
+  double miter_limit      = 2.0;     // 预留: Clipper2 拐角上限; 对凸多边形的向内偏置实测不改变结果
   double first_row_margin = 0.005;   // 首行/末行兜底离内缩边界的余量 (m)
 };
 
@@ -112,7 +116,7 @@ struct BowOutput {
   std::vector<Point_2> key_waypoints;     // 每条垄的两个端点 (掉头点)
   double sweep_dir_deg           = 0.0;   // 选定的扫描方向 (deg)
   double turn_max_overrun        = 0.0;   // 掉头伸出地块边界的最大距离 (m) —— [TURN_BOUNDARY]
-  double turn_max_pocket         = 0.0;   // 掉头处作业区里最大的一条盲带 (m) —— [TURN_POCKET]
+  double turn_max_pocket         = 0.0;   // 掉头处沿垄向、路径中心线到垄端的最大缺口 (m) —— [TURN_POCKET]
   double turn_pocket_margin_hint = 0.0;   // 想盖住那条盲带需要的 field_margin (m) —— [TURN_POCKET] 建议值
   bool ok() const {
     return status == PlanStatus::kOk;
@@ -185,7 +189,7 @@ private:
   double ridge_width_      = 0.0;     // 垄宽 (m): 跟踪路径 (/path) 按此宽度;
   double path_resolution_  = 0.0;     // 路径分辨率 (m): 跟踪路径 (/path) 按此插值;
   double field_margin_     = 0.0;     // 边界内缩距离 (m): 边界内缩后的地块 (field_) 按此宽度;
-  double miter_limit_      = 2.0;     // Clipper2 拐角上限: 边界内缩后的地块按此内缩;
+  double miter_limit_      = 2.0;     // Clipper2 拐角上限 (预留: 对向内偏置无影响);
   double first_row_margin_ = 0.005;   // 首行离内缩边界的余量 (m): 首行贴得越近, 田边盲带越小;
   Polygon_2 field_;                   // 规范化后的地块 (凸、顺时针) —— 掉头"不许出界"的判据
   BowOutput output_;                  // 规划结果 (plan() 落出去)

@@ -10,7 +10,7 @@
 //   * 首行/末行  : 首行固定距内缩边界 first_row_margin (默认 5 mm), 之后按 ridge_width 递推;
 //                  末行被推到区域外/压在远端边界上时兜底贴到"距远端 first_row_margin" ——
 //                  见 FirstRowMarginIsConfigurable / LastRowFallsBackToFarMargin;
-//   * 输入宽容度 : 顶点乱序/逆序/带共线点都能收下; 凹多边形按约定拒绝;
+//   * 输入宽容度 : 逆序/旋转起点/带共线点都能收下; 自相交与乱序输入拒绝; 凹多边形按约定拒绝;
 //   * 退化       : 窄地块 (宽度 < 垄宽) 也按"首末各留 first_row_margin"排两条; 非法垄宽/过小地块直接失败。
 #include <gtest/gtest.h>
 
@@ -591,21 +591,21 @@ TEST(BowPlannerInset, MiterLimitDoesNotChangeInwardInset) {
   check_field("锐角三角形", Polygon_2{Point_2(0.0, 0.0), Point_2(20.0, 0.0), Point_2(20.0, 3.247)});
 }
 
-// 输入宽容度: 顶点乱序 + 逆序 + 一条边上的共线点, 结果应与规范输入一致
-// (垄的位置由区域自身的投影范围决定, 与顶点顺序无关 —— 因此比较时把每条垄归一成
+// 输入宽容度: 逆序 + 旋转起点 + 一条边上的共线点, 结果应与规范输入一致
+// (垄的位置由区域自身的投影范围决定, 与起点/绕向无关 —— 因此比较时把每条垄归一成
 //  "垄线位置 + 两端坐标" 再排序, 不受行驶方向/顶点起点影响)
 
-TEST(BowPlannerInput, AcceptsUnorderedReversedAndCollinearVertices) {
+TEST(BowPlannerInput, AcceptsReversedRotatedAndCollinearVertices) {
   const Polygon_2 canonical = RectangleField(20.0, 8.0);
 
-  // 本例验证的是"顶点顺序无关性"这条核心契约: 两个规划器用同一组参数, 断言保持 1e-6 的严格度。
+  // 本例验证的是"起点/绕向无关性"这条核心契约: 两个规划器用同一组参数, 断言保持 1e-6 的严格度。
   BowFacade reference;
   ASSERT_TRUE(reference.init(canonical, 2.0, 0.1, 0.5));
 
-  // 逆序 + 乱序 + 上边中点 (共线点)
-  const Polygon_2 messy{canonical[2], Point_2(10.0, 8.0), canonical[0], canonical[3], canonical[1]};
+  // 逆序 + 旋转起点 + 上边中点 (共线点); 顶点仍按边界顺序排列, 因此是简单多边形。
+  const Polygon_2 reversed{canonical[2], Point_2(10.0, 8.0), canonical[3], canonical[0], canonical[1]};
   BowFacade planner;
-  ASSERT_TRUE(planner.init(messy, 2.0, 0.1, 0.5));
+  ASSERT_TRUE(planner.init(reversed, 2.0, 0.1, 0.5));
 
   const auto normalize = [](const std::vector<Point_2>& keys) {
     std::vector<std::array<double, 3>> ridges;   // {y, x_min, x_max}
@@ -625,6 +625,21 @@ TEST(BowPlannerInput, AcceptsUnorderedReversedAndCollinearVertices) {
     EXPECT_NEAR(ridges[i][2], ref_ridges[i][2], 1e-3) << "第 " << i << " 条垄的终点";
   }
   EXPECT_EQ(planner.getWaypoints().size(), reference.getWaypoints().size());
+}
+
+// 自相交边界: 顶点全部在凸包边界上, 但按给定顺序连接会交叉。凸包校验看不出这一点,
+// 必须用 is_simple 拒绝 —— 否则会按凸包静默扩大作业区域。
+TEST(BowPlannerInput, RejectsSelfIntersectingBoundary) {
+  // 蝴蝶结: (0,0)->(20,8) 与 (20,0)->(0,8) 在对角线上相交。
+  const Polygon_2 bowtie{Point_2(0.0, 0.0), Point_2(20.0, 8.0), Point_2(20.0, 0.0), Point_2(0.0, 8.0)};
+  BowFacade planner;
+  const BowOutput out = planner.plan(bowtie, 2.0, 0.1, 0.5);
+
+  EXPECT_FALSE(out.ok());
+  EXPECT_EQ(out.status, PlanStatus::kSelfIntersecting);
+  EXPECT_FALSE(out.message.empty());
+  EXPECT_TRUE(isBadInput(out.status));
+  EXPECT_TRUE(out.waypoints.empty());
 }
 
 // 凹多边形 (或含内部点) 按约定拒绝: init 返回 false, 不产生路径
@@ -696,15 +711,18 @@ TEST(BowPlannerInput, ReportsInputFailureStage) {
   EXPECT_STREQ(planStatusName(PlanStatus::kDedupTooFew), "dedup_too_few");
   EXPECT_STREQ(planStatusName(PlanStatus::kNonConvex), "non_convex");
   EXPECT_STREQ(planStatusName(PlanStatus::kHullTooFew), "hull_too_few");
+  EXPECT_STREQ(planStatusName(PlanStatus::kSelfIntersecting), "self_intersecting");
   EXPECT_FALSE(isBadInput(PlanStatus::kOk));
   EXPECT_FALSE(isBadInput(PlanStatus::kBadFieldMargin));
   EXPECT_FALSE(isBadInput(PlanStatus::kBadRidgeWidth));
   EXPECT_FALSE(isBadInput(PlanStatus::kInternal));
+  EXPECT_TRUE(isBadInput(PlanStatus::kSelfIntersecting));
 
   // 参数类与输入类是分开的两类: isBadParams() 只认 field_margin / ridge_width
   EXPECT_TRUE(isBadParams(PlanStatus::kBadFieldMargin));
   EXPECT_TRUE(isBadParams(PlanStatus::kBadRidgeWidth));
   EXPECT_FALSE(isBadParams(PlanStatus::kNonConvex));
+  EXPECT_FALSE(isBadParams(PlanStatus::kSelfIntersecting));
   EXPECT_FALSE(isBadParams(PlanStatus::kOk));
   EXPECT_FALSE(isBadParams(PlanStatus::kInternal));
 }
@@ -720,13 +738,15 @@ TEST(PlanStatusFaultCode, MapsEveryFailureStatusToItsOwnCode) {
   EXPECT_EQ(planStatusFaultCode(PlanStatus::kDedupTooFew), static_cast<uint32_t>(global_path_planner::FAULT_PLAN_DEDUP_TOO_FEW));
   EXPECT_EQ(planStatusFaultCode(PlanStatus::kHullTooFew), static_cast<uint32_t>(global_path_planner::FAULT_PLAN_HULL_TOO_FEW));
   EXPECT_EQ(planStatusFaultCode(PlanStatus::kNonConvex), static_cast<uint32_t>(global_path_planner::FAULT_PLAN_NON_CONVEX));
+  EXPECT_EQ(planStatusFaultCode(PlanStatus::kSelfIntersecting), static_cast<uint32_t>(global_path_planner::FAULT_PLAN_SELF_INTERSECTING));
   EXPECT_EQ(planStatusFaultCode(PlanStatus::kBadFieldMargin), static_cast<uint32_t>(global_path_planner::FAULT_PLAN_BAD_FIELD_MARGIN));
   EXPECT_EQ(planStatusFaultCode(PlanStatus::kBadRidgeWidth), static_cast<uint32_t>(global_path_planner::FAULT_PLAN_BAD_RIDGE_WIDTH));
   EXPECT_EQ(planStatusFaultCode(PlanStatus::kInternal), static_cast<uint32_t>(global_path_planner::FAULT_PLAN_INTERNAL));
 
-  // 7 个失败状态 -> 7 个互不相同的码, 且都不是"无故障"或通用失败码 (否则细分就白加了)
+  // 8 个失败状态 -> 8 个互不相同的码, 且都不是"无故障"或通用失败码 (否则细分就白加了)
   const PlanStatus failures[] =
-    {PlanStatus::kInputTooFew, PlanStatus::kDedupTooFew, PlanStatus::kHullTooFew, PlanStatus::kNonConvex, PlanStatus::kBadFieldMargin, PlanStatus::kBadRidgeWidth, PlanStatus::kInternal};
+    {PlanStatus::kInputTooFew, PlanStatus::kDedupTooFew, PlanStatus::kHullTooFew, PlanStatus::kNonConvex, PlanStatus::kSelfIntersecting,
+     PlanStatus::kBadFieldMargin, PlanStatus::kBadRidgeWidth, PlanStatus::kInternal};
   std::vector<uint32_t> codes;
   for (const PlanStatus status : failures) {
     const uint32_t code = planStatusFaultCode(status);
@@ -736,7 +756,7 @@ TEST(PlanStatusFaultCode, MapsEveryFailureStatusToItsOwnCode) {
   }
   std::sort(codes.begin(), codes.end());
   EXPECT_EQ(std::unique(codes.begin(), codes.end()), codes.end()) << "有重复的故障码";
-  EXPECT_EQ(codes.size(), 7u);
+  EXPECT_EQ(codes.size(), 8u);
 }
 
 // 编号契约: 故障码表**连续无空号** (10400 起逐个递增), 删码/重排之后由这条钉住 ——
@@ -752,6 +772,7 @@ TEST(PlanStatusFaultCode, CodesAreContiguousWithoutGaps) {
     global_path_planner::FAULT_PLAN_BAD_FIELD_MARGIN,
     global_path_planner::FAULT_PLAN_BAD_RIDGE_WIDTH,
     global_path_planner::FAULT_PLAN_INTERNAL,
+    global_path_planner::FAULT_PLAN_SELF_INTERSECTING,
   };
 
   EXPECT_EQ(all.front(), 10400u) << "FAULT_NONE 必须是模块号 + 序号 00";
@@ -765,7 +786,8 @@ TEST(PlanStatusFaultCode, CodesAreContiguousWithoutGaps) {
   // 后续故障码整体前移一位, 保持连续编号。
   EXPECT_EQ(static_cast<uint32_t>(global_path_planner::FAULT_PLAN_INPUT_TOO_FEW), 10402u);
   EXPECT_EQ(static_cast<uint32_t>(global_path_planner::FAULT_PLAN_INTERNAL), 10408u);
-  EXPECT_EQ(all.back(), 10408u) << "最后一个码变了 -> 记得同步 README 的码表与 APP";
+  EXPECT_EQ(static_cast<uint32_t>(global_path_planner::FAULT_PLAN_SELF_INTERSECTING), 10409u);
+  EXPECT_EQ(all.back(), 10409u) << "最后一个码变了 -> 记得同步 README 的码表与 APP";
 }
 
 TEST(BowPlannerInput, RejectsConcavePolygon) {

@@ -104,6 +104,9 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 | 发布 | `/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
 | 发布 | `/lqr_control/target_point` | `visualization_msgs/Marker` | RViz |
 
+当前路径回调**只读取** `Path.x/y`；`waypoint_types`（作业/掉头）暂不参与控制，
+字段保留给后续机具或激光分段控制。
+
 **QoS 匹配是硬要求**：`gnss_driver` 用 `SensorDataQoS`（best effort）发 odom，订阅端必须是 best effort，否则一条都收不到；规划器的 path 和 `/work_mode` 都是 `transient_local`（latched），订阅端必须匹配 durability 才能让晚加入的订阅者立刻收到最后一条。本节点已按此配置。
 
 ### 工作模式门控（/work_mode）
@@ -225,9 +228,10 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 
 **规划器必改配置**（`global_path_planner.yaml`）：
 
-- `log_dir`：`/home/asd/logs` 按部署改
+- `log_dir`：默认 `~/.ros/logs`（可写）；实车要固定目录时按部署改
 - `path_resolution`（默认 0.2m）：`/path` 插值分辨率
-- `poly` / `ridge_width` / `field_margin`：按除草机实际田块和机具宽度填写
+- `poly` / `ridge_width` / `field_margin`：按除草机实际田块和机具宽度填写；
+  `field_margin >= ridge_width/2` 是为了让机具半幅不越过田边（掉头弧本身切在内缩边界上）
 - `first_row_margin`：与 `ridge_width` 必须相容（落在 [0.001, ridge_width/2]），否则节点启动失败
 
 **可直接复用、代价小的**：`global_path_planner` 的纯算法层 `bow.cpp/bow.hpp` 零 ROS 依赖（Boustrophedon 弓字形全覆盖，输入输出都是 Eigen/std），Clipper2 是 vendored（拷过去就能编），6 个 gtest 只链 `_lib` 可直接跑。GNSS 的 `giavp_parser`、`serial_port`、ENU 投影逻辑也与车型无关。

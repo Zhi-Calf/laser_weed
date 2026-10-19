@@ -1,7 +1,8 @@
 global_path_planner:
   ros__parameters:
-    # spdlog 日志
-    log_dir: "/home/asd/logs"
+    # spdlog 日志: 支持 ~ 与 $VAR 展开。默认放用户目录，任何部署环境都可写；
+    # 实车若使用 /opt/agri/logs 等固定位置，按部署环境覆盖即可。
+    log_dir: "~/.ros/logs"
     log_file_size_mb: 50
     log_file_count: 10
     log_enable_console: true
@@ -9,6 +10,8 @@ global_path_planner:
 
     # ---- 田块几何（启动时读取，运行期不再变化）----
     # 地块顶点，扁平数组，每 3 个数为一个顶点：lat, lon, alt（WGS84）。
+    # 顶点必须按田块边界顺序给出（逆序或旋转起点都可以），相邻边不能交叉；
+    # 自相交/乱序输入会被拒绝（状态码 self_intersecting，故障码 10409）。
     # 第一个顶点同时作为 ENU 原点，必须与 gnss_localization/config/gnss_driver.yaml
     # 中的 origin_lat / origin_lon / origin_alt 保持一致。
     # 默认值对应仿真田块（以 34.62N, 112.45E 为中心的 50m x 30m 矩形），实车必须按现场修改。
@@ -18,7 +21,7 @@ global_path_planner:
            34.6201347, 112.4497271, 100.0]
 
     ridge_width: 2.5              # 垄宽/行距 (m)，必须 > 0
-    field_margin: 1.5             # 田边内缩余量 (m)，必须 >= 0；建议 >= ridge_width/2
+    field_margin: 1.5             # 田边内缩余量 (m)，必须 >= 0；建议 >= ridge_width/2，保证机具半幅不越过田边
     path_resolution: 0.2          # 路径插值分辨率（单位：米）
     first_row_margin: 0.005       # ---- 首行余量（单位：米）
-    miter_limit: 2.0              # 边界内缩的拐角上限（无单位）
+    miter_limit: 2.0              # 预留参数: Clipper2 拐角上限；对凸多边形的向内偏置实测不改变结果
