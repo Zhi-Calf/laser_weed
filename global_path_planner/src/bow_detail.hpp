@@ -32,8 +32,7 @@ namespace bow_detail {
 // Clipper2 的坐标量化精度 (小数位)
 inline constexpr int kClipperPrecision = 3;
 
-// Clipper2 量化网格的边长 (m, ≈1 mm)。与首行余量下界表达的是同一个物理尺度，
-// 避免两处各写一个 0.001 后悄悄分叉。
+// Clipper2 量化网格的边长 (m, ≈1 mm)。与首行余量下界表达的是同一个物理尺度，避免两处各写一个 0.001 后悄悄分叉。
 inline constexpr double kClipperGrid = kMinFirstRowMargin;
 
 // 相邻顶点最小间距
@@ -60,9 +59,7 @@ inline constexpr double kTurnCornerMinRadius = 0.05;
 // 浮点数相等: 绝对值差不超过它
 inline constexpr double kEpsilon = 1e-9;
 
-// 凸包的最小有效面积 (m^2): 顶点全部共线时凸包退化成一条线 —— Boost 的 convex_hull 可能给出
-// 2 个点 (线段), 也可能给出 3 个点 (面积 0 的退化多边形), 两种都要判成"凸包点不足"。
-// 1 mm² 这个阈值远小于任何真实地块, 不会误伤。
+// 凸包的最小有效面积 (m^2)
 inline constexpr double kMinHullArea = 1e-6;
 
 // ============================================================
@@ -341,8 +338,7 @@ inline bool pointOnSegment(const Point_2& p, const Segment_2& edge) {
 }
 
 // 选择边界线段上位于 search_dir 正半平面、且离 p 最近的顶点。
-inline bool pickEdgeCorner(
-  const Point_2& p, const Point_2& search_dir, const Segment_2& edge, Point_2& out) {
+inline bool pickEdgeCorner(const Point_2& p, const Point_2& search_dir, const Segment_2& edge, Point_2& out) {
   const double dir_len = search_dir.norm();
   if (!(dir_len > kEpsilon)) {
     return false;
@@ -367,8 +363,7 @@ inline bool pickEdgeCorner(
 }
 
 // 边界线段上除 end 之外的路径点数。
-inline size_t countOtherPointsOnEdge(
-  const std::vector<Point_2>& path, const Segment_2& edge, const Point_2& end) {
+inline size_t countOtherPointsOnEdge(const std::vector<Point_2>& path, const Segment_2& edge, const Point_2& end) {
   size_t others = 0;
   for (const auto& p : path) {
     if ((p - end).norm() <= kMinVertexSpacing) {

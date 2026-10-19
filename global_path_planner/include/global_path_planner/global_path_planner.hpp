@@ -110,18 +110,13 @@ public:
   ~GlobalPathPlannerNode() override = default;
 
 private:
-  // 主循环与启动参数
-  void timerCallback();   // 100 ms 主循环: 发布路径与 Marker
+  void timerCallback();
   void loadLogParameters();
   void loadParameters();
-
-private:
-  // 顶点投影 -> 弓形规划 -> 按分辨率采样 (输入没变时短路, 见两个 *Match())
   void planGeometry();
-  void projectVerticesToEnu();   // 顶点经纬度 -> ENU (cell_ / inner_cell_); 换原点时调
+  void projectVerticesToEnu();
 
 private:
-  // 定时器与 IO (话题名与 QoS 见类注释)
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr path_points_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr key_points_pub_;
@@ -130,12 +125,10 @@ private:
   rclcpp::Publisher<weeder_msgs::msg::Path>::SharedPtr path_pub_;
 
 private:
-  // 算法对象 (随节点长生命周期)
   GeographicLib::LocalCartesian geo_converter_;   // 经纬度 <-> ENU 平面 (原点 = /gnss_driver/origin)
   PlanBowShapedPath planner_;                     // 弓形规划器 (见 bow.hpp)
 
 private:
-  // 当前生效路径 + local 规划的输入/输出 (发布前都攒在这里)
   Polygon_2 cell_;                                    // YAML 配置的多边形顶点 (平面坐标, ENU)
   Polygon_2 inner_cell_;                              // 按 field_margin_ 内缩后的多边形 (平面坐标, ENU)
   std::vector<Point_2> waypoints_;                    // 当前生效的全局路径
@@ -144,15 +137,13 @@ private:
   std::vector<std::array<double, 3>> raw_vertices_;   // YAML 配置的原始顶点 (经纬度)
 
 private:
-  // 日志参数 (启动时读一次; 名字与其它节点保持一致)
-  std::string log_dir_     = "~/.ros/logs";      // 日志目录 (支持 ~ 与 $VAR 展开)
-  std::string log_level_   = "info";             // 日志级别 (info/warn/error)
-  int log_file_size_mb_    = 50;                 // 单个日志文件最大大小 (MB)
-  int log_file_count_      = 10;                 // 保留的日志文件个数
-  bool log_enable_console_ = true;               // 是否输出到控制台
+  std::string log_dir_     = "~/.ros/logs";   // 日志目录 (支持 ~ 与 $VAR 展开)
+  std::string log_level_   = "info";          // 日志级别 (info/warn/error)
+  int log_file_size_mb_    = 50;              // 单个日志文件最大大小 (MB)
+  int log_file_count_      = 10;              // 保留的日志文件个数
+  bool log_enable_console_ = true;            // 是否输出到控制台
 
 private:
-  // local 规划参数 (全部来自 YAML, 启动时读一次)
   double ridge_width_      = 0.0;     // 垄宽 (m): 行距
   double path_resolution_  = 0.2;     // /path 插值分辨率 (m): YAML 参数 path_resolution
   double field_margin_     = 0.0;     // 四周统一内缩的田边余量 (m)
