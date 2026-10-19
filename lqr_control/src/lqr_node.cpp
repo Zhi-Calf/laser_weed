@@ -49,6 +49,10 @@ void LqrNode::loadParameters()
   control_hz_ = declare_parameter<double>("control_hz", 10.0);
   wheelbase_ = declare_parameter<double>("wheelbase", 1.0);
   steer_mode_ = declare_parameter<int>("steer_mode", 0);
+  if (steer_mode_ < 0 || steer_mode_ > 3) {
+    RCLCPP_WARN(get_logger(), "steer_mode=%d 非法, 回退为 0 (单阿克曼)", steer_mode_);
+    steer_mode_ = 0;
+  }
   max_steer_deg_ = declare_parameter<double>("max_steer_deg", 90.0);
   max_speed_ = declare_parameter<double>("max_speed_m_s", 1.4);
   target_v_ = declare_parameter<double>("lqr_target_v", 0.5);
@@ -76,7 +80,7 @@ void LqrNode::loadParameters()
   odom_topic_ = declare_parameter<std::string>("odom_topic", "/gnss_driver/odom");
   path_topic_ = declare_parameter<std::string>("path_topic", "/global_path_planner/path");
   work_mode_topic_ = declare_parameter<std::string>("work_mode_topic", "/work_mode");
-  cmd_topic_ = declare_parameter<std::string>("cmd_topic", "/weeder/chassis/cmd");
+  cmd_topic_ = declare_parameter<std::string>("cmd_topic", "/chassis/cmd");
   viz_ = declare_parameter<bool>("viz", true);
 
   // Sanity guards: a non-positive wheelbase would divide by zero in B_d, and a
@@ -297,6 +301,7 @@ void LqrNode::publishStop()
   weeder_msgs::msg::ChassisCmd zero;
   zero.speed_m_s = 0.0;
   zero.steer_angle_rad = 0.0;
+  zero.steer_mode = static_cast<uint8_t>(steer_mode_);
   cmd_pub_->publish(zero);
 }
 
@@ -431,6 +436,7 @@ void LqrNode::controlTick()
   weeder_msgs::msg::ChassisCmd cmd;
   cmd.speed_m_s = v;
   cmd.steer_angle_rad = delta;
+  cmd.steer_mode = static_cast<uint8_t>(steer_mode_);
   cmd_pub_->publish(cmd);
 
   RCLCPP_DEBUG(get_logger(),

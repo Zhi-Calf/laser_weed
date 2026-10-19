@@ -30,7 +30,7 @@ lqr_control:
     path_topic: /global_path_planner/path
     work_mode_topic: /work_mode
     # 速度 + 前轮转角合并指令（weeder_msgs/ChassisCmd）
-    cmd_topic: /weeder/chassis/cmd
+    cmd_topic: /chassis/cmd
 
     # ============================================================
     # LQR 权重与求解器

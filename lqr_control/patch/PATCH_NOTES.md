@@ -1,7 +1,7 @@
 # CAN 桥补丁：接入 /weeder/steer_cmd
 
 > **历史说明：** 本补丁已被当前 `weeder_base` 实现取代。现在速度与转角统一由
-> `/weeder/chassis/cmd`（`weeder_msgs/ChassisCmd`）发布，不要直接应用本目录的旧文件。
+> `/chassis/cmd`（`weeder_msgs/ChassisCmd`）发布，不要直接应用本目录的旧文件。
 
 **目的**：让 `lqr_control` 算出的转向角能真正下发到底盘。
 

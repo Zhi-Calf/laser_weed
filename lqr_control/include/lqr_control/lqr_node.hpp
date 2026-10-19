@@ -82,7 +82,7 @@ private:
   std::string odom_topic_{"/gnss_driver/odom"};
   std::string path_topic_{"/global_path_planner/path"};
   std::string work_mode_topic_{"/work_mode"};
-  std::string cmd_topic_{"/weeder/chassis/cmd"};
+  std::string cmd_topic_{"/chassis/cmd"};
   bool viz_{true};
 
   // Core

@@ -63,7 +63,7 @@ MegaTrak 的 `lqr_R_w` 是**角速度代价**，本包的 `lqr_R_steer` 是**转
 
 ## 2. CAN 指令接口
 
-`lqr_control` 每个控制周期只发布一条 `/weeder/chassis/cmd`
+`lqr_control` 每个控制周期只发布一条 `/chassis/cmd`
 （`weeder_msgs/ChassisCmd`），同时携带：
 
 | 字段 | 单位 | 约定 |
@@ -74,7 +74,7 @@ MegaTrak 的 `lqr_R_w` 是**角速度代价**，本包的 `lqr_R_steer` 是**转
 速度与转角放在同一帧，CAN 桥不会把两个不同时刻计算出的值拼在一起。
 `weeder_base/chassis_node` 订阅该话题并转换为 `ADCU_toVCU_01`。
 
-`steer_mode` 仍必须与 `weeder_base` 参数一致。双阿克曼模式在控制器中按
+`steer_mode` 由本控制器随指令一起发送。双阿克曼模式在控制器中按
 `L/2` 的等效轴距计算转角，若底盘按单阿克曼执行，实际转角会差一倍。
 
 ### 2.4 符号约定（已追踪源码核对）
@@ -96,7 +96,7 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 | 订阅 | `/gnss_driver/odom` | `nav_msgs/Odometry` | `gnss_localization`（SensorDataQoS） |
 | 订阅 | `/global_path_planner/path` | `nav_msgs/Path` | `global_path_planner`（transient_local） |
 | 订阅 | `/work_mode` | `weeder_msgs/WorkMode` | 模式管理方/APP（transient_local） |
-| 发布 | `/weeder/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
+| 发布 | `/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
 | 发布 | `/lqr_control/target_point` | `visualization_msgs/Marker` | RViz |
 
 **QoS 匹配是硬要求**：`gnss_driver` 用 `SensorDataQoS`（best effort）发 odom，订阅端必须是 best effort，否则一条都收不到；规划器的 path 和 `/work_mode` 都是 `transient_local`（latched），订阅端必须匹配 durability 才能让晚加入的订阅者立刻收到最后一条。本节点已按此配置。

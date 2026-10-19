@@ -8,8 +8,8 @@
 
 | 方向 | CAN 报文 | 周期 | ROS2 接口 |
 |---|---|---|---|
-| 下发 | `ADCU_toVCU_01` (`0x0C01D01C`) | 20ms | 订阅 `/weeder/chassis/cmd` (`weeder_msgs/ChassisCmd`) |
-| 上行 | `Chassis_State_01` (`0x18011CD0`) | 20ms | `/weeder/chassis/state` |
+| 下发 | `ADCU_toVCU_01` (`0x0C01D01C`) | 100ms | 订阅 `/chassis/cmd` (`weeder_msgs/ChassisCmd`) |
+| 上行 | `Chassis_State_01` (`0x18011CD0`) | 20ms（VCU 周期） | `/weeder/chassis/state`（节点固定 10Hz 发布） |
 | 上行 | `Chassis_State_02` (`0x18021CD0`) | 100ms | `/weeder/chassis/state` |
 | 上行 | `Chassis_State_03` (`0x18031CD0`) | 100ms | `/weeder/chassis/state` |
 | 上行 | `Chassis_State_04~07` (`0x18041CD0~0x18071CD0`) | 500ms | `/weeder/chassis/state` |
@@ -22,10 +22,9 @@
 
 ## 安全逻辑
 
-- 底盘指令超时：停车并置急停，下一条 `/weeder/chassis/cmd` 解除。
 - VCU 状态帧超时：停车，VCU 恢复后自动恢复。
 - VCU `alive_counter` 不递增：判定 VCU 控制程序卡死并停车。
-- 任一看门狗触发：目标转角强制回正。
+- VCU 状态超时或 `alive_counter` 卡死：目标转角强制回正。
 - 下发协议层还会对目标车速 `0~1400 mm/s`、目标转角 `±90.0°` 做最终限幅。
 
 ## 构建与运行

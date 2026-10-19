@@ -1,5 +1,5 @@
 // 历史补丁文件，请勿直接使用：
-// 当前实现已统一为 /weeder/chassis/cmd (weeder_msgs/ChassisCmd)。
+// 当前实现已统一为 /chassis/cmd (weeder_msgs/ChassisCmd)。
 //
 // 依赖：weeder_base/can_driver.hpp（内部引入 weeder_base::protocol 协议符号）
 //

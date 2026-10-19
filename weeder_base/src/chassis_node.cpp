@@ -1,13 +1,12 @@
 // 底盘 ROS2 节点实现。
 //
-// 下行: /weeder/chassis/cmd (速度 + 转角) -> ADCU_toVCU_01 (20ms 周期)
+// 下行: /chassis/cmd (速度 + 转角) -> ADCU_toVCU_01 (10Hz)
 // 上行: VCU Chassis_State_01~11/21/22 -> /weeder/chassis/state
 //
 // 时钟约定 (踩过的坑, 别改回去):
 //   - 全部时间戳用 this->now() (RCL_ROS_TIME)。跨时钟源相减会抛
 //     std::runtime_error, 异常从定时器回调冒出会直接 terminate 进程。
-//   - 所有"上次时刻"在构造函数里对齐到启动时刻。停在 epoch 0 的话, 启动后第一个
-//     20ms 周期的 age 就是十亿秒级, 必然立刻进入超时分支 -> 一启动就锁急停。
+//   - VCU 状态时间戳在构造函数里对齐到启动时刻, 避免首拍被误判为超时。
 #include "weeder_base/chassis_node.hpp"
 
 #include <spdlog/sinks/rotating_file_sink.h>
@@ -31,18 +30,9 @@ using namespace std::chrono_literals;
 
 namespace {
 
-// 协议硬上限 (见 weeder_base/protocol/can_protocol.hpp 的 ADCU_toVCU_01):
-//   speed_raw   uint16, mm/s, 协议范围 0~1400
-//   steer_angle int16,  0.1°, 协议范围 ±90.0°
-constexpr double kMaxSpeedLimitMps = 1.4;
-constexpr double kMaxSteerLimitDeg = 90.0;
-
 // 默认值 (与 config/weeder_base.yaml 保持一致, 改一边记得改另一边)
-constexpr double kDefaultPublishHz            = 20.0;
-constexpr double kDefaultCmdTimeoutS          = 0.5;
-constexpr double kDefaultVcuTimeoutS          = 1.0;
-constexpr double kDefaultWatchdogLogIntervalS = 5.0;
-constexpr const char* kDefaultCmdTopic        = "/weeder/chassis/cmd";
+constexpr double kDefaultVcuTimeoutS   = 1.0;
+constexpr const char* kDefaultCmdTopic = "/chassis/cmd";
 
 }   // namespace
 
@@ -99,7 +89,7 @@ std::string ResolveLogDir(const std::string& configured) {
   return fallback;
 }
 
-// 配置 spdlog 滚动文件输出 (与 tractor_base 同一套配置)
+// 配置 spdlog 滚动文件输出
 void ConfigureLogger(const std::string& log_dir, size_t max_file_size_bytes, size_t max_file_count, bool enable_console, const std::string& log_level) {
   constexpr const char* kLogPattern = "[%Y-%m-%d %H:%M:%S.%e] [%l] [%s:%#] %v";
   const std::string dir             = ResolveLogDir(log_dir);
@@ -115,9 +105,6 @@ void ConfigureLogger(const std::string& log_dir, size_t max_file_size_bytes, siz
 
   auto logger = std::make_shared<spdlog::logger>("weeder_base", sinks.begin(), sinks.end());
   logger->set_pattern(kLogPattern);
-  // spdlog::level::from_str 区分大小写, 认不出级别名时返回 off —— 也就是 yaml 里写错一个
-  // 字母 ("Info"/"warning") 就会把全部日志静默关掉, 现场表现为"日志文件不再增长"。
-  // 这里兜底回退到 info 并告警。
   const spdlog::level::level_enum level = spdlog::level::from_str(log_level);
   if (level == spdlog::level::off && log_level != "off") {
     logger->set_level(spdlog::level::info);
@@ -183,14 +170,7 @@ ChassisNode::ChassisNode(const rclcpp::NodeOptions& options) : Node("weeder_chas
   // ---- 时间基准 ----
   // 必须与 this->now() 同为 RCL_ROS_TIME: 跨时钟源相减会抛 std::runtime_error,
   // 异常从定时器回调冒出会直接 terminate 进程。
-  // 同时对齐到启动时刻: 否则 last_cmd_time_ 停留在 epoch 0, 启动后第一个 20ms
-  // 周期的 age 就是十亿秒级, 必然立即进入超时分支。
-  const rclcpp::Time now   = this->now();
-  last_cmd_time_           = now;
-  last_cmd_stale_log_time_ = now;
-  last_vcu_stale_log_time_ = now;
-  last_vcu_stuck_log_time_ = now;
-  last_send_fail_log_time_ = now;
+  const rclcpp::Time now = this->now();
   last_vcu_ns_.store(now.nanoseconds(), std::memory_order_relaxed);
   last_vcu_alive_change_ns_.store(now.nanoseconds(), std::memory_order_relaxed);
 
@@ -201,22 +181,12 @@ ChassisNode::ChassisNode(const rclcpp::NodeOptions& options) : Node("weeder_chas
   state_text_pub_ = create_publisher<std_msgs::msg::String>("/weeder/chassis/state_text", 10);
 
   // ---- 定时器 ----
-  // 20ms = ADCU_toVCU_01 的协议周期; VCU 靠该帧的生命信号 (alive_counter) 判断
-  // ADCU 是否存活, 所以周期必须守住。
-  send_timer_ = create_wall_timer(20ms, std::bind(&ChassisNode::sendCommand, this));
+  // CAN 下发与 ROS 状态上报统一固定为 10 Hz。
+  send_timer_ = create_wall_timer(100ms, std::bind(&ChassisNode::sendCommand, this));
+  pub_timer_  = create_wall_timer(100ms, std::bind(&ChassisNode::publishState, this));
 
-  const auto pub_period = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(1.0 / publish_hz_));
-  pub_timer_            = create_wall_timer(pub_period, std::bind(&ChassisNode::publishState, this));
-
-  SPDLOG_INFO(
-    "ChassisNode 启动: 接口={} cmd_timeout={:.2f}s vcu_timeout={:.2f}s max_speed={:.2f} m/s max_steer={:.1f} deg publish={:.1f} Hz",
-    can_interface_,
-    cmd_timeout_s_,
-    vcu_timeout_s_,
-    max_speed_m_s_,
-    max_steer_deg_,
-    publish_hz_);
-  SPDLOG_INFO("底盘指令: {} | steer_mode={}", cmd_topic_, static_cast<unsigned>(steer_mode_));
+  SPDLOG_INFO("ChassisNode 启动: 接口={} vcu_timeout={:.2f}s rate=10Hz", can_interface_, vcu_timeout_s_);
+  SPDLOG_INFO("底盘指令: {}", cmd_topic_);
 }
 
 ChassisNode::~ChassisNode() {
@@ -248,153 +218,90 @@ void ChassisNode::loadLogParameters() {
 
 void ChassisNode::loadParameters() {
   declare_parameter("can_interface", "vcan0");
-  declare_parameter("publish_hz", kDefaultPublishHz);
-  declare_parameter("cmd_timeout_s", kDefaultCmdTimeoutS);
   declare_parameter("vcu_timeout_s", kDefaultVcuTimeoutS);
-  declare_parameter("max_speed_m_s", kMaxSpeedLimitMps);
-  declare_parameter("max_steer_deg", kMaxSteerLimitDeg);
   declare_parameter("cmd_topic", kDefaultCmdTopic);
-  declare_parameter("steer_mode", 0);
-  declare_parameter("watchdog_log_interval_s", kDefaultWatchdogLogIntervalS);
 
   can_interface_                 = get_parameter("can_interface").as_string();
-  publish_hz_                    = get_parameter("publish_hz").as_double();
-  cmd_timeout_s_                 = get_parameter("cmd_timeout_s").as_double();
   vcu_timeout_s_                 = get_parameter("vcu_timeout_s").as_double();
-  max_speed_m_s_                 = get_parameter("max_speed_m_s").as_double();
-  max_steer_deg_                 = get_parameter("max_steer_deg").as_double();
   cmd_topic_                     = get_parameter("cmd_topic").as_string();
-  watchdog_log_interval_s_       = get_parameter("watchdog_log_interval_s").as_double();
-  const int64_t steer_mode_param = get_parameter("steer_mode").as_int();
 
   // ---- 参数边界校验 ----
-  // 两类错都得拦:
-  //   1. 数值越界: std::clamp(v, 0.0, max) 在 max<0 时是 UB (precondition 违反);
-  //      车速/转角还有协议硬上限 (1400 mm/s, ±90.0°)。
-  //   2. 语义错位: steer_mode 必须与 lqr_control 的同名参数一致, 单/双阿克曼的
-  //      等效轴距差一倍, 对不上会让实际转角差一倍 —— "改了没生效" 类事故里最难查的一种。
-  // 一律回退到默认值 + 告警, 不用 std::max(0.0, x) 静默吸收错误值: 那样现场看到的
-  // 只是"限速改了没生效", 日志里却没有任何线索。
-  if (publish_hz_ <= 0.0) {
-    SPDLOG_WARN("publish_hz={:.3f} 非法, 回退为 {:.1f} Hz", publish_hz_, kDefaultPublishHz);
-    publish_hz_ = kDefaultPublishHz;
-  }
-  if (cmd_timeout_s_ <= 0.0) {
-    SPDLOG_WARN("cmd_timeout_s={:.3f} 非法, 回退为 {:.1f} s", cmd_timeout_s_, kDefaultCmdTimeoutS);
-    cmd_timeout_s_ = kDefaultCmdTimeoutS;
-  }
+  // 参数非法时回退到默认值并告警, 不用静默吸收错误值。
   if (vcu_timeout_s_ <= 0.0) {
     SPDLOG_WARN("vcu_timeout_s={:.3f} 非法, 回退为 {:.1f} s", vcu_timeout_s_, kDefaultVcuTimeoutS);
     vcu_timeout_s_ = kDefaultVcuTimeoutS;
-  }
-  if (watchdog_log_interval_s_ <= 0.0) {
-    SPDLOG_WARN("watchdog_log_interval_s={:.3f} 非法, 回退为 {:.1f} s", watchdog_log_interval_s_, kDefaultWatchdogLogIntervalS);
-    watchdog_log_interval_s_ = kDefaultWatchdogLogIntervalS;
-  }
-  if (max_speed_m_s_ < 0.0 || max_speed_m_s_ > kMaxSpeedLimitMps) {
-    SPDLOG_WARN("max_speed_m_s={:.3f} 超出 [0, {:.1f}] (协议上限 1400 mm/s), 回退为 {:.1f}", max_speed_m_s_, kMaxSpeedLimitMps, kMaxSpeedLimitMps);
-    max_speed_m_s_ = kMaxSpeedLimitMps;
-  }
-  if (max_steer_deg_ < 0.0 || max_steer_deg_ > kMaxSteerLimitDeg) {
-    SPDLOG_WARN("max_steer_deg={:.1f} 超出 [0, {:.1f}] (协议上限 ±90.0°), 回退为 {:.1f}", max_steer_deg_, kMaxSteerLimitDeg, kMaxSteerLimitDeg);
-    max_steer_deg_ = kMaxSteerLimitDeg;
   }
   if (cmd_topic_.empty()) {
     SPDLOG_WARN("cmd_topic 为空, 回退为 {}", kDefaultCmdTopic);
     cmd_topic_ = kDefaultCmdTopic;
   }
-  if (steer_mode_param < 0 || steer_mode_param > 3) {
-    SPDLOG_WARN("steer_mode={} 非法 (取值 0~3), 回退为 0 (单阿克曼)", steer_mode_param);
-    steer_mode_ = 0;
-  } else {
-    steer_mode_ = static_cast<uint8_t>(steer_mode_param);
-  }
-
-  SPDLOG_INFO(
-    "参数: publish_hz={:.1f} cmd_timeout={:.2f}s vcu_timeout={:.2f}s max_speed={:.2f} m/s max_steer={:.1f} deg watchdog_log={:.1f}s",
-    publish_hz_,
-    cmd_timeout_s_,
-    vcu_timeout_s_,
-    max_speed_m_s_,
-    max_steer_deg_,
-    watchdog_log_interval_s_);
+  SPDLOG_INFO("参数: vcu_timeout={:.2f}s", vcu_timeout_s_);
 }
 
 // ---- 下行: 速度 + 前轮转角合并指令 ----
 void ChassisNode::onChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr msg) {
   std::lock_guard<std::mutex> lock(cmd_mutex_);
-  last_cmd_time_ = this->now();
 
   cmd01_.gear      = 1;   // D 档
   cmd01_.ctrl_mode = 1;   // 无人驾驶
-  // 收到新指令 -> 解除超时看门狗锁存的急停。
-  cmd01_.estop = 0;
+  cmd01_.estop     = 0;
+  cmd01_.steer_mode = msg->steer_mode & 0x03;
 
   // m/s -> mm/s (协议速度 uint16, 分辨率 1 mm/s)
-  const double v   = std::clamp(msg->speed_m_s, 0.0, max_speed_m_s_);
+  const double max_speed_mps = static_cast<double>(protocol::limits::kMaxSpeedMmps) / 1000.0;
+  const double v             = std::clamp(msg->speed_m_s, 0.0, max_speed_mps);
   cmd01_.speed_raw = static_cast<uint16_t>(std::llround(v * 1000.0));
 
   // rad -> 0.1°。左正右负与协议同向, 不取反。
-  const double steer_deg   = msg->steer_angle_rad * 180.0 / M_PI;
-  const double clamped_deg = std::clamp(steer_deg, -max_steer_deg_, max_steer_deg_);
+  const double max_steer_deg = static_cast<double>(protocol::limits::kMaxSteerAngleRaw) * 0.1;
+  const double steer_deg     = msg->steer_angle_rad * 180.0 / M_PI;
+  const double clamped_deg   = std::clamp(steer_deg, -max_steer_deg, max_steer_deg);
   cmd01_.steer_angle       = static_cast<int16_t>(std::llround(clamped_deg * 10.0));
 }
 
-// ---- 20ms 周期下发 ADCU_toVCU_01 ----
+// ---- 10Hz 周期下发 ADCU_toVCU_01 ----
 void ChassisNode::sendCommand() {
   if (!can_driver_ || !can_driver_->isOpen()) {
-    return;   // 驱动侧已报过"未打开", 不要以 50 Hz 刷日志
+    return;   // 驱动侧已报过"未打开"
   }
 
   protocol::AdcuCommand01 out_cmd{};
   {
     std::lock_guard<std::mutex> lock(cmd_mutex_);
     const rclcpp::Time now     = this->now();
-    const double cmd_age       = (now - last_cmd_time_).seconds();
     const double vcu_age       = static_cast<double>(now.nanoseconds() - last_vcu_ns_.load(std::memory_order_relaxed)) * 1e-9;
     const double vcu_alive_age = static_cast<double>(now.nanoseconds() - last_vcu_alive_change_ns_.load(std::memory_order_relaxed)) * 1e-9;
 
-    // motion_inhibit: 任一看门狗触发即禁止运动, 转向强制回正。
-    // 集中在一处裁决, 避免看门狗置 0 后又被下面的来源选择覆盖。
+    // motion_inhibit: VCU 异常时禁止运动, 转向强制回正。
     bool motion_inhibit = false;
 
-    // 看门狗 1: 底盘合并指令超时 -> 停车 + 急停 (新指令可解除)
-    if (cmd_age > cmd_timeout_s_) {
-      cmd01_.speed_raw = 0;
-      cmd01_.estop     = 1;
-      motion_inhibit   = true;
-      if (now - last_cmd_stale_log_time_ >= rclcpp::Duration::from_seconds(watchdog_log_interval_s_)) {
-        last_cmd_stale_log_time_ = now;
-        SPDLOG_WARN("底盘指令超时 {:.2f}s > {:.2f}s, 已停车并置急停", cmd_age, cmd_timeout_s_);
-      }
-    }
-
-    // 看门狗 2: VCU 状态帧超时 -> 停车。
+    // VCU 状态帧超时 -> 停车。
     // 不锁存 estop: VCU 恢复上报后自动回到正常控制, 无需人工干预。
     if (vcu_age > vcu_timeout_s_) {
-      cmd01_.speed_raw = 0;
-      motion_inhibit   = true;
-      if (now - last_vcu_stale_log_time_ >= rclcpp::Duration::from_seconds(watchdog_log_interval_s_)) {
-        last_vcu_stale_log_time_ = now;
+      cmd01_.speed_raw  = 0;
+      motion_inhibit    = true;
+      vcu_stuck_logged_ = false;
+      if (!vcu_stale_logged_) {
+        vcu_stale_logged_ = true;
         SPDLOG_WARN("VCU 状态帧超时 {:.2f}s > {:.2f}s, 已停车", vcu_age, vcu_timeout_s_);
       }
     } else if (vcu_alive_age > vcu_timeout_s_) {
       // State_01 还在发, 但 AliveCounter 不递增: 说明 VCU 控制程序卡死。
-      // 与"完全收不到帧"分开告警, 方便现场判断是线束问题还是 VCU 问题。
-      cmd01_.speed_raw = 0;
-      motion_inhibit   = true;
-      if (now - last_vcu_stuck_log_time_ >= rclcpp::Duration::from_seconds(watchdog_log_interval_s_)) {
-        last_vcu_stuck_log_time_ = now;
+      cmd01_.speed_raw  = 0;
+      motion_inhibit    = true;
+      vcu_stale_logged_ = false;
+      if (!vcu_stuck_logged_) {
+        vcu_stuck_logged_ = true;
         SPDLOG_WARN("VCU alive_counter 已 {:.2f}s 未变化 (>{:.2f}s), 已停车", vcu_alive_age, vcu_timeout_s_);
       }
+    } else {
+      vcu_stale_logged_ = false;
+      vcu_stuck_logged_ = false;
     }
 
     if (motion_inhibit) {
       cmd01_.steer_angle = 0;
     }
-
-    // 转向模式: 必须与 lqr_control 的 steer_mode 一致, 否则等效轴距对不上
-    cmd01_.steer_mode = steer_mode_;
 
     cmd01_.alive_counter = static_cast<uint8_t>((cmd01_.alive_counter + 1) & 0xFF);
     out_cmd              = cmd01_;   // 复制出临界区, CAN 发送不持锁
@@ -402,12 +309,7 @@ void ChassisNode::sendCommand() {
 
   const protocol::CanFrame f = protocol::CanProtocol::encodeAdcuCmd01(out_cmd);
   if (!can_driver_->send(f)) {
-    // 驱动侧不打印单帧发送失败 (会以 50 Hz 刷屏), 这里限流告警。
-    const rclcpp::Time now = this->now();
-    if (now - last_send_fail_log_time_ >= rclcpp::Duration::from_seconds(watchdog_log_interval_s_)) {
-      last_send_fail_log_time_ = now;
-      SPDLOG_ERROR("CAN 发送失败 (ID=0x{:08X}), 底盘未收到指令", f.id);
-    }
+    SPDLOG_ERROR("CAN 发送失败 (ID=0x{:08X}), 底盘未收到指令", f.id);
   }
 }
 
@@ -420,7 +322,7 @@ void ChassisNode::onCanReceive(const protocol::CanFrame& frame) {
         return;
       }
       const int64_t now_ns = this->now().nanoseconds();
-      // 心跳时间戳用 atomic 记录, sendCommand() 无需为读时间戳抢 state_mutex_。
+      // VCU 状态时间戳用 atomic 记录, sendCommand() 无需为读时间戳抢 state_mutex_。
       last_vcu_ns_.store(now_ns, std::memory_order_relaxed);
 
       std::lock_guard<std::mutex> lock(state_mutex_);
@@ -528,7 +430,7 @@ void ChassisNode::onCanReceive(const protocol::CanFrame& frame) {
   }
 }
 
-// ---- 上行: 完整状态 + 兼容文本发布 (publish_hz) ----
+// ---- 上行: 完整状态 + 兼容文本发布 (10Hz) ----
 void ChassisNode::publishState() {
   auto msg             = std::make_unique<weeder_msgs::msg::ChassisState>();
   msg->header.stamp    = this->now();

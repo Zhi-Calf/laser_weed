@@ -1,6 +1,6 @@
 # 移植配置清单（PORT_CHECKLIST）
 
-> **历史说明：** 当前 CAN 接口已统一为 `/weeder/chassis/cmd`
+> **历史说明：** 当前 CAN 接口已统一为 `/chassis/cmd`
 > （`weeder_msgs/ChassisCmd`，同时携带速度与转角）。本文档中
 > `/cmd_vel` + `/weeder/steer_cmd` 的双话题方案已废弃，仅保留作移植记录。
 

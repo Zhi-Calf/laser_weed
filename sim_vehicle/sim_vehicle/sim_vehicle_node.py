@@ -3,7 +3,7 @@
 
 替代真实的 gnss_localization + 底盘，构成一个闭环：
 
-    lqr_control ──/weeder/chassis/cmd──► sim_vehicle ──/gnss_driver/odom──► lqr_control
+    lqr_control ──/chassis/cmd──► sim_vehicle ──/gnss_driver/odom──► lqr_control
                                       └─TF odom->base_link─►
 
 同时模拟 gnss_driver 的两个前置输出，让 global_path_planner 能工作：
@@ -56,7 +56,7 @@ class SimVehicleNode(Node):
         # 90°，所以这里夹到 60°，既避免 inf/nan 又不至于掩盖控制器的异常输出。
         self.declare_parameter("max_plant_steer_deg", 60.0)
         self.declare_parameter("cmd_timeout_s", 0.5)
-        self.declare_parameter("cmd_topic", "/weeder/chassis/cmd")
+        self.declare_parameter("cmd_topic", "/chassis/cmd")
 
         # ---- 初始位姿（ENU，单位 m）。默认在原点，即田块西南角附近。
         self.declare_parameter("init_x", 0.0)
@@ -159,7 +159,7 @@ class SimVehicleNode(Node):
                math.degrees(self.yaw), self.rtk_sigma,
                "UNMANNED" if self.unmanned else "MANUAL"))
         self.get_logger().info(
-            "订阅 /weeder/chassis/cmd + /sim/unmanned | "
+            "订阅 /chassis/cmd + /sim/unmanned | "
             "发布 /gnss_driver/odom + /gnss_driver/origin + /work_mode + /tf")
 
     # ============================================================

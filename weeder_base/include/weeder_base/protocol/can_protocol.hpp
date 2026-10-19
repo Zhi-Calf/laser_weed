@@ -31,7 +31,7 @@ constexpr uint32_t CHASSIS_STATE_22 = 0x18221CD0;   // 500ms BMS2
 //   min_cell_voltage / max_cell_pos / min_cell_pos 无对应信号, 直接丢失
 
 // ADCU -> VCU
-constexpr uint32_t ADCU_TO_VCU_01 = 0x0C01D01C;   // 20ms
+constexpr uint32_t ADCU_TO_VCU_01 = 0x0C01D01C;   // 节点发送周期固定 100ms
 
 }   // namespace can_id
 
@@ -166,7 +166,7 @@ struct ChassisState22 {
 // 发送结构体 (ADCU -> VCU)
 // ============================================================
 
-// ADCU_toVCU_01: 20ms - 控制指令
+// ADCU_toVCU_01: 10Hz (100ms) - 控制指令
 // ⚠️ 注意: 本帧 Byte0 的 bit4~6 顺序与接收帧 State_01 相反
 //    发送帧: bit4=ReleaseBrake  bit5=EStop  bit6=Reset
 //    接收帧: bit4=EStop         bit5=Reset  bit6=ReleaseBrake

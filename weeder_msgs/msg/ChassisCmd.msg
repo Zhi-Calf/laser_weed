@@ -7,3 +7,4 @@ std_msgs/Header header
 
 float64 speed_m_s        # 前进速度，m/s，>= 0
 float64 steer_angle_rad  # 前轮转角，rad，左转为正，右转为负
+uint8 steer_mode         # 0=单阿克曼，1=双阿克曼，2=平移，3=原地

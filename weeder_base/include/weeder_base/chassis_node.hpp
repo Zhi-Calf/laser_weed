@@ -20,15 +20,14 @@ namespace weeder_base {
 // 底盘 ROS2 节点
 // ============================================================
 //
-// 下行: /weeder/chassis/cmd (速度 + 前轮转角) -> ADCU_toVCU_01 (20ms)
+// 下行: /chassis/cmd (速度 + 前轮转角) -> ADCU_toVCU_01 (10Hz)
 // 上行: VCU Chassis_State_01~11/21/22
 //       -> /weeder/chassis/state (类型化完整状态)
 //       -> /weeder/chassis/state_text (兼容旧监控的一行文本)
 //
 // 安全策略集中在 sendCommand() 一处裁决 (见 .cpp 注释):
-//   指令看门狗 (cmd_timeout_s) -> 停车 + 置急停, 由新的底盘指令解除;
-//   VCU 看门狗  (vcu_timeout_s) -> 停车, 不锁存 (VCU 恢复即自动恢复);
-//   任一看门狗触发 -> 转向强制回正, 不给任何指令来源翻盘的机会。
+//   VCU 看门狗 (vcu_timeout_s) -> 停车, 不锁存 (VCU 恢复即自动恢复);
+//   VCU 看门狗触发 -> 转向强制回正。
 class ChassisNode : public rclcpp::Node {
 public:
   explicit ChassisNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
@@ -78,30 +77,19 @@ private:
   std::atomic<int64_t> last_vcu_alive_change_ns_{0};   // alive_counter 最近变化的时刻
 
 private:
-  rclcpp::Time last_cmd_time_;             // 最近一次底盘运动指令
-  rclcpp::Time last_cmd_stale_log_time_;   // 指令超时告警的上次打印时刻 (限流)
-  rclcpp::Time last_vcu_stale_log_time_;   // VCU 超时告警的上次打印时刻 (限流)
-  rclcpp::Time last_vcu_stuck_log_time_;   // VCU alive 卡住告警的上次打印时刻 (限流)
-  rclcpp::Time last_send_fail_log_time_;   // 发送失败告警的上次打印时刻 (限流)
-
-private:
   uint8_t last_vcu_alive_counter_ = 0;
   bool vcu_alive_initialized_     = false;
+  bool vcu_stale_logged_          = false;
+  bool vcu_stuck_logged_          = false;
   uint8_t last_logged_ctrl_mode_  = 0;
   bool ctrl_mode_logged_once_     = false;
   uint16_t last_bms_error_code_   = 0;
   bool bms_error_logged_once_     = false;
 
 private:
-  std::string can_interface_;        // CAN 接口名
-  std::string cmd_topic_;            // 速度 + 转角合并指令话题
-  double cmd_timeout_s_;             // 底盘指令超时 (s) -> 停车 + 急停
-  double vcu_timeout_s_;             // VCU 状态帧超时 (s) -> 停车
-  double max_speed_m_s_;             // 最大前进速度 (m/s)
-  double max_steer_deg_;             // 最大转向角 (deg)
-  double publish_hz_;                // 状态文本发布频率 (Hz)
-  double watchdog_log_interval_s_;   // 看门狗/发送失败告警的打印间隔 (s)
-  uint8_t steer_mode_;               // 0=单阿克曼 1=双阿克曼 2=平移 3=原地
+  std::string can_interface_;   // CAN 接口名
+  std::string cmd_topic_;       // 速度 + 转角合并指令话题
+  double vcu_timeout_s_;        // VCU 状态帧超时 (s) -> 停车
 
 private:
   std::string log_dir_;       // spdlog 滚动日志目录

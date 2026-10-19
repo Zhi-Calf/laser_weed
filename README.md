@@ -16,7 +16,7 @@ gnss_localization ──/gnss_driver/odom──► lqr_control
                                    │
                                    ▼ /global_path_planner/path
 
-lqr_control ──/weeder/chassis/cmd──► weeder_base ──CAN──► VCU
+lqr_control ──/chassis/cmd──► weeder_base ──CAN──► VCU
                 (速度 + 前轮转角)          │
                                            ├──/weeder/chassis/state
                                            └──/weeder/chassis/state_text
@@ -29,7 +29,7 @@ lqr_control ──/weeder/chassis/cmd──► weeder_base ──CAN──► VC
 ```text
 sim_vehicle ──/gnss_driver/odom──► lqr_control
      ▲                                  │
-     └──────/weeder/chassis/cmd─────────┘
+     └──────/chassis/cmd─────────┘
 ```
 
 ## 包结构
@@ -38,8 +38,8 @@ sim_vehicle ──/gnss_driver/odom──► lqr_control
 |---|---|
 | `gnss_localization` | 读取 RTK 接收机 GIAVP 数据，投影到 ENU，发布 odom、origin、status 和 `odom→base_link` TF；提供 NTRIP 与千寻 SDK 两种差分客户端 |
 | `global_path_planner` | 根据田块边界生成弓字形全覆盖路径，提供 `/global_path_planner/set_source` 服务 |
-| `lqr_control` | 四轮转向 LQR 路径跟踪，输出统一底盘指令 `/weeder/chassis/cmd` |
-| `weeder_base` | CAN 协议编解码、SocketCAN 驱动、20ms 指令发送、全部底盘/BMS 状态接收 |
+| `lqr_control` | 四轮转向 LQR 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
+| `weeder_base` | CAN 协议编解码、SocketCAN 驱动、10Hz 指令发送与状态上报、全部底盘/BMS 状态接收 |
 | `weeder_msgs` | 车辆、BMS、GNSS、工作模式、路径规划等 ROS2 消息、服务与 Action |
 | `sim_vehicle` | 无硬件仿真：模拟 RTK、车辆运动学、工作模式，并可一键启动完整链路 |
 
@@ -48,7 +48,7 @@ sim_vehicle ──/gnss_driver/odom──► lqr_control
 速度与前轮转角必须来自同一控制周期，因此统一由一条消息发布：
 
 ```text
-话题：/weeder/chassis/cmd
+话题：/chassis/cmd
 类型：weeder_msgs/msg/ChassisCmd
 
 float64 speed_m_s
@@ -56,7 +56,7 @@ float64 steer_angle_rad    # 左转为正
 ```
 
 `lqr_control` 每拍发布一次该消息，`weeder_base/chassis_node` 接收后转换为
-`ADCU_toVCU_01`（`0x0C01D01C`），以 20ms 周期发送给 VCU。
+`ADCU_toVCU_01`（`0x0C01D01C`），以 10Hz（100ms）周期发送给 VCU。
 
 手动遥控或测试工具也必须发布 `weeder_msgs/msg/ChassisCmd`，不再使用
 `geometry_msgs/Twist` 或单独的转角话题。
@@ -125,7 +125,7 @@ ros2 launch sim_vehicle weeder_sim.launch.py \
 查看合并后的控制器输出：
 
 ```bash
-ros2 topic echo /weeder/chassis/cmd
+ros2 topic echo /chassis/cmd
 ```
 
 详细说明见 `sim_vehicle/RUN_SIM.md`。
@@ -164,8 +164,8 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 | 串口 | `gnss_localization/config/*.yaml` | 按实际 `/dev/ttyUSB*` 或 `/dev/ttyACM*` 配置 |
 | 差分账号 | `ntrip_client.yaml` / `sdk_client.yaml` | 按设备分别配置 |
 | `wheelbase` | `lqr_control/config/lqr_control.yaml` | 单阿克曼填真实轴距，双阿克曼填 `L/2` |
-| `steer_mode` | `lqr_control` 与 `weeder_base` | 两侧必须一致 |
-| `cmd_topic` | 两侧配置文件 | 默认 `/weeder/chassis/cmd` |
+| `steer_mode` | `lqr_control` | 由路径跟踪控制器随 `/chassis/cmd` 下发 |
+| `cmd_topic` | 两侧配置文件 | 默认 `/chassis/cmd` |
 | `can_interface` | `weeder_base/config/weeder_base.yaml` | 仿真用 `vcan0`，实车用 `can0` |
 
 ## 安全机制
@@ -183,10 +183,9 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 
 `weeder_base` 另有：
 
-- `/weeder/chassis/cmd` 超时：停车并置急停，新指令解除
 - VCU `State_01` 超时：停车
 - VCU `alive_counter` 不递增：判定 VCU 卡死并停车
-- 任一看门狗触发：目标转角强制回正
+- VCU 状态超时或 alive 卡死：目标转角强制回正
 - 协议层最终限幅：车速 `0~1400 mm/s`、转角 `±90.0°`
 
 ## 测试
