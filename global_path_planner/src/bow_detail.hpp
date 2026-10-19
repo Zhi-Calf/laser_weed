@@ -32,8 +32,9 @@ namespace bow_detail {
 // Clipper2 的坐标量化精度 (小数位)
 inline constexpr int kClipperPrecision = 3;
 
-// Clipper2 量化网格的边长 (m, ≈1 mm)
-inline constexpr double kClipperGrid = 1e-3;
+// Clipper2 量化网格的边长 (m, ≈1 mm)。与首行余量下界表达的是同一个物理尺度，
+// 避免两处各写一个 0.001 后悄悄分叉。
+inline constexpr double kClipperGrid = kMinFirstRowMargin;
 
 // 相邻顶点最小间距
 inline constexpr double kMinVertexSpacing = 1e-6;
@@ -123,6 +124,33 @@ inline ProjectionRange projectRange(const Polygon_2& poly, const Point_2& dir) {
   return r;
 }
 
+// 一次垄布局的几何参数。
+struct RidgeLayout {
+  ProjectionRange across;      // 垄间距方向
+  ProjectionRange along;       // 垄方向
+  double region_width = 0.0;   // 垄间距方向宽度 (m)
+  double first_offset = 0.0;   // 首行相对近端边界的偏移 (m)
+  int row_count       = 0;     // 计划行数; 0 = 区域退化
+};
+
+// 根据区域和垄宽计算行数、首行偏移及两个方向的投影范围。
+inline RidgeLayout computeRidgeLayout(const Polygon_2& region, const Point_2& sweep_dir, const Point_2& offset_dir, double ridge_width, double first_row_margin) {
+  RidgeLayout layout;
+  layout.across       = projectRange(region, offset_dir);
+  layout.along        = projectRange(region, sweep_dir);
+  layout.region_width = layout.across.width();
+  if (layout.region_width <= kEpsilon || !(ridge_width > kEpsilon)) {
+    return layout;
+  }
+
+  layout.first_offset = std::min(first_row_margin, 0.5 * layout.region_width);
+  layout.row_count    = 1;
+  while (layout.first_offset + static_cast<double>(layout.row_count - 1) * ridge_width < layout.region_width - 0.5 * ridge_width - kEpsilon) {
+    ++layout.row_count;
+  }
+  return layout;
+}
+
 // "远端边界边": 边**中点**沿 offset_dir 投影最大的那条边 —— 兜底行要贴的就是它。
 inline Segment_2 farSideEdge(const Polygon_2& poly, const Point_2& offset_dir) {
   const Point_2* best_a = nullptr;
@@ -189,31 +217,179 @@ inline const c2::PathD& largestPath(const c2::PathsD& paths) {
   return paths[best];
 }
 
-// 两条线段是否**严格相交** (互相穿过) —— 端点相触、共线重叠都不算。
-// 自交/横穿判据统一用这个含义: "走过的垄端正好落在补出来的这一段上"是 T 型路口的正常事。
-//
-// ⚠ 判据必须是**严格异号** (`o1*o2 < 0`), 不要写成 `o1*o2 < kEpsilon`: kEpsilon = 1e-9 > 0, 于是
-// 叉积为 0 的三种情形 (共享端点 / T 型路口 / 共线重叠) 都会被判成"相交", 与上面这句注释相反。
-// 唯一调用点 (bow.cpp 的 crosses_path) 测的那一段**总是**与路径首段/末段共享端点 (补角段的一端
-// 就是路径端点), 所以带正容差的写法会**永远返回 true** —— 步骤 8 的补角因此从未插入过任何顶点,
-// 日志还把"共享端点"报成"会横穿已铺路径", 把排查引向错误方向。
-// 实测 (123 个地块, 见 bow.cpp 的 [PATH_END] 日志): 修成严格异号前 17 次拒绝里 15 次只命中共享
-// 端点那一段 (纯误报); 修后 14 个地块的补角正常生效、路径 0 处自交, 那 2 处真穿越 (例如三角形
-// 60x20 上 18.8 m 的沿边段穿 6 段掉头弧) 仍被挡住。
-inline bool properlyCrosses(const Segment_2& s, const Segment_2& t) {
-  const auto orient = [](const Point_2& a, const Point_2& b, const Point_2& c) {
-    return (b.x() - a.x()) * (c.y() - a.y()) - (b.y() - a.y()) * (c.x() - a.x());
-  };
-  const double o1 = orient(s.first, s.second, t.first);
-  const double o2 = orient(s.first, s.second, t.second);
-  const double o3 = orient(t.first, t.second, s.first);
-  const double o4 = orient(t.first, t.second, s.second);
-  return o1 * o2 < 0.0 && o3 * o4 < 0.0;
+// 用区域裁剪一条无限延伸方向上的直线段，返回落在区域内的开路径段。
+// reverse_dir=true 时，返回段的顺序和每段方向都反转，供弓字形换向使用。
+inline std::vector<Segment_2> clipLineToRegion(const Polygon_2& region, const Point_2& line_begin, const Point_2& line_end, const Point_2& dir, bool reverse_dir) {
+  std::vector<Segment_2> row;
+  c2::ClipperD clipper(kClipperPrecision);
+  clipper.AddOpenSubject(c2::PathsD{c2::PathD{toClipper(line_begin), toClipper(line_end)}});
+  clipper.AddClip(c2::PathsD{toClipperPath(region)});
+  c2::PathsD closed_paths, open_paths;
+  if (!clipper.Execute(c2::ClipType::Intersection, c2::FillRule::NonZero, closed_paths, open_paths) || open_paths.empty())
+    return row;
+
+  row.reserve(open_paths.size());
+  for (const auto& path : open_paths) {
+    if (path.size() < 2)
+      continue;
+    Segment_2 seg{fromClipper(path.front()), fromClipper(path.back())};
+    if ((seg.second - seg.first).norm() < kMinVertexSpacing)
+      continue;
+    // Clipper2 不保证开路径顶点顺序与 subject 同向，这里统一到 +dir。
+    if ((seg.second - seg.first).dot(dir) < 0.0)
+      std::swap(seg.first, seg.second);
+    row.push_back(seg);
+  }
+
+  std::sort(row.begin(), row.end(), [&dir](const Segment_2& s1, const Segment_2& s2) {
+    return s1.first.dot(dir) < s2.first.dot(dir);
+  });
+  if (reverse_dir) {
+    std::reverse(row.begin(), row.end());
+    for (auto& seg : row)
+      std::swap(seg.first, seg.second);
+  }
+  return row;
 }
 
-// ============================================================
-// 多边形小工具 (顶点规范化 / 校验 / 距离)
-// ============================================================
+// 一行路径（可能由多段组成）到目标边界线段的最短距离。
+inline double rowDistanceToSegment(const std::vector<Segment_2>& row, const Segment_2& target) {
+  const bg::model::segment<Point_2> target_seg(target.first, target.second);
+  double best = std::numeric_limits<double>::max();
+  for (const auto& seg : row)
+    best = std::min(best, bg::distance(bg::model::segment<Point_2>(seg.first, seg.second), target_seg));
+  return best;
+}
+
+// 沿远端边界边的内法线退 first_row_margin 生成兜底行；失败返回空。
+inline std::vector<Segment_2> makeFarEdgeFallbackRow(const Polygon_2& region, const Point_2& sweep_dir, const Segment_2& far_side_edge, double first_row_margin, bool reverse_row) {
+  if ((far_side_edge.second - far_side_edge.first).norm() < kMinVertexSpacing) {
+    return {};
+  }
+
+  Point_2 dir = (far_side_edge.second - far_side_edge.first).normalized();
+  if (dir.dot(sweep_dir) < 0.0) {
+    dir = -dir;
+  }
+  const Point_2 in = inwardNormal(dir, 0.5 * (far_side_edge.first + far_side_edge.second), vertexMean(region));
+  Point_2 p0       = far_side_edge.first + first_row_margin * in;
+  Point_2 p1       = far_side_edge.second + first_row_margin * in;
+  if ((p1 - p0).dot(dir) < 0.0) {
+    std::swap(p0, p1);
+  }
+  return clipLineToRegion(region, p0 - dir * kLineOverhang, p1 + dir * kLineOverhang, dir, reverse_row);
+}
+
+// 行循环中的累计状态与首末行诊断。
+struct RidgeBuildStats {
+  bool used_fallback        = false;
+  bool have_row             = false;
+  double prev_offset        = 0.0;
+  double first_margin       = 0.0;
+  double last_margin        = 0.0;
+  double far_edge_clearance = std::numeric_limits<double>::max();
+
+  void record(const std::vector<Segment_2>& row, double offset, const Point_2& offset_dir, const ProjectionRange& across, double first_row_margin, const Segment_2& far_side_edge) {
+    far_edge_clearance = std::min(far_edge_clearance, rowDistanceToSegment(row, far_side_edge));
+    if (used_fallback) {
+      prev_offset = 0.5 * (row.front().first + row.front().second).dot(offset_dir);
+      last_margin = first_row_margin;
+    } else {
+      prev_offset = offset;
+      last_margin = across.max - offset;
+    }
+    if (!have_row) {
+      first_margin = offset - across.min;
+    }
+    have_row = true;
+  }
+};
+
+// 两条线段是否**严格相交** (互相穿过) —— 端点相触、T 型接触、共线重叠都不算。
+// 用 Boost.Geometry 判断一般相交，再排除"任一端点落在另一线段上"的情形，保持补角逻辑需要的
+// 严格穿越语义：补角段与路径首段/末段共享端点时必须允许插入，而真正的横穿必须拒绝。
+inline bool properlyCrosses(const Segment_2& s, const Segment_2& t) {
+  const bg::model::segment<Point_2> bs{s.first, s.second};
+  const bg::model::segment<Point_2> bt{t.first, t.second};
+  if (!bg::intersects(bs, bt)) {
+    return false;
+  }
+  // bg::intersects 也覆盖端点接触 / T 型接触 / 共线重叠；这些不是严格穿越。
+  if (bg::intersects(s.first, bt) || bg::intersects(s.second, bt) || bg::intersects(t.first, bs) || bg::intersects(t.second, bs)) {
+    return false;
+  }
+  return true;
+}
+
+// 点到线段最近的投影点 (退化线段返回起点)。
+inline Point_2 closestPointOnSegment(const Point_2& p, const Segment_2& edge) {
+  const Point_2 ab  = edge.second - edge.first;
+  const double len2 = ab.squaredNorm();
+  if (len2 < kMinVertexSpacing * kMinVertexSpacing) {
+    return edge.first;
+  }
+  const double t = std::max(0.0, std::min(1.0, (p - edge.first).dot(ab) / len2));
+  return edge.first + t * ab;
+}
+
+// 点是否贴在边界线段上 (容差 = Clipper2 量化网格)。
+inline bool pointOnSegment(const Point_2& p, const Segment_2& edge) {
+  if ((edge.second - edge.first).norm() < kMinVertexSpacing) {
+    return false;
+  }
+  return (p - closestPointOnSegment(p, edge)).norm() <= kClipperGrid;
+}
+
+// 选择边界线段上位于 search_dir 正半平面、且离 p 最近的顶点。
+inline bool pickEdgeCorner(
+  const Point_2& p, const Point_2& search_dir, const Segment_2& edge, Point_2& out) {
+  const double dir_len = search_dir.norm();
+  if (!(dir_len > kEpsilon)) {
+    return false;
+  }
+  const Point_2 dir = search_dir / dir_len;
+  bool found        = false;
+  double best_len   = 0.0;
+  for (int k = 0; k < 2; ++k) {
+    const Point_2& corner = (k == 0) ? edge.first : edge.second;
+    const double len      = (corner - p).norm();
+    if (len <= kMinVertexSpacing) {
+      continue;
+    }
+    const double cos_a = (corner - p).dot(dir) / len;
+    if (cos_a >= -kEpsilon && (!found || len < best_len)) {
+      out      = corner;
+      best_len = len;
+      found    = true;
+    }
+  }
+  return found;
+}
+
+// 边界线段上除 end 之外的路径点数。
+inline size_t countOtherPointsOnEdge(
+  const std::vector<Point_2>& path, const Segment_2& edge, const Point_2& end) {
+  size_t others = 0;
+  for (const auto& p : path) {
+    if ((p - end).norm() <= kMinVertexSpacing) {
+      continue;
+    }
+    if (pointOnSegment(p, edge)) {
+      ++others;
+    }
+  }
+  return others;
+}
+
+// 线段是否严格横穿路径中的任意一段。
+inline bool segmentCrossesPath(const Segment_2& segment, const std::vector<Point_2>& path) {
+  for (size_t i = 0; i + 1 < path.size(); ++i) {
+    if (properlyCrosses(segment, Segment_2{path[i], path[i + 1]})) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // 把环的起点旋转到离 target 最近的顶点 (日志/可视化与配置顶点顺序对得上)。
 inline void rotateToNearest(Polygon_2& poly, const Point_2& target) {
@@ -245,8 +421,6 @@ inline void removeDuplicateVertices(Polygon_2& poly) {
 }
 
 // 用 Boost.Geometry 校验: 不自交 (is_simple) + 面积大于阈值。
-// 这里刻意不用 bg::is_valid: 它内部会构造 box<Point_2>, 与 Eigen "默认不初始化" 的构造
-// 组合会触发 -Wmaybe-uninitialized 误报 (编译器无法证明 box 角点已赋值), 刷屏且无意义。
 inline bool isValidRing(const Polygon_2& poly, double min_area) {
   if (poly.size() < 3)
     return false;

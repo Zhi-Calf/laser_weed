@@ -58,7 +58,6 @@ global_path_planner:
            34.6201347, 112.4497271, 100.0]
     ridge_width: 2.5
     field_margin: 1.5
-    in_row_resolution: 1.0
 ```
 
 - `poly` 是扁平数组，每 3 个数为一个顶点：`lat, lon, alt`。
@@ -67,7 +66,6 @@ global_path_planner:
   配成同一个坐标。
 - `ridge_width` 必须大于 0，决定弓字形行距。
 - `field_margin` 必须大于等于 0；建议不小于 `ridge_width/2`，否则地头半圆掉头可能出界。
-- `in_row_resolution` 为 0 时不生成 `pto_path`。
 - 所有参数在启动时读取，修改后需要重启规划器。
 
 ## 三、启动时序
@@ -117,7 +115,8 @@ ros2 launch lqr_control lqr_control.launch.py
 ### 终端 4：确认路径并切无人模式
 
 ```bash
-ros2 topic echo /global_path_planner/path --once
+ros2 topic echo /global_path_planner/path --once \
+  --field x --truncate-length 5
 ros2 topic pub --once /sim/unmanned std_msgs/msg/Bool "{data: true}"
 ```
 

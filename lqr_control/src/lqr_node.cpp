@@ -154,9 +154,9 @@ void LqrNode::setupInterfaces()
   // global_path_planner publishes ~/path transient_local (latched), so a late
   // subscriber must use matching durability to receive the last path.
   const auto path_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
-  path_sub_ = create_subscription<nav_msgs::msg::Path>(
+  path_sub_ = create_subscription<weeder_msgs::msg::Path>(
     path_topic_, path_qos,
-    [this](const nav_msgs::msg::Path::SharedPtr msg) {pathCallback(msg);});
+    [this](const weeder_msgs::msg::Path::SharedPtr msg) {pathCallback(msg);});
 
   // /work_mode is the system-wide "who controls the chassis" bus, published
   // latched by the mode manager so a late subscriber learns the current mode
@@ -205,18 +205,19 @@ void LqrNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
   odom_sigma_ = std::sqrt(worst_var);
 }
 
-void LqrNode::pathCallback(const nav_msgs::msg::Path::SharedPtr msg)
+void LqrNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg)
 {
-  if (msg->poses.size() < 2) {
+  if (msg->x.size() < 2 || msg->x.size() != msg->y.size()) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
-      "收到的路径只有 %zu 个点，无法跟踪 (需要 >= 2)", msg->poses.size());
+      "收到的路径无效：x=%zu y=%zu (需要 x==y 且 >= 2)",
+      msg->x.size(), msg->y.size());
     return;
   }
 
   std::vector<std::pair<double, double>> xy;
-  xy.reserve(msg->poses.size());
-  for (const auto & p : msg->poses) {
-    xy.emplace_back(p.pose.position.x, p.pose.position.y);
+  xy.reserve(msg->x.size());
+  for (size_t i = 0; i < msg->x.size(); ++i) {
+    xy.emplace_back(msg->x[i], msg->y[i]);
   }
 
   std::lock_guard<std::mutex> lock(mutex_);
@@ -227,8 +228,7 @@ void LqrNode::pathCallback(const nav_msgs::msg::Path::SharedPtr msg)
 
   // Fingerprint check (inside the lock: it reads the path_fp_* members).
   //
-  // global_path_planner republishes the identical path every 100 ms (its
-  // timerCallback calls publishPath() unconditionally). Reloading the trajectory
+  // global_path_planner republishes the identical path every 100 ms. Reloading the trajectory
   // on each republish would reset the tracked goal to index 0 every tick, pinning
   // the vehicle to the path start -- the "orange target point never moves"
   // symptom. Only a genuinely new path (different length or endpoints) may reset
@@ -247,8 +247,8 @@ void LqrNode::pathCallback(const nav_msgs::msg::Path::SharedPtr msg)
   }
 
   std::vector<TrajectoryPoint> traj;
-  // The planner path carries no velocity information (z encodes segment type
-  // WORK/TURN), so the desired speed comes from the node parameter.
+  // The planner path carries no velocity information, so the desired speed
+  // comes from the node parameter.
   if (!computePathProfile(xy, target_v_, &traj)) {
     RCLCPP_ERROR(get_logger(), "路径剖面计算失败，忽略这条路径");
     return;

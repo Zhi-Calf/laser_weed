@@ -5,7 +5,6 @@
 //   * poly: 必须是 3 的倍数且至少 3 个顶点，每个顶点为 (lat, lon, alt)，
 //     经纬度有限且不越界;
 //   * ridge_width > 0、field_margin >= 0;
-//   * in_row_resolution 为 0 或 [kMinInRowResolution, kMaxInRowResolution] m;
 //   * first_row_margin 必须落在 [kMinFirstRowMargin, ridge_width/2]。
 // 合法但几何上排不出路径仍属于规划阶段错误 (10402..10408)。
 #include <gtest/gtest.h>
@@ -17,16 +16,13 @@
 
 #include "global_path_planner/global_path_planner.hpp"
 
-using global_path_planner::kMaxInRowResolution;
 using global_path_planner::kMaxPolygonVertices;
-using global_path_planner::kMinInRowResolution;
 using global_path_planner::LocalGeometryConfig;
 using global_path_planner::parseFirstRowMarginForRidge;
-using global_path_planner::parseInRowResolution;
 using global_path_planner::parseLocalGeometryConfig;
 using global_path_planner::parsePolygonVertices;
-// ⚠ kMinFirstRowMargin / kDefaultFirstRowMargin 是 bow.hpp 里的**全局**常量 (那个头文件不开 namespace),
-// 所以这里不给它们写 using 声明 —— 与 test_bow_planner.cpp 的用法一致。
+// ⚠ kMinFirstRowMargin 是 bow.hpp 里的全局常量 (那个头文件不开 namespace),
+// 所以这里不给它写 using 声明 —— 与 test_bow_planner.cpp 的用法一致。
 
 // ---- YAML 多边形的顶点判据 ----
 
@@ -181,21 +177,20 @@ TEST(LocalGeometry, RejectsNegativeOrNonFiniteFieldMargin) {
 // 下界常量本身也钉一下 (改它 = 改现场能用的最小余量; 上界是 0.5 * ridge_width, 没有常量)。
 TEST(FirstRowMarginRange, LowerBoundConstantIsTheClipperGridFloor) {
   EXPECT_DOUBLE_EQ(kMinFirstRowMargin, 0.001);
-  EXPECT_DOUBLE_EQ(kDefaultFirstRowMargin, 0.005);
 }
 
 // 合法: 落在 [kMinFirstRowMargin, 垄宽/2] 内 —— 两端都取得到,
 // 且成功时 reason 被清空。
 TEST(FirstRowMarginRange, AcceptsClosedIntervalBounds) {
   std::string reason = "上一个请求留下的脏串";
-  EXPECT_TRUE(parseFirstRowMarginForRidge(kDefaultFirstRowMargin, 2.5, reason));   // 默认值 + 常见垄宽
+  EXPECT_TRUE(parseFirstRowMarginForRidge(0.005, 2.5, reason));   // 默认值 + 常见垄宽
   EXPECT_TRUE(reason.empty()) << reason;
   EXPECT_TRUE(parseFirstRowMarginForRidge(kMinFirstRowMargin, 2.5, reason)) << "恰好等于下界该收";
   EXPECT_TRUE(reason.empty()) << reason;
   EXPECT_TRUE(parseFirstRowMarginForRidge(1.25, 2.5, reason)) << "恰好等于 垄宽/2 = 1.25 该收";
   EXPECT_TRUE(reason.empty()) << reason;
   // 默认值 0.005 m 的**最小可用垄宽**: 2 * 0.005 = 0.01 m (恰好等于上界)
-  EXPECT_TRUE(parseFirstRowMarginForRidge(kDefaultFirstRowMargin, 0.01, reason));
+  EXPECT_TRUE(parseFirstRowMarginForRidge(0.005, 0.01, reason));
   EXPECT_TRUE(reason.empty()) << reason;
 }
 
@@ -219,7 +214,7 @@ TEST(FirstRowMarginRange, RejectsAboveHalfRidgeWidth) {
   EXPECT_TRUE(parseFirstRowMarginForRidge(0.01, 0.02, reason)) << "0.02/2 = 0.01: 同一个值这里该收";
   EXPECT_TRUE(reason.empty()) << reason;
 
-  EXPECT_FALSE(parseFirstRowMarginForRidge(kDefaultFirstRowMargin, 0.009, reason));
+  EXPECT_FALSE(parseFirstRowMarginForRidge(0.005, 0.009, reason));
   EXPECT_NE(reason.find("ridge_width"), std::string::npos) << reason;
   EXPECT_FALSE(parseFirstRowMarginForRidge(std::nextafter(1.25, 2.0), 2.5, reason)) << "刚超过 垄宽/2: 该拒";
 }
@@ -232,41 +227,5 @@ TEST(FirstRowMarginRange, RejectsNonFinite) {
     std::string reason;
     EXPECT_FALSE(parseFirstRowMarginForRidge(bad, 2.5, reason)) << "first_row_margin = " << bad << " 不该被接受";
     EXPECT_NE(reason.find("first_row_margin"), std::string::npos) << reason;
-  }
-}
-
-// ---- PTO 行内分辨率 (YAML in_row_resolution, 两种来源都必填) ----
-
-// 取值域必须与 YAML 文档保持一致: 0.0 = 不产出 pto_path,
-// 否则必须落在 [0.01, 100] m。
-TEST(InRowResolution, WireValueRangeIsPartOfTheInterface) {
-  EXPECT_DOUBLE_EQ(kMinInRowResolution, 0.01);
-  EXPECT_DOUBLE_EQ(kMaxInRowResolution, 100.0);
-}
-
-// 合法: 0.0 (不产出 pto_path) 与**闭区间两端**都要收下。
-TEST(InRowResolution, AcceptsZeroAndClosedRangeBounds) {
-  std::string reason = "上一个请求留下的脏串";
-  EXPECT_TRUE(parseInRowResolution(0.0, reason));
-  EXPECT_TRUE(reason.empty()) << reason;
-  EXPECT_TRUE(parseInRowResolution(kMinInRowResolution, reason)) << reason;
-  EXPECT_TRUE(reason.empty()) << reason;
-  EXPECT_TRUE(parseInRowResolution(kMaxInRowResolution, reason)) << reason;
-  EXPECT_TRUE(reason.empty()) << reason;
-  EXPECT_TRUE(parseInRowResolution(1.0, reason)) << reason;
-}
-
-// 非法: 越界 (两侧各取一点 + 1e-6 这种"点数爆炸"的极小值) / 负值 / NaN / ±inf 一律拒 ——
-// 极小值那一条是这条判据存在的**主要理由** (点数按 1/步长 增长, 300 m 的垄给 1e-6 = 3e8 个点),
-// NaN/Inf 则会让 PTO 路径静默消失 (have_pto 恒为 false)。
-// reason 里必须给出取值域 (含 0.0 这个特例) 与收到的值, 现场据此直接改 YAML。
-TEST(InRowResolution, RejectsOutOfRangeAndNonFinite) {
-  const double nan = std::numeric_limits<double>::quiet_NaN();
-  const double inf = std::numeric_limits<double>::infinity();
-  for (const double bad : {0.009, 100.001, 1e-6, -1.0, nan, inf, -inf}) {
-    std::string reason;
-    EXPECT_FALSE(parseInRowResolution(bad, reason)) << "in_row_resolution = " << bad << " 不该被接受";
-    EXPECT_NE(reason.find("in_row_resolution"), std::string::npos) << reason;
-    EXPECT_NE(reason.find("0.0"), std::string::npos) << "reason 该点出 0.0 这个合法特例: " << reason;
   }
 }

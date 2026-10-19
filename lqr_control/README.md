@@ -99,7 +99,7 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 | 方向 | 话题 | 类型 | 上游 |
 |---|---|---|---|
 | 订阅 | `/gnss_driver/odom` | `nav_msgs/Odometry` | `gnss_localization`（SensorDataQoS） |
-| 订阅 | `/global_path_planner/path` | `nav_msgs/Path` | `global_path_planner`（transient_local） |
+| 订阅 | `/global_path_planner/path` | `weeder_msgs/Path` | `global_path_planner`（transient_local） |
 | 订阅 | `/work_mode` | `weeder_msgs/WorkMode` | 模式管理方/APP（transient_local） |
 | 发布 | `/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
 | 发布 | `/lqr_control/target_point` | `visualization_msgs/Marker` | RViz |

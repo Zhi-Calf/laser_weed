@@ -7,23 +7,15 @@
 #include <eigen3/Eigen/Core>
 #include <geometry_msgs/msg/point.hpp>
 #include <memory>
-#include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <set>
 #include <string>
 #include <vector>
 #include <visualization_msgs/msg/marker.hpp>
+#include <weeder_msgs/msg/path.hpp>
 
 #include "global_path_planner/bow.hpp"
 
 namespace global_path_planner {
-
-// PTO路径使用的分辨率 (m)
-inline constexpr double kMinInRowResolution = 0.01;
-inline constexpr double kMaxInRowResolution = 100.0;
-
-// 路径跟踪使用的分辨率 (m)
-inline constexpr double kDefaultPathResolution = 0.2;
 
 // 多边形顶点数上限
 inline constexpr uint32_t kMaxPolygonVertices = 1024;
@@ -65,16 +57,6 @@ inline std::vector<std::array<double, 3>> parsePolygonVertices(uint32_t poly_cou
   return vertices;
 }
 
-// in_row_resolution 的取值判据
-inline bool parseInRowResolution(double value, std::string& out_reason) {
-  out_reason.clear();
-  if (!std::isfinite(value) || (value != 0.0 && (value < kMinInRowResolution || value > kMaxInRowResolution))) {
-    out_reason = "in_row_resolution 必须是 0.0 或 [" + std::to_string(kMinInRowResolution) + ", " + std::to_string(kMaxInRowResolution) + "] m 内的有限数, 收到 " + std::to_string(value);
-    return false;
-  }
-  return true;
-}
-
 // local 来源的几何参数 (YAML ridge_width + field_margin)
 struct LocalGeometryConfig {
   double ridge_width  = 0.0;   // 垄宽 (m): 行距; 必须 > 0
@@ -109,16 +91,14 @@ inline bool parseFirstRowMarginForRidge(double first_row_margin, double ridge_wi
   return true;
 }
 
-/// 全局路径规划节点: 根据 YAML 中的地块多边形生成一条可跟踪的 /path
-/// (以及可选的 PTO 行内路径)。
+/// 全局路径规划节点: 根据 YAML 中的地块多边形生成一条可跟踪的 /path。
 ///
 /// `poly` 的第一个顶点同时作为 ENU 原点。节点启动后立即投影并规划，
 /// 定时器 (100 ms) 只负责健康判定与重复发布。
 ///
 /// 发布以下话题 (均为节点相对名, 完整名为 /global_path_planner/<topic>):
-///   ~/path                  全局路径 (nav_msgs/Path, transient_local; pose.position.z = 段类型
+///   ~/path                  全局路径 (weeder_msgs/Path, transient_local; x/y + waypoint_types,
 ///                           0=作业 / 1=掉头), 供 path_controller 跟踪
-///   ~/pto_path              PTO 行内路径 (与 ~/path 同结构; in_row_resolution = 0 时为空)
 ///   ~/path_points           路径点的 RViz marker
 ///   ~/key_points            关键点的 RViz marker (每条垄的两个端点)
 ///   ~/boundary_points       地块边界点的 RViz marker
@@ -130,7 +110,7 @@ public:
 
 private:
   // 主循环与启动参数
-  void timerCallback();   // 100 ms 主循环: 健康判定 + 发布
+  void timerCallback();   // 100 ms 主循环: 发布路径与 Marker
   void loadLogParameters();
   void loadParameters();
 
@@ -140,21 +120,13 @@ private:
   void projectVerticesToEnu();   // 顶点经纬度 -> ENU (cell_ / inner_cell_); 换原点时调
 
 private:
-  // 唯一发布出口与健康判定
-  void publishPath();                                              // 唯一发布出口; 规划函数不直接调它
-  void updateLocalPathHealth();                                    // 心跳/故障判定
-  void logFaultOnce(uint32_t code, const std::string& detail);     // 故障码去重 WARN (恢复后重新武装)
-  void pruneFaultLog(const std::vector<uint32_t>& active_codes);   // 清掉已恢复的故障码
-
-private:
   // 定时器与 IO (话题名与 QoS 见类注释)
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr path_points_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr key_points_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr boundary_points_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr inner_boundary_points_pub_;
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pto_path_pub_;
+  rclcpp::Publisher<weeder_msgs::msg::Path>::SharedPtr path_pub_;
 
 private:
   // 算法对象 (随节点长生命周期)
@@ -163,14 +135,12 @@ private:
 
 private:
   // 当前生效路径 + local 规划的输入/输出 (发布前都攒在这里)
-  Polygon_2 cell_;                                             // YAML 配置的多边形顶点 (平面坐标, ENU)
-  Polygon_2 inner_cell_;                                       // 按 field_margin_ 内缩后的多边形 (平面坐标, ENU)
-  std::vector<Point_2> waypoints_;                             // 当前生效的全局路径
-  std::vector<uint8_t> waypoint_types_;                        // 与 waypoints_ 1:1 的段类型 (0=作业 / 1=掉头, 写进 pose.position.z)
-  std::vector<Point_2> key_waypoints_;                         // 关键点 (RViz 绿点): 每条垄的两个端点
-  std::string last_plan_error_;                                // 最近一次规划失败的原因 (进 ⑦ 的心跳 detail; 规划成功即清空)
-  PlanStatus last_plan_status_ = PlanStatus::kOk;              // 最近一次规划的状态 (心跳据此报 1040x 细分码; kOk = 成功)
-  std::vector<std::array<double, 3>> raw_vertices_;            // YAML 配置的原始顶点 (经纬度)
+  Polygon_2 cell_;                                    // YAML 配置的多边形顶点 (平面坐标, ENU)
+  Polygon_2 inner_cell_;                              // 按 field_margin_ 内缩后的多边形 (平面坐标, ENU)
+  std::vector<Point_2> waypoints_;                    // 当前生效的全局路径
+  std::vector<uint8_t> waypoint_types_;               // 与 waypoints_ 1:1 的段类型 (0=作业 / 1=掉头)
+  std::vector<Point_2> key_waypoints_;                // 关键点 (RViz 绿点): 每条垄的两个端点
+  std::vector<std::array<double, 3>> raw_vertices_;   // YAML 配置的原始顶点 (经纬度)
 
 private:
   // 日志参数 (启动时读一次; 名字与其它节点保持一致)
@@ -182,21 +152,11 @@ private:
 
 private:
   // local 规划参数 (全部来自 YAML, 启动时读一次)
-  double ridge_width_               = 0.0;                      // 垄宽 (m): 行距
-  double path_resolution_           = kDefaultPathResolution;   // /path 插值分辨率 (m): **仍是 yaml 参数** (path_resolution), 只在启动时读一次
-  double field_margin_              = 0.0;                      // 四周统一内缩的田边余量 (m)
-  double miter_limit_               = kDefaultMiterLimit;       // 内缩偏置的拐角上限 (Clipper2 语义; 见 bow.hpp; yaml 参数 miter_limit)
-  double first_row_margin_          = kDefaultFirstRowMargin;   // 首行/末行兜底离内缩边界的余量 (m; 见 bow.hpp): **yaml 参数 first_row_margin 的生效值** (启动时读一次, 之后恒定)
-  double in_row_resolution_         = 0.0;                      // PTO 行内分辨率 (m): 0.0 = 不产 PTO 路径
-
-private:
-  // PTO 输出
-  std::vector<Point_2> pto_waypoints_;   // PTO 行内路径 (in_row_resolution_ = 0 时为空)
-  std::vector<uint8_t> pto_seg_types_;   // 与 pto_waypoints_ 1:1 的段类型 (0=作业 / 1=掉头)
-
-private:
-  // 故障码去重
-  std::set<uint32_t> logged_faults_;   // 已打印过的故障码 (去重 / 恢复清除)
+  double ridge_width_      = 0.0;     // 垄宽 (m): 行距
+  double path_resolution_  = 0.2;     // /path 插值分辨率 (m): YAML 参数 path_resolution
+  double field_margin_     = 0.0;     // 四周统一内缩的田边余量 (m)
+  double miter_limit_      = 2.0;     // 内缩偏置的拐角上限 (YAML 参数 miter_limit)
+  double first_row_margin_ = 0.005;   // 首行/末行余量 (m, YAML 参数 first_row_margin)
 };
 
 }   // namespace global_path_planner

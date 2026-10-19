@@ -24,14 +24,14 @@ import math
 
 import rclpy
 from geometry_msgs.msg import TransformStamped
-from nav_msgs.msg import Odometry, Path
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy,
                        qos_profile_sensor_data)
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool
 from tf2_msgs.msg import TFMessage
-from weeder_msgs.msg import ChassisCmd, WorkMode
+from weeder_msgs.msg import ChassisCmd, Path, WorkMode
 from visualization_msgs.msg import Marker
 
 TWO_PI = 2.0 * math.pi
@@ -195,26 +195,24 @@ class SimVehicleNode(Node):
         对齐后留 align_offset 的横向偏差，这样能直观看到 lqr_control 把车
         收敛回路径的过程。若 align_to_path_start=false 则跳过，用绝对初始位姿。
         """
-        if self.aligned or not self.align_to_path or len(msg.poses) < 2:
+        if self.aligned or not self.align_to_path or len(msg.x) < 2 or len(msg.x) != len(msg.y):
             return
         self.aligned = True
 
-        p0 = msg.poses[0].pose.position
-        p1 = msg.poses[1].pose.position
-        start_yaw = math.atan2(p1.y - p0.y, p1.x - p0.x)
+        start_yaw = math.atan2(msg.y[1] - msg.y[0], msg.x[1] - msg.x[0])
 
         # 沿路径起点的法向（左侧为正）偏移 align_offset 米作为初始横向误差
         nx = -math.sin(start_yaw)
         ny = math.cos(start_yaw)
-        self.x = p0.x + nx * self.align_offset
-        self.y = p0.y + ny * self.align_offset
+        self.x = msg.x[0] + nx * self.align_offset
+        self.y = msg.y[0] + ny * self.align_offset
         self.yaw = start_yaw
 
         self.get_logger().info(
             "已对齐到路径起点 (%.2f, %.2f)，航向 %.1f°，故意留横向偏差 %.2fm 以观察收敛。"
             "路径共 %d 点。"
             % (self.x, self.y, math.degrees(self.yaw),
-               self.align_offset, len(msg.poses)))
+               self.align_offset, len(msg.x)))
 
     # ============================================================
     # 主循环

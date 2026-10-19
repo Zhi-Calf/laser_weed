@@ -7,8 +7,7 @@
 //   ② 混合输入并发: 各线程用不同地块/参数交错执行, 每组输出与各自基准逐位相同
 //      (若有隐藏的跨实例共享状态, 这里必然串改);
 //   ③ plan() **不修改输入**: 并发跑完, 每个 BowInput 与原值逐位相同;
-//   ④ 失败路径也如此: 非法输入 (非凸 / 垄宽为 0) 并发跑, 每次都拿到同一个 status/message;
-//   ⑤ 同一份结构路径被多线程并发重采样 (resampleBowSkeleton 是自由函数, 天然无状态)。
+//   ④ 失败路径也如此: 非法输入 (非凸 / 垄宽为 0) 并发跑, 每次都拿到同一个 status/message。
 // 逐位比较而不是 EXPECT_NEAR: 契约是"结果与单线程一模一样", 不是"差不多"。
 #include <gtest/gtest.h>
 
@@ -41,8 +40,6 @@ bool SameOutput(const BowOutput& a, const BowOutput& b) {
     return false;
   if (!SamePath(a.waypoints, b.waypoints) || !SamePath(a.key_waypoints, b.key_waypoints) || !SamePath(a.inner_polygon, b.inner_polygon))
     return false;
-  if (!SamePath(a.pto_waypoints, b.pto_waypoints) || a.pto_seg_types != b.pto_seg_types)
-    return false;
   return SameBits(a.sweep_dir_deg, b.sweep_dir_deg) && SameBits(a.turn_max_overrun, b.turn_max_overrun) && SameBits(a.turn_max_pocket, b.turn_max_pocket) &&
          SameBits(a.turn_pocket_margin_hint, b.turn_pocket_margin_hint);
 }
@@ -51,7 +48,7 @@ Polygon_2 Rect(double w, double h) {
   return {Point_2(0.0, 0.0), Point_2(w, 0.0), Point_2(w, h), Point_2(0.0, h)};
 }
 
-// 一组"互不相同"的输入 (地块/垄宽/分辨率/余量/行内分辨率都不同), 供混合并发用。
+// 一组"互不相同"的输入 (地块/垄宽/分辨率/余量都不同), 供混合并发用。
 std::vector<BowInput> MakeInputs() {
   std::vector<BowInput> inputs;
   for (int i = 0; i < 8; ++i) {
@@ -59,8 +56,7 @@ std::vector<BowInput> MakeInputs() {
     in.ridge_width       = 0.6 + 0.3 * static_cast<double>(i);
     in.path_resolution   = 0.1 + 0.05 * static_cast<double>(i % 3);
     in.field_margin      = 0.2 * static_cast<double>(i % 4);
-    in.first_row_margin  = kDefaultFirstRowMargin;
-    in.in_row_resolution = (i % 3 == 0) ? 0.0 : 1.0 + 0.5 * static_cast<double>(i % 3);
+    in.first_row_margin  = 0.005;
     if (i % 2 == 0)
       in.cell = Rect(20.0 + static_cast<double>(i), 8.0 + 0.5 * static_cast<double>(i));
     else
@@ -80,13 +76,10 @@ TEST(BowParallel, PerInstanceSameInputIsBitIdentical) {
   in.ridge_width       = 1.0;
   in.path_resolution   = 0.2;
   in.field_margin      = 0.5;
-  in.in_row_resolution = 1.0;
   const BowInput in_before = in;
 
   const BowOutput reference = engine.plan(in);   // 单线程基准
   ASSERT_TRUE(reference.ok());
-  ASSERT_FALSE(reference.pto_waypoints.empty());
-
   constexpr int kThreads = 8;
   constexpr int kIters   = 40;
   std::atomic<int> mismatches{0};
@@ -116,7 +109,6 @@ TEST(BowParallel, PerInstanceSameInputIsBitIdentical) {
   EXPECT_TRUE(SameBits(in.field_margin, in_before.field_margin));
   EXPECT_TRUE(SameBits(in.miter_limit, in_before.miter_limit));
   EXPECT_TRUE(SameBits(in.first_row_margin, in_before.first_row_margin));
-  EXPECT_TRUE(SameBits(in.in_row_resolution, in_before.in_row_resolution));
   EXPECT_TRUE(SamePath(in.cell, in_before.cell));
 }
 
@@ -133,9 +125,6 @@ TEST(BowParallel, MixedInputsInterleavedStayBitIdentical) {
     ASSERT_TRUE(out.ok());
     reference.push_back(out);
   }
-  EXPECT_TRUE(reference[0].pto_waypoints.empty()) << "第 0 组 in_row_resolution = 0, 不该产出 PTO 路径";
-  EXPECT_FALSE(reference[1].pto_waypoints.empty()) << "第 1 组应产出 PTO 路径";
-
   constexpr int kIters = 25;
   std::atomic<int> mismatches{0};
   std::vector<std::thread> workers;
@@ -196,45 +185,4 @@ TEST(BowParallel, FailurePathsAreAlsoStable) {
   for (auto& w : workers)
     w.join();
   EXPECT_EQ(mismatches.load(), 0) << "失败路径在并发下不稳定";
-}
-
-// ⑤ 同一份结构路径被多线程并发重采样: 每次结果都要与单线程基准逐位相同。
-// resampleBowSkeleton 是自由函数 (无状态) —— 这条钉住"只改分辨率"那条路也是并发安全的:
-// 节点侧一次改分辨率只调一次, 但将来若做并行预处理 (多分辨率试算) 也应当成立。
-TEST(BowParallel, ConcurrentResampleOfSharedSkeletonIsBitIdentical) {
-  PlanBowShapedPath engine;
-  BowInput in;
-  in.cell              = Rect(20.0, 8.0);
-  in.ridge_width       = 1.0;
-  in.path_resolution   = 0.2;
-  in.field_margin      = 0.5;
-  in.in_row_resolution = 1.0;
-  const BowOutput base = engine.plan(in);
-  ASSERT_TRUE(base.ok());
-  ASSERT_FALSE(base.skeleton.empty());
-
-  // 四组分辨率 (含 in_row = 0 = 不产出 PTO)
-  const std::vector<std::pair<double, double>> resolutions{{0.05, 0.0}, {0.1, 0.5}, {0.2, 1.0}, {0.35, 3.0}};
-  std::vector<std::vector<Point_2>> ref_wp(resolutions.size()), ref_pto(resolutions.size());
-  std::vector<std::vector<uint8_t>> ref_types(resolutions.size());
-  for (size_t i = 0; i < resolutions.size(); ++i)
-    resampleBowSkeleton(base.skeleton, resolutions[i].first, resolutions[i].second, ref_wp[i], ref_pto[i], ref_types[i]);
-
-  std::atomic<int> mismatches{0};
-  std::vector<std::thread> workers;
-  for (int t = 0; t < 8; ++t) {
-    workers.emplace_back([&, t] {
-      for (int it = 0; it < 50; ++it) {
-        const size_t k = static_cast<size_t>((t + it) % static_cast<int>(resolutions.size()));
-        std::vector<Point_2> wp, pto;
-        std::vector<uint8_t> types;
-        resampleBowSkeleton(base.skeleton, resolutions[k].first, resolutions[k].second, wp, pto, types);
-        if (!SamePath(wp, ref_wp[k]) || !SamePath(pto, ref_pto[k]) || types != ref_types[k])
-          ++mismatches;
-      }
-    });
-  }
-  for (auto& w : workers)
-    w.join();
-  EXPECT_EQ(mismatches.load(), 0) << "并发重采样结果与基准不一致";
 }

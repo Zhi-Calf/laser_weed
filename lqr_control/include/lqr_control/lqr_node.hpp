@@ -15,9 +15,9 @@
 #include "lqr_control/path_profile.hpp"
 
 #include <nav_msgs/msg/odometry.hpp>
-#include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <weeder_msgs/msg/chassis_cmd.hpp>
+#include <weeder_msgs/msg/path.hpp>
 #include <weeder_msgs/msg/work_mode.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
@@ -40,7 +40,7 @@ private:
   void controlTick();
 
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
-  void pathCallback(const nav_msgs::msg::Path::SharedPtr msg);
+  void pathCallback(const weeder_msgs::msg::Path::SharedPtr msg);
   void workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg);
 
   /// Publish the tracked goal point as an RViz marker.
@@ -89,7 +89,7 @@ private:
   std::unique_ptr<LQR> lqr_;
   // Subscriptions / publications
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
-  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
+  rclcpp::Subscription<weeder_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<weeder_msgs::msg::WorkMode>::SharedPtr work_mode_sub_;
   rclcpp::Publisher<weeder_msgs::msg::ChassisCmd>::SharedPtr cmd_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr viz_pub_;

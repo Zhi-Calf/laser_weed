@@ -11,10 +11,10 @@ global_path_planner 现在启动时直接从 YAML 读取田块和几何参数，
 """
 
 import rclpy
-from nav_msgs.msg import Path
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool
+from weeder_msgs.msg import Path
 
 
 WAIT_PATH = 0
@@ -57,7 +57,7 @@ class SimOrchestratorNode(Node):
             '编排节点已启动：等待 YAML 路径生成后切换 UNMANNED')
 
     def on_path(self, msg):
-        self.got_path_points = len(msg.poses)
+        self.got_path_points = min(len(msg.x), len(msg.y))
 
     def tick(self):
         if self.phase in (DONE, FAILED):

@@ -166,7 +166,7 @@ if(BUILD_TESTING)
   find_package(ament_cmake_test REQUIRED)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   ament_add_test(params_in_yaml
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check_params.py
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/check_params.py
             --src ${CMAKE_CURRENT_SOURCE_DIR}/src
             --yaml ${CMAKE_CURRENT_SOURCE_DIR}/config/gnss_driver.yaml
                    ${CMAKE_CURRENT_SOURCE_DIR}/config/ntrip_client.yaml

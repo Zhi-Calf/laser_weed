@@ -1,0 +1,10 @@
+# 全覆盖路径
+#
+# x/y 与 waypoint_types 按索引一一对应。
+# waypoint_types: 0 = 作业段, 1 = 掉头段。
+
+std_msgs/Header header
+
+float64[] x
+float64[] y
+uint8[] waypoint_types

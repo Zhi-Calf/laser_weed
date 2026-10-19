@@ -279,7 +279,7 @@ TEST(BowPlannerCoverage, RidgeSpacingAndSerpentineOrder) {
 //   * 垄数取"最小的 N 使首行 + (N-1)*垄宽 >= W - 垄宽/2" -> 区域内仍保持 <= 垄宽/2 的全覆盖。
 TEST(BowPlannerCoverage, FirstRowMarginAndLastRowFallback) {
   const double ridge_width  = 3.0;
-  const double first_margin = 0.005;   // = kDefaultFirstRowMargin
+  const double first_margin = 0.005;
   BowFacade planner;
 
   // 宽 6.001 m: 网格末行 0.005 + 2*3 = 6.005 已越过远端 -> 兜底到 6.001 - 0.005 = 5.996
@@ -315,7 +315,7 @@ TEST(BowPlannerCoverage, FirstRowMarginIsConfigurable) {
   const Polygon_2 field     = RectangleField(20.0, 8.0);   // 内缩后 19 x 7, 扫描方向取长边 -> 垄沿 x
 
   BowFacade tight;
-  ASSERT_TRUE(tight.init(field, ridge_width, 0.2, field_margin, kDefaultMiterLimit, 0.05));   // 50 mm
+  ASSERT_TRUE(tight.init(field, ridge_width, 0.2, field_margin, 2.0, 0.05));   // 50 mm
   const auto& tight_keys = tight.getKeyWaypoints();
   double tight_min_y     = 1e9;
   for (const auto& p : tight_keys)
@@ -324,7 +324,7 @@ TEST(BowPlannerCoverage, FirstRowMarginIsConfigurable) {
   EXPECT_EQ(tight_keys.size() / 2, 4u) << "7 m 宽 / 2 m 垄宽: 首末各 50 mm -> 4 条";
 
   BowFacade loose;
-  ASSERT_TRUE(loose.init(field, ridge_width, 0.2, field_margin, kDefaultMiterLimit, 0.5));   // 500 mm
+  ASSERT_TRUE(loose.init(field, ridge_width, 0.2, field_margin, 2.0, 0.5));   // 500 mm
   const auto& loose_keys = loose.getKeyWaypoints();
   double loose_min_y     = 1e9;
   for (const auto& p : loose_keys)
@@ -334,7 +334,7 @@ TEST(BowPlannerCoverage, FirstRowMarginIsConfigurable) {
 
   // 越界值被夹到 [kMinFirstRowMargin, 垄宽/2]: 只告警, 不失败
   BowFacade clamped;
-  ASSERT_TRUE(clamped.init(field, ridge_width, 0.2, field_margin, kDefaultMiterLimit, 5.0));
+  ASSERT_TRUE(clamped.init(field, ridge_width, 0.2, field_margin, 2.0, 5.0));
   double clamped_min_y = 1e9;
   for (const auto& p : clamped.getKeyWaypoints())
     clamped_min_y = std::min(clamped_min_y, p.y());
@@ -458,7 +458,7 @@ TEST(BowPlannerCoverage, SkewedHeadlandTurnCoversBothRowEnds) {
 TEST(BowPlannerCoverage, UniformMarginInsetsAllSides) {
   const double ridge_width  = 0.8;
   const double margin       = 0.2;
-  const double first_margin = 0.005;   // = kDefaultFirstRowMargin
+  const double first_margin = 0.005;
   BowFacade planner;
   ASSERT_TRUE(planner.init(RectangleField(12.4, 20.0), ridge_width, 0.2, margin));
 
@@ -553,7 +553,7 @@ TEST(BowPlannerInset, UniformMarginShrinksPolygon) {
 //       清理负区域), 得到的恒是**无上限的斜接尖点**, 因此 1.0 与 20.0 的内缩顶点逐位相同。
 // 这条用例是"该参数是留口、不是调拐角的手段"的可执行证据 (对照实验: 同一份顶点改成**向外**偏置,
 // miter_limit 立刻起作用 —— 1.0 出切角点, 20.0 出长尖刺)。哪天 Clipper2 改了行为、或本规划器换了
-// JoinType, 本用例会失败 —— 正好提醒同步更新 yaml 与文档里的说明 (见 bow.hpp 的 kDefaultMiterLimit)。
+// JoinType, 本用例会失败 —— 正好提醒同步更新 yaml 与文档里的说明。
 TEST(BowPlannerInset, MiterLimitDoesNotChangeInwardInset) {
   const double ridge_width = 1.0;
   const double resolution  = 0.5;
@@ -1037,265 +1037,5 @@ TEST(F2cCoverage, TrackedRobotRecommendedConfigHasNoCrossings) {
     // 下限 99.4%: 掉头半圆的端点(切点)在垄端以内退 R (= 垄宽/2), 即每条垄端让出约 R 不作业,
     // 内区覆盖率因此从 99.5%+ 略降; 这里挡的是"整片漏盖"的退化。
     EXPECT_GE(inner, 0.994) << c.name << ": 作业区覆盖率只有 " << 100.0 * inner << "%; 诊断见 [COVERAGE]/[HEADLAND] 日志";
-  }
-}
-
-// ============================================================
-// PTO 路径 (行内粗采样): 0.2 m 给路径跟踪, 1.0 m 给 PTO
-// ============================================================
-// 契约见 bow.hpp 的 "PTO 路径 (行内粗采样)" 那段。这里钉的是它对外可观测的几条:
-//   ① plan() 传 in_row_resolution > 0 时, getPtoWaypoints()/getPtoSegTypes() 非空且
-//      **长度严格相等** (下游 implement_controller 按同一索引读两条数组, 长度不等即判路径无效);
-//   ② 行内段 (段两端都是 WORK) 步长 = in_row_resolution; 其余段 (掉头弧) <= path_resolution;
-//   ③ 同一条几何: 首末点与 /path 一致、总弧长一致 —— 粗化只改采样, 不改路径;
-//   ④ 掉头处一定有 TURN 标签, 且点数确实变少 (否则"行内粗化"没有意义);
-//   ⑤ in_row_resolution <= 0 (老调用 / init()) 时两个容器为空 —— 既有行为逐位不变。
-TEST(F2cPto, InRowResolutionCoarsensWorkSegmentsOnly) {
-  struct Case {
-    std::string name;
-    Polygon_2 field;
-    double ridge;
-    double margin;
-    double in_row;
-  };
-  const std::vector<Case> cases{
-    {"矩形 20x8", {Point_2(0.0, 0.0), Point_2(20.0, 0.0), Point_2(20.0, 8.0), Point_2(0.0, 8.0)}, 1.0, 0.5, 1.0},
-    {"实机斜边 13.45x5.32", {Point_2(0.0, 0.0), Point_2(13.45, 0.57), Point_2(13.34, 5.32), Point_2(0.00, 4.87)}, 1.0, 0.5, 1.0},
-    {"梯形 40x30 (垄宽 3)", {Point_2(0.0, 0.0), Point_2(40.0, 0.0), Point_2(40.0, 30.0), Point_2(10.0, 30.0)}, 3.0, 1.5, 1.0},
-    {"三角形 60x20 (垄宽 3)", {Point_2(0.0, 0.0), Point_2(60.0, 0.0), Point_2(0.0, 20.0)}, 3.0, 1.5, 1.0},
-    {"矩形 20x8 (行内 0.5)", {Point_2(0.0, 0.0), Point_2(20.0, 0.0), Point_2(20.0, 8.0), Point_2(0.0, 8.0)}, 1.0, 0.5, 0.5},
-  };
-  const double resolution = 0.2;
-  const auto path_length  = [](const std::vector<Point_2>& pts) {
-    double L = 0.0;
-    for (size_t i = 0; i + 1 < pts.size(); ++i)
-      L += (pts[i + 1] - pts[i]).norm();
-    return L;
-  };
-
-  for (const auto& c : cases) {
-    BowFacade planner;
-    ASSERT_TRUE(planner.plan(c.field, c.ridge, resolution, c.margin, kDefaultMiterLimit, kDefaultFirstRowMargin, c.in_row).ok()) << c.name;
-    const auto& wp = planner.getWaypoints();
-    const auto& pw = planner.getPtoWaypoints();
-    const auto& pt = planner.getPtoSegTypes();
-
-    // ① 成对存在 + 长度严格相等
-    ASSERT_FALSE(pw.empty()) << c.name << ": in_row_resolution > 0 时应当产出 PTO 路径";
-    EXPECT_EQ(pw.size(), pt.size()) << c.name << ": PTO 点与标签必须逐点对齐";
-
-    // ② 逐段: 行内段 (两端 WORK) 用 in_row, 其余段用 path_resolution
-    //    注: 段比步长还短时只保留段端点 (与 resamplePath 同一约定), 所以这里判的是**上界**。
-    size_t n_work = 0, n_turn = 0;
-    for (uint8_t t : pt) {
-      n_work += (t == kSegWork) ? 1U : 0U;
-      n_turn += (t == kSegTurn) ? 1U : 0U;
-    }
-    for (size_t i = 0; i + 1 < pw.size(); ++i) {
-      const double step  = (pw[i + 1] - pw[i]).norm();
-      const bool is_work = (pt[i] == kSegWork);
-      const double limit = is_work ? c.in_row : resolution;
-      EXPECT_LE(step, limit + 1e-6) << c.name << ": 第 " << i << " 段步长 " << step << " 超过 " << (is_work ? "行内分辨率" : "path_resolution");
-    }
-
-    // ③ 同一条几何 (首末点与总弧长一致)
-    EXPECT_NEAR((pw.front() - wp.front()).norm(), 0.0, 1e-9) << c.name << ": PTO 首点应与 /path 一致";
-    EXPECT_NEAR((pw.back() - wp.back()).norm(), 0.0, 1e-9) << c.name << ": PTO 末点应与 /path 一致";
-    EXPECT_NEAR(path_length(pw), path_length(wp), 1e-6) << c.name << ": PTO 路径与 /path 的总弧长应一致 (同一几何, 只改采样)";
-
-    // ④ 掉头段保真 + 粗化确实生效
-    EXPECT_GT(n_turn, 0u) << c.name << ": 掉头弧的点必须标 TURN (否则看不出行内作业段的边界)";
-    EXPECT_GT(n_work, 0u) << c.name << ": 必须存在行内作业段";
-    EXPECT_LT(pw.size(), wp.size()) << c.name << ": 行内粗采样后点数应少于 /path";
-
-    // ⑤ 标签只有 WORK / TURN 两种: 步骤 8 沿边界边补出来的那一段算行内作业段 (WORK) —— 这条钉住它。
-    EXPECT_EQ(static_cast<size_t>(n_work + n_turn), pt.size()) << c.name << ": 标签只能是 WORK(0) / TURN(1)";
-  }
-
-  // ⑤ in_row_resolution = path_resolution -> "不粗化": PTO 与 /path 点数一致
-  BowFacade same_res;
-  ASSERT_TRUE(same_res.plan(RectangleField(20.0, 8.0), 1.0, resolution, 0.5, kDefaultMiterLimit, kDefaultFirstRowMargin, resolution).ok());
-  EXPECT_EQ(same_res.getPtoWaypoints().size(), same_res.getWaypoints().size()) << "行内分辨率 = path_resolution 时不该丢点";
-  EXPECT_EQ(same_res.getPtoWaypoints().size(), same_res.getPtoSegTypes().size());
-
-  // ⑤ in_row_resolution <= 0 -> 不产出 PTO 路径, 且 /path 与不传该参数时逐位相同
-  BowFacade off, legacy;
-  ASSERT_TRUE(off.plan(RectangleField(20.0, 8.0), 1.0, resolution, 0.5, kDefaultMiterLimit, kDefaultFirstRowMargin, 0.0).ok());
-  ASSERT_TRUE(legacy.init(RectangleField(20.0, 8.0), 1.0, resolution, 0.5));
-  EXPECT_TRUE(off.getPtoWaypoints().empty()) << "in_row_resolution = 0 时不该产出 PTO 路径";
-  EXPECT_TRUE(off.getPtoSegTypes().empty());
-  ASSERT_EQ(off.getWaypoints().size(), legacy.getWaypoints().size());
-  for (size_t i = 0; i < off.getWaypoints().size(); ++i)
-    EXPECT_EQ(off.getWaypoints()[i].x(), legacy.getWaypoints()[i].x()) << "关掉 PTO 产出不该改动 /path (逐位一致)";
-}
-
-// 步骤 8 的补角段按**行内作业段**标 (kSegWork): 它贴着区域边界边作业, 与垄线同一档, PTO
-// 路径会按 in_row_resolution 粗化它。
-// 用例: 三角形 4x1.1 + 首行余量压到 1 mm (唯一能让补角真正生效的余量档, 见 PathEndsFollowRegionSpec),
-// 实测该地块**末端**补到区域顶点: 垄端 (0, 1 mm) -> 顶点 (0, 0), 补 1 mm。
-TEST(F2cPto, CornerExtensionIsClassifiedAsWork) {
-  const Polygon_2 tri{Point_2(0.0, 0.0), Point_2(4.0, 0.0), Point_2(0.4, 1.1)};
-  BowFacade planner;
-  ASSERT_TRUE(planner.plan(tri, 2.0, 0.2, 0.0, kDefaultMiterLimit, 0.001, 1.0).ok());
-  const auto& pw = planner.getPtoWaypoints();
-  const auto& pt = planner.getPtoSegTypes();
-  ASSERT_EQ(pw.size(), pt.size());
-  ASSERT_GE(pw.size(), 2u);
-
-  // ① 末段就是步骤 8 补出来的那条 1 mm 沿边段 (末点 = 区域顶点): 两端都必须标 WORK。
-  //    (末点没有后续段, 所以要按"点"数标签, 不能只在段循环里看。)
-  EXPECT_NEAR((pw.back() - Point_2(0.0, 0.0)).norm(), 0.0, 1e-9) << "该地块末端应补到区域顶点 (0, 0)";
-  EXPECT_NEAR((pw[pw.size() - 2] - Point_2(0.0, 0.001)).norm(), 0.0, 1e-3) << "末段 = 补出来的 1 mm 沿边段";
-  EXPECT_EQ(pt[pt.size() - 2], kSegWork) << "沿边段的起点必须标 WORK";
-  EXPECT_EQ(pt.back(), kSegWork) << "补出来的那个顶点必须标 WORK";
-}
-// 契约: 掉头弧的点由几何阶段采好 (等角度分步, 弧长步长 <= path_resolution 且每步 <= 5°), 重采样
-// 只给垄段加密 —— 弧段**原样搬运**。于是 /global_path_planner/pto_path 里标 TURN 的点必须与骨架里标
-// TURN 的点
-// **逐点相同** (位置与顺序都不变), 且与 in_row_resolution 无关 (掉头保真不吃行内分辨率)。
-TEST(F2cPto, TurnArcsAreNotResampled) {
-  const Polygon_2 field = RectangleField(20.0, 8.0);
-  BowInput in;
-  in.cell              = field;
-  in.ridge_width       = kRidgeWidth;
-  in.path_resolution   = 0.1;
-  in.field_margin      = 0.5;
-  in.in_row_resolution = 1.0;
-
-  // 取"弧点": 一组点里所有标 TURN 的点 (顺序即路径顺序)
-  const auto turn_points = [](const std::vector<Point_2>& pts, const std::vector<uint8_t>& types) {
-    std::vector<Point_2> arcs;
-    for (size_t i = 0; i < pts.size() && i < types.size(); ++i)
-      if (types[i] == kSegTurn)
-        arcs.push_back(pts[i]);
-    return arcs;
-  };
-
-  PlanBowShapedPath planner;
-  const BowOutput out = planner.plan(in);
-  ASSERT_TRUE(out.ok());
-  ASSERT_EQ(out.skeleton.points.size(), out.skeleton.types.size());
-  ASSERT_EQ(out.pto_waypoints.size(), out.pto_seg_types.size());
-
-  const std::vector<Point_2> skeleton_arcs = turn_points(out.skeleton.points, out.skeleton.types);
-  const std::vector<Point_2> pto_arcs      = turn_points(out.pto_waypoints, out.pto_seg_types);
-  ASSERT_GT(skeleton_arcs.size(), 0u) << "该地块应当有掉头弧";
-  ASSERT_EQ(skeleton_arcs.size(), pto_arcs.size()) << "PTO 的 TURN 点应逐点对应骨架的 TURN 点 (弧没被重采样)";
-  for (size_t i = 0; i < skeleton_arcs.size(); ++i)
-    EXPECT_EQ((skeleton_arcs[i] - pto_arcs[i]).norm(), 0.0) << "第 " << i << " 个 TURN 点被改动了";
-
-  // ①b /path 也带逐点类型 (发布时写进 z), 而且弧点同样是骨架点原样搬运
-  ASSERT_EQ(out.waypoint_types.size(), out.waypoints.size()) << "/path 的逐点类型必须与点 1:1";
-  const std::vector<Point_2> fine_arcs = turn_points(out.waypoints, out.waypoint_types);
-  ASSERT_EQ(fine_arcs.size(), skeleton_arcs.size()) << "/path 的 TURN 点也应逐点对应骨架的 TURN 点";
-  for (size_t i = 0; i < fine_arcs.size(); ++i)
-    EXPECT_EQ((fine_arcs[i] - skeleton_arcs[i]).norm(), 0.0) << "/path 第 " << i << " 个 TURN 点被改动了";
-
-  // 只改行内分辨率: 弧点必须逐位不变 (行内粗化只作用于垄段)
-  in.in_row_resolution   = 0.5;
-  const BowOutput coarse = planner.plan(in);
-  ASSERT_TRUE(coarse.ok());
-  const std::vector<Point_2> coarse_arcs = turn_points(coarse.pto_waypoints, coarse.pto_seg_types);
-  ASSERT_EQ(coarse_arcs.size(), pto_arcs.size()) << "行内分辨率不该改变弧上的点数";
-  for (size_t i = 0; i < pto_arcs.size(); ++i)
-    EXPECT_EQ((coarse_arcs[i] - pto_arcs[i]).norm(), 0.0) << "行内分辨率不该改动弧点";
-}
-
-// ============================================================
-// 分级重算的契约: 哪些参数能"只重采样", 哪些必须重跑几何
-// ============================================================
-// 依赖关系 (GlobalPathPlannerNode 的 planGeometry/resampleOnly 按它触发):
-//   * **不改变几何** (可以复用 BowOutput::skeleton 只重采样): in_row_resolution;
-//   * **改变几何** (必须全流程重算): 地块顶点 / ridge_width / field_margin / first_row_margin
-//     / **path_resolution** —— 最后这条反直觉但实测如此: 掉头弧的离散化步数 = ceil(弧长 /
-//     path_resolution) 在几何阶段就定了 (legacyTurn), 所以它一变, 结构路径本身就变了。
-// 这里同时钉住两条:
-//   ① 只改 in_row_resolution -> resampleBowSkeleton(旧骨架, ...) 与全量 plan() **逐位相同**;
-//   ② 只改 path_resolution   -> 两者**不一致** (证明它确实属于几何级, 不能只重采样; 将来若有人
-//      把弧的离散化改成与 path_resolution 无关, 这条会失败并提醒他更新依赖表)。
-TEST(BowPlannerPto, ResampleOnlyMatchesFullPlan) {
-  PlanBowShapedPath engine;
-
-  struct Case {
-    std::string name;
-    Polygon_2 field;
-    double ridge;
-    double margin;
-  };
-  const std::vector<Case> cases{
-    {"矩形 20x8", {Point_2(0.0, 0.0), Point_2(20.0, 0.0), Point_2(20.0, 8.0), Point_2(0.0, 8.0)}, 1.0, 0.5},
-    {"实机斜边 13.45x5.32", {Point_2(0.0, 0.0), Point_2(13.45, 0.57), Point_2(13.34, 5.32), Point_2(0.00, 4.87)}, 1.0, 0.5},
-    {"梯形 40x30 (垄宽 3)", {Point_2(0.0, 0.0), Point_2(40.0, 0.0), Point_2(40.0, 30.0), Point_2(10.0, 30.0)}, 3.0, 1.5},
-    {"三角形 60x20 (垄宽 3)", {Point_2(0.0, 0.0), Point_2(60.0, 0.0), Point_2(0.0, 20.0)}, 3.0, 1.5},
-  };
-
-  const auto same_bits = [](double a, double b) {
-    return std::memcmp(&a, &b, sizeof(double)) == 0;
-  };
-  const auto same_path = [&same_bits](const std::vector<Point_2>& a, const std::vector<Point_2>& b) {
-    if (a.size() != b.size())
-      return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-      if (!same_bits(a[i].x(), b[i].x()) || !same_bits(a[i].y(), b[i].y()))
-        return false;
-    }
-    return true;
-  };
-
-  for (const auto& c : cases) {
-    BowInput base_in;   // path_resolution 固定 0.2, 只变 in_row_resolution
-    base_in.cell              = c.field;
-    base_in.ridge_width       = c.ridge;
-    base_in.path_resolution   = 0.2;
-    base_in.field_margin      = c.margin;
-    base_in.in_row_resolution = 1.0;
-    const BowOutput base      = engine.plan(base_in);   // 结构路径的来源 (几何只跑这一次)
-    ASSERT_TRUE(base.ok()) << c.name;
-    ASSERT_FALSE(base.skeleton.empty()) << c.name << ": plan() 应当顺带产出结构路径";
-
-    // ① 只改 in_row_resolution: 复用骨架重采样 == 全量重算 (逐位)
-    //    覆盖: 0 (不产出 PTO) / 比 path_resolution 小 (会被夹到 0.2) / 常规 1.0 / 很粗 3.0
-    for (double in_row : {0.0, 0.15, 1.0, 3.0}) {
-      std::vector<Point_2> wp_only, pto_only;
-      std::vector<uint8_t> types_only;
-      resampleBowSkeleton(base.skeleton, base_in.path_resolution, in_row, wp_only, pto_only, types_only);
-
-      BowInput in2          = base_in;
-      in2.in_row_resolution = in_row;
-      const BowOutput full  = engine.plan(in2);
-      ASSERT_TRUE(full.ok()) << c.name;
-
-      const std::string tag = c.name + " in_row=" + std::to_string(in_row);
-      EXPECT_TRUE(same_path(wp_only, full.waypoints)) << tag << ": 只重采样的 /path 与全量重算不一致 (in_row 不该影响 /path)";
-      EXPECT_TRUE(same_path(pto_only, full.pto_waypoints)) << tag << ": 只重采样的 PTO 路径与全量重算不一致";
-      EXPECT_EQ(types_only, full.pto_seg_types) << tag << ": 只重采样的 PTO 标签与全量重算不一致";
-      if (in_row <= 0.0) {
-        EXPECT_TRUE(pto_only.empty()) << tag << ": in_row <= 0 时不该产出 PTO 路径";
-        EXPECT_TRUE(full.pto_waypoints.empty()) << tag;
-      } else {
-        EXPECT_FALSE(pto_only.empty()) << tag << ": in_row > 0 时应当产出 PTO 路径";
-      }
-    }
-
-    // ② path_resolution **可能**改变几何: 掉头弧的离散化 = max(弧长 / path_resolution, 弧长 / 5°)
-    //    (legacyTurn 的 by_len vs by_ang) —— 只有"弧长约束占优"时它才改结构路径; 小半径/宽垄
-    //    (弧长短) 时 5° 的角度上限占优, 结构点**与分辨率无关**。所以节点侧**保守地**把
-    //    path_resolution 纳入几何级触发; 这里如实钉住两种情形, 免得依赖表与实际悄悄分叉:
-    //      * 结构路径变了 -> 复用旧骨架绝不可能复现全量结果 (这就是"必须重跑几何"的证据);
-    //      * 结构路径没变 -> 复用骨架恰好等价 (此时"只重采样"也是对的, 但我们不依赖这种巧合)。
-    std::vector<Point_2> wp_resampled, pto_resampled;
-    std::vector<uint8_t> types_resampled;
-    resampleBowSkeleton(base.skeleton, 0.05, base_in.in_row_resolution, wp_resampled, pto_resampled, types_resampled);
-
-    BowInput finer_in        = base_in;
-    finer_in.path_resolution = 0.05;
-    const BowOutput finer    = engine.plan(finer_in);
-    ASSERT_TRUE(finer.ok()) << c.name;
-    ASSERT_FALSE(finer.skeleton.empty()) << c.name;
-    if (finer.skeleton.points.size() != base.skeleton.points.size()) {
-      EXPECT_FALSE(same_path(wp_resampled, finer.waypoints)) << c.name << ": 结构路径随 path_resolution 变了, 复用旧骨架却得到相同结果 (采样实现与全量重算不一致?)";
-    } else {
-      EXPECT_TRUE(same_path(wp_resampled, finer.waypoints)) << c.name << ": 结构路径与 path_resolution 无关 (角度上限占优) 时, 复用骨架应与全量重算一致";
-    }
   }
 }

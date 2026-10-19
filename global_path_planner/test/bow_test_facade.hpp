@@ -26,13 +26,13 @@ public:
   BowFacade() = default;
 
   // ---- 旧 API: init / plan ----
-  bool init(const Polygon_2& cell, double ridge_width, double path_resolution, double field_margin = 0.0, double miter_limit = kDefaultMiterLimit,
-            double first_row_margin = kDefaultFirstRowMargin, double in_row_resolution = 0.0) {
-    return plan(cell, ridge_width, path_resolution, field_margin, miter_limit, first_row_margin, in_row_resolution).ok();
+  bool init(const Polygon_2& cell, double ridge_width, double path_resolution, double field_margin = 0.0, double miter_limit = 2.0,
+            double first_row_margin = 0.005) {
+    return plan(cell, ridge_width, path_resolution, field_margin, miter_limit, first_row_margin).ok();
   }
 
-  BowOutput plan(const Polygon_2& cell, double ridge_width, double path_resolution, double field_margin = 0.0, double miter_limit = kDefaultMiterLimit,
-                 double first_row_margin = kDefaultFirstRowMargin, double in_row_resolution = 0.0) {
+  BowOutput plan(const Polygon_2& cell, double ridge_width, double path_resolution, double field_margin = 0.0, double miter_limit = 2.0,
+                 double first_row_margin = 0.005) {
     BowInput in;
     in.cell             = cell;
     in.ridge_width      = ridge_width;
@@ -40,8 +40,7 @@ public:
     in.field_margin     = field_margin;
     in.miter_limit      = miter_limit;
     in.first_row_margin = first_row_margin;
-    in.in_row_resolution = in_row_resolution;
-    out_                 = engine_.plan(in);
+    out_                = engine_.plan(in);
     return out_;
   }
 
@@ -67,13 +66,6 @@ public:
   const Polygon_2& getInnerPolygon() const {
     return out_.inner_polygon;
   }
-  const std::vector<Point_2>& getPtoWaypoints() const {
-    return out_.pto_waypoints;
-  }
-  const std::vector<uint8_t>& getPtoSegTypes() const {
-    return out_.pto_seg_types;
-  }
-
   // 需要直接看新 API (或拿引擎做并发测试) 时用。
   PlanBowShapedPath& engine() {
     return engine_;

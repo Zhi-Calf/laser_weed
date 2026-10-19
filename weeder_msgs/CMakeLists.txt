@@ -13,6 +13,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ChassisCmd.msg"
   "msg/ChassisState.msg"
   "msg/GnssStatus.msg"
+  "msg/Path.msg"
   "msg/WorkMode.msg"
   DEPENDENCIES std_msgs
 )

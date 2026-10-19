@@ -19,33 +19,6 @@ global_path_planner:
 
     ridge_width: 2.5              # 垄宽/行距 (m)，必须 > 0
     field_margin: 1.5             # 田边内缩余量 (m)，必须 >= 0；建议 >= ridge_width/2
-    in_row_resolution: 1.0        # PTO 行内采样步长 (m)，0 = 不产出 pto_path
-
-    # 路径插值分辨率（单位：米）：/global_path_planner/path 的逐点间距
-    # ⚠ 这是**只读参数**: 只在启动时读一次 —— 运行期 `ros2 param set path_resolution 0.1` 会被 rclcpp
-    #   默认**接受但不生效** (参数服务器记新值, 本节点仍按启动值运行; 参数回调已删除, 也不再有 WARN 提示),
-    #   要改就改这里后重启, 或起节点时 -p path_resolution:=0.1。0 或负值会被夹到 0 (见 loadParameters),
-    #   生效值看启动日志。
-    path_resolution: 0.2
-
-    # ---- 首行余量（单位：米）：第一条垄距**内缩后区域边界**的距离; 之后各行间距恒为 ridge_width ----
-    # 只读参数: 启动时读一次, 之后**恒定** (不被夹取)。但它与 YAML 里的 ridge_width
-    # **必须相容** —— 取值域 [kMinFirstRowMargin, 垄宽/2] = [0.001, ridge_width/2] m:
-    #   * 值不在该区间内时, 节点启动失败并明确报出两个参数与取值域;
-    #   * 下界 0.001 m 是 Clipper2 量化网格 (~1 mm) 的下限, 上界 垄宽/2 是因为首行贴得比机具半幅还近就
-    #     破掉了"近端覆盖"契约 (想细调田边盲带就改这里的值, 默认 0.005 m = 5 mm)。
-    # ⚠ 默认值 0.005 m 要求 ridge_width >= 0.01 m。
-    first_row_margin: 0.005
-
-    # 边界内缩的拐角上限（无单位）：Clipper2 JoinType::Miter 的 miter_limit 语义 ——
-    # 拐角越锐, "斜接"尖点伸出越远; 伸出超过 miter_limit × field_margin 的拐角改用切角处理。
-    # 取值域 [1.0, +∞)：1.0 = join 分支一律切角, 越大越"尖"；小于 1.0 的值会被夹到 1.0 (生效值见启动日志)。
-    #
-    # ⚠ 实测 (随包的 Clipper2 1.5.4): 本规划器只做**向内**偏置, 凸地块的每个凸顶点在
-    # Clipper2 里都走"凹角"分支 (插 3 点 + 收尾 union 清理), 结果恒为**无上限的斜接尖点** ——
-    # 该参数取 1.0 / 2.0 / 20.0 时内缩结果逐位相同 (单测 MiterLimitDoesNotChangeInwardInset)。
-    # 也就是说: **改它不会改变路径**, 现场不必拿它调拐角覆盖 (拐角那 0.2~0.4% 的盲区是
-    # "路径离边界 >= field_margin"本身决定的, 见 docs/F2C_COVERAGE_BORROW.md §7 第 4 条)。
-    # 保留该参数是为对齐 Clipper2 语义、并让"内缩用的拐角上限"可观测 (启动日志会打印):
-    # 将来改用 JoinType::Bevel/Square 或增加向外偏置 (缓冲区/掉头包络) 时它就直接生效。
-    miter_limit: 2.0
+    path_resolution: 0.2          # 路径插值分辨率（单位：米）
+    first_row_margin: 0.005       # ---- 首行余量（单位：米）
+    miter_limit: 2.0              # 边界内缩的拐角上限（无单位）

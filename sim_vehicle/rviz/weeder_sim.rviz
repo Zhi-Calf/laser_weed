@@ -97,35 +97,19 @@ Visualization Manager:
         Value: /global_path_planner/key_points
       Value: true
 
-    # ---- 全覆盖弓字形路径。
-    # 注意 z 字段是段类型（0=作业段 1=掉头段）不是高度，所以路径看起来是平的。
-    - Alpha: 1
-      Buffer Length: 1
-      Class: rviz_default_plugins/Path
-      Color: 25; 255; 0
+    # ---- 全覆盖弓字形路径（规划器发布的 Marker 点集）----
+    - Class: rviz_default_plugins/Marker
       Enabled: true
-      Head Diameter: 0.3
-      Head Length: 0.2
-      Length: 0.3
-      Line Style: Lines
-      Line Width: 0.03
       Name: 全覆盖路径
-      Offset:
-        X: 0
-        Y: 0
-        Z: 0
-      Pose Color: 255; 85; 255
-      Pose Style: None
-      Radius: 0.03
-      Shaft Diameter: 0.1
-      Shaft Length: 0.1
+      Namespaces:
+        {}
       Topic:
         Depth: 5
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /global_path_planner/path
+        Value: /global_path_planner/path_points
       Value: true
 
     # ---- 仿真车（绿色箭头，箭头方向 = 车头朝向）----

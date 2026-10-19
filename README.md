@@ -12,7 +12,7 @@ GNSS 接收机
     ▼
 gnss_localization ──/gnss_driver/odom──► lqr_control
 global_path_planner ──/global_path_planner/path──► lqr_control
-    (YAML poly 首个顶点 = ENU 原点)
+    (weeder_msgs/msg/Path；YAML poly 首个顶点 = ENU 原点)
 
 lqr_control ──/chassis/cmd──► weeder_base ──CAN──► VCU
                 (速度 + 前轮转角)          │
@@ -37,8 +37,28 @@ sim_vehicle ──/gnss_driver/odom──► lqr_control
 | `global_path_planner` | 根据 YAML 中的田块边界生成弓字形全覆盖路径 |
 | `lqr_control` | 四轮转向 LQR 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
 | `weeder_base` | CAN 协议编解码、SocketCAN 驱动、10Hz 指令发送与状态上报、全部底盘/BMS 状态接收 |
-| `weeder_msgs` | 车辆、BMS、GNSS、工作模式等 ROS2 消息 |
+| `weeder_msgs` | 车辆、BMS、GNSS、工作模式、全覆盖路径等 ROS2 消息 |
 | `sim_vehicle` | 无硬件仿真：模拟 RTK、车辆运动学、工作模式，并可一键启动完整链路 |
+
+## 路径消息
+
+`/global_path_planner/path` 使用自定义消息 `weeder_msgs/msg/Path`，
+不再发布 `nav_msgs/Path` 和逐点 `geometry_msgs/PoseStamped`：
+
+```text
+std_msgs/Header header
+float64[] x
+float64[] y
+uint8[] waypoint_types
+```
+
+`x`、`y` 和 `waypoint_types` 按索引一一对应：
+
+- `0` = 作业段
+- `1` = 掉头段
+
+规划器以 `transient_local` QoS 按 10Hz 重发该消息；LQR 控制器根据
+`x/y` 计算曲率、航向和跟踪目标。
 
 ## 底盘指令
 
@@ -166,8 +186,9 @@ ros2 launch weeder_base can.launch.py interface:=can0
 # 确认 fix_type=4（RTK 固定解）
 ros2 topic echo /gnss_driver/status --once
 
-# 确认规划器已发布非空路径
-ros2 topic echo /global_path_planner/path --once
+# 确认规划器已发布非空路径（只显示前 5 个 x 坐标）
+ros2 topic echo /global_path_planner/path --once \
+  --field x --truncate-length 5
 
 # 路径正常后持续发布 UNMANNED
 ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
@@ -185,7 +206,6 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 | 差分账号 | `ntrip_client.yaml` / `sdk_client.yaml` | 按设备分别配置 |
 | ENU 原点 | `gnss_localization/config/gnss_driver.yaml` | `origin_lat` / `origin_lon` / `origin_alt`，必须等于 `poly` 第一个顶点 |
 | 田块顶点 / 垄宽 / 田边余量 | `global_path_planner/config/global_path_planner.yaml` | `poly` / `ridge_width` / `field_margin`，修改后重启规划器 |
-| PTO 行内采样分辨率 | `global_path_planner/config/global_path_planner.yaml` | `in_row_resolution` |
 | `wheelbase` | `lqr_control/config/lqr_control.yaml` | 单阿克曼填真实轴距，双阿克曼填 `L/2` |
 | `steer_mode` | `lqr_control` | 由路径跟踪控制器随 `/chassis/cmd` 下发 |
 | `cmd_topic` | 两侧配置文件 | 默认 `/chassis/cmd` |
@@ -214,16 +234,20 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 ## 测试
 
 ```bash
-colcon test --packages-select weeder_base lqr_control
+colcon test
 colcon test-result --verbose
 ```
 
 `weeder_base` 覆盖协议编码、位域、有符号数、范围检查和 BMS 第二版布局；
-`lqr_control` 覆盖四轮转向运动学、前馈、符号、闭环收敛和协议限幅。
+`lqr_control` 覆盖四轮转向运动学、前馈、符号、闭环收敛和协议限幅；
+`global_path_planner` 覆盖弓字形规划、覆盖率、凸性校验、YAML 配置契约和严格线段相交；
+`gnss_localization` 覆盖 GIAVP 解析、参数写回和 YAML 参数一致性。
 
 ## 已知限制
 
 - `global_path_planner` 仅支持凸多边形田块，不支持田块内障碍物挖空
+- ENU 原点同时配置在 `poly` 第一个顶点和 `gnss_driver.yaml` 的 `origin_*` 中，
+  两处不一致时路径与 odom 会产生固定偏移，当前没有运行时一致性校验
 - `lqr_control` 仅适用于 `steer_mode=0`（单阿克曼）和 `1`（双阿克曼）
 - 当前不支持倒车，底盘档位固定为 D
 - 仿真为理想模型，不含轮胎侧偏、执行器延迟、RTK 延迟和地面打滑

@@ -22,8 +22,8 @@ set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (forced to Release by th
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(nav_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(weeder_msgs REQUIRED)
 find_package(Eigen3 3.3 REQUIRED)
 find_package(spdlog_vendor REQUIRED)
 find_package(spdlog REQUIRED)
@@ -54,12 +54,12 @@ set_target_properties(clipper2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set(dependencies
   rclcpp
   geometry_msgs
-  nav_msgs
   visualization_msgs
+  weeder_msgs
 )
 
 # ---- Library ----
-# 骨架与 tractor_base / tractor_calibration 一致: 算法 + 节点实现编进库, 可执行文件只留 main()。
+# 算法 + 节点实现编进库, 可执行文件只留 main()。
 #   * ${PROJECT_NAME}_lib : 规划内核 (src/bow.cpp) + 节点实现 (src/global_path_planner.cpp);
 #   * ${PROJECT_NAME}_node: 薄可执行文件 (src/global_path_planner_main.cpp)。
 # 单测与其它消费者直接链库: 算法只编一遍, 且与真机跑的是同一份目标文件。
@@ -182,7 +182,7 @@ if(BUILD_TESTING)
   find_package(ament_cmake_test REQUIRED)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   ament_add_test(params_in_yaml
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check_params.py
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/check_params.py
             --src ${CMAKE_CURRENT_SOURCE_DIR}/src
             --yaml ${CMAKE_CURRENT_SOURCE_DIR}/config/global_path_planner.yaml
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO)
@@ -191,16 +191,14 @@ if(BUILD_TESTING)
   #  (src/yaml_persist.hpp 与 planner_config_path) 一并删除"而移除 —— 本包不再写任何 yaml 文件。
   #  ⚠ gnss_localization / tractor_calibration 各自那份同名实现与它们的测试不受影响。)
 
-  # YAML 配置契约测试: poly 顶点数量/长度/经纬度, 以及 ridge_width / field_margin /
-  # in_row_resolution / first_row_margin 的取值域。
+  # YAML 配置契约测试: poly 顶点数量/长度/经纬度, 以及 ridge_width /
+  # field_margin / first_row_margin 的取值域。
   ament_add_gtest(test_path_config test/test_path_config.cpp)
   target_link_libraries(test_path_config ${PROJECT_NAME}_lib)
 
-  # 外部骨架的采样契约: 段类型按 BowSkeleton::seg_types 判 (外部标记
-  # 标在掉头段的落点上, 点类型表达不了), 并且**粗掉头段**在 PTO 里也要按 path_resolution 采出
-  # 弧上的点 —— 文件是骨架, 插值由节点按 path_resolution / in_row_resolution 做。
-  ament_add_gtest(test_resample_segments test/test_resample_segments.cpp)
-  target_link_libraries(test_resample_segments ${PROJECT_NAME}_lib)
+  ament_add_gtest(test_bow_detail test/test_bow_detail.cpp)
+  target_link_libraries(test_bow_detail ${PROJECT_NAME}_lib)
+  target_include_directories(test_bow_detail PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
   # 全覆盖 (弓字形) 路径规划的行为契约测试: 覆盖率、垄间距、分辨率、凸性校验、顶点乱序/逆序
   # 输入、余量内缩。几何引擎换成 Clipper2 + Boost.Geometry 之后, 这些是"没有被换坏"的可执行

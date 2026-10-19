@@ -81,7 +81,7 @@
 | `first_row_margin` | `0.005` | 首行离内缩边界余量；**必须与 YAML 里的 ridge_width 相容**，落在 [0.001, ridge_width/2] | 🟡 |
 | `miter_limit` | `2.0` | 实测改它不改变路径（见 yaml 注释），保持默认 | 🟢 |
 
-`poly`、`ridge_width`、`field_margin` 和 `in_row_resolution` 都在 YAML 中配置，
+`poly`、`ridge_width` 和 `field_margin` 都在 YAML 中配置，
 按除草机实际田块和激光作业幅宽填写。`ridge_width` 是全覆盖行距，直接决定除草覆盖率。
 
 **已知限制（重要）**：`global_path_planner` 只接受**凸多边形**田块，**不支持田块内障碍物挖空**

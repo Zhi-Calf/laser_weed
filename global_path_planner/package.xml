@@ -3,7 +3,7 @@
 <package format="3">
   <name>global_path_planner</name>
   <version>0.1.0</version>
-  <description>Bow-shaped global (coverage) path planner for tracked tractor: field polygon + ridge width -> /path</description>
+  <description>Bow-shaped coverage path planner for the laser weeder: YAML field polygon + ridge width -> weeder_msgs/Path</description>
   <maintainer email="1067401059@qq.com">JunJun</maintainer>
 
   <license>Apache-2.0</license>
@@ -13,8 +13,8 @@
   <!-- rclcpp、消息包与几何库都显式声明, 保证 rosdep 与单包构建完整。 -->
   <depend>rclcpp</depend>
   <depend>geometry_msgs</depend>
-  <depend>nav_msgs</depend>
   <depend>visualization_msgs</depend>
+  <depend>weeder_msgs</depend>
   <depend>spdlog_vendor</depend>
   <!-- find_package(Eigen3) —— 多边形/几何适配 (eigen_boost_adaptor.hpp); rosdep 键 eigen -->
   <depend>eigen</depend>
@@ -27,22 +27,9 @@
        (Jammy/Humble 是 libgeographic-dev, Noble/Jazzy 是 libgeographiclib-dev, 见 CMakeLists) -->
   <depend>geographiclib</depend>
   <exec_depend>rviz2</exec_depend>
-  <!-- 调试用: planner.launch.py 里的 static_transform_publisher (让 RViz 的 Fixed Frame
-       odom 存在)。正常运行时不用它 —— 真机的 odom 由 gnss_driver 广播。 -->
-  <exec_depend>tf2_ros</exec_depend>
 
-  <!-- No dependency on tractor_bringup, tractor_kpi, path_controller or
-       tractor_base. This package used to orchestrate all of them from
-       start.launch.py, which meant a planner depended on the chassis it was
-       planning for AND on tractor_bringup for the KPI wiring file — a cycle,
-       since tractor_bringup is the robot definition. That orchestration moved
-       to tractor_bringup/launch/bringup.launch.py; this package is the planner
-       and nothing else, and the arrows now point one way. -->
-
-  <!-- 构建骨架与 tractor_base / tractor_calibration 一致: 库 global_path_planner_lib
-       (规划内核 src/bow.cpp + 节点实现) + 薄可执行文件 global_path_planner_node (只有 main)。
-       头文件在 include/global_path_planner/, 随库一起安装并导出 (ament_export_libraries),
-       单测 (test_bow_planner) 直接链这个库 —— 算法只编一遍。 -->
+  <!-- 库 global_path_planner_lib (规划内核 + 节点实现) + 薄可执行文件。
+       单测直接链该库，算法只编一遍。 -->
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

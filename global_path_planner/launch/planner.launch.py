@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""启动 global_path_planner 规划节点（可选 RViz）。
+"""
+启动 global_path_planner 规划节点（可选 RViz）.
 
-田块顶点、垄宽、田边余量和 PTO 行内分辨率都在
+田块顶点、垄宽和田边余量都在
 config/global_path_planner.yaml 中配置。poly 的第一个顶点同时作为
-ENU 原点；节点启动后立即规划并发布 /global_path_planner/path 与 pto_path。
+ENU 原点；节点启动后立即规划并发布 /global_path_planner/path。
 """
 
 import os
@@ -50,8 +51,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "planner_config_file",
             default_value=default_config,
-            description="规划器配置（包含 poly、ridge_width、field_margin、"
-                        "in_row_resolution 等参数）"),
+            description="规划器配置（包含 poly、ridge_width、field_margin 等参数）"),
         DeclareLaunchArgument(
             "rviz",
             default_value="true",
