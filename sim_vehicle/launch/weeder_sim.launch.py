@@ -7,7 +7,7 @@
 # 启动的节点：
 #   sim_vehicle          仿真车辆（同时充当 GNSS 定位 + 底盘 + 模式管理方）
 #   global_path_planner  从 YAML 读取田块并自动生成弓字形全覆盖路径
-#   lqr_control          四轮转向 LQR 控制器
+#   path_tracker          四轮转向 LQR 控制器
 #   sim_orchestrator     等 YAML 路径 → 切 UNMANNED
 #   rviz2                预置视图（田块边界/弓字形路径/仿真车/跟踪目标点）
 #
@@ -30,11 +30,11 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     sim_share = get_package_share_directory('sim_vehicle')
     planner_share = get_package_share_directory('global_path_planner')
-    lqr_share = get_package_share_directory('lqr_control')
+    tracker_share = get_package_share_directory('path_tracker')
 
     rviz_config = os.path.join(sim_share, 'rviz', 'weeder_sim.rviz')
     planner_params = os.path.join(planner_share, 'config', 'global_path_planner.yaml')
-    lqr_params = os.path.join(lqr_share, 'config', 'lqr_control.yaml')
+    tracker_params = os.path.join(tracker_share, 'config', 'path_tracker.yaml')
 
     # ---- Launch arguments ----
     # wheelbase 同时传给仿真车辆与控制器，两者**必须一致**：否则仿真的"真实车辆"
@@ -88,7 +88,7 @@ def generate_launch_description():
                 'wheelbase': wheelbase,
                 'align_to_path_start': True,
                 'align_lateral_offset': align_offset,
-                # 必须非零且 <= lqr_control 的 rtk_max_sigma(0.05)，否则控制器判定
+                # 必须非零且 <= path_tracker 的 rtk_max_sigma(0.05)，否则控制器判定
                 # "定位质量未知"而一直停车。0.02 对应 gnss_driver 的 acc_rtk_fixed。
                 'rtk_sigma': 0.02,
                 'use_sim_time': use_sim_time,
@@ -111,12 +111,12 @@ def generate_launch_description():
 
         # ---- LQR 控制器 ----
         Node(
-            package='lqr_control',
-            executable='lqr_node',
-            name='lqr_control',
+            package='path_tracker',
+            executable='path_tracker_node',
+            name='path_tracker',
             output='screen',
             parameters=[
-                lqr_params,
+                tracker_params,
                 # 命令行覆盖 yaml：wheelbase 与仿真车辆严格一致，target_v 可一键调
                 {'wheelbase': wheelbase},
                 {'lqr_target_v': target_v},

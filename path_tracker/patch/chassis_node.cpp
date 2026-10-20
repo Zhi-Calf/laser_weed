@@ -15,11 +15,11 @@
 //   8. max_speed_m_s / max_steer_deg / publish_hz 三个 launch 参数真正生效
 //   9. 去掉多余 const_cast；补齐 <algorithm> <cstdio> 等头文件
 //  10. 转向指令改由 /weeder/steer_cmd (std_msgs/Float64, 弧度, 左正) 提供，与
-//      lqr_control 直接对接。原 angular.z -> steer_angle 的量纲不严谨映射降级为
+//      path_tracker 直接对接。原 angular.z -> steer_angle 的量纲不严谨映射降级为
 //      **可选回退**（steer_fallback_to_cmd_vel，默认 true），保留手动遥控能力：
-//      键盘/手柄只发 /cmd_vel，自动作业时 lqr_control 两个话题都发，steer_cmd 优先。
+//      键盘/手柄只发 /cmd_vel，自动作业时 path_tracker 两个话题都发，steer_cmd 优先。
 //  11. steer_mode 提为参数（默认 0 单阿克曼，与改动前行为一致）。原先硬编码为
-//      结构体默认值 0，无法与 lqr_control 的 steer_mode 对齐；若控制器按双阿克曼
+//      结构体默认值 0，无法与 path_tracker 的 steer_mode 对齐；若控制器按双阿克曼
 //      (等效轴距 L/2) 计算而底盘按单阿克曼执行，转角会差一倍。
 //
 // 仍未实现（不属本次修复范围）：
@@ -60,13 +60,13 @@ public:
     // ---- 转向指令来源参数 ----
     steer_cmd_topic_ = declare_parameter(
         "steer_cmd_topic", std::string("/weeder/steer_cmd"));
-    // 与 cmd_timeout_s_ 同量级：lqr_control 默认 10Hz 发布，0.5s 容忍丢 5 帧
+    // 与 cmd_timeout_s_ 同量级：path_tracker 默认 10Hz 发布，0.5s 容忍丢 5 帧
     steer_timeout_s_ = declare_parameter("steer_timeout_s", 0.5);
     // steer_cmd 超时后是否退回 angular.z 映射（保留手动遥控）。false = 严格模式：
     // 只认 /weeder/steer_cmd，超时即回正。实车自动作业建议 false，台架/遥控调试用 true。
     steer_fallback_to_cmd_vel_ =
         declare_parameter("steer_fallback_to_cmd_vel", true);
-    // 0=单阿克曼 1=双阿克曼 2=平移 3=原地转向。必须与 lqr_control 的 steer_mode 一致。
+    // 0=单阿克曼 1=双阿克曼 2=平移 3=原地转向。必须与 path_tracker 的 steer_mode 一致。
     // declare_parameter 返回 int64_t，显式接住再 static_cast，避免窄化转换告警。
     const int64_t steer_mode_param = declare_parameter("steer_mode", 0);
     if (steer_mode_param < 0 || steer_mode_param > 3) {
@@ -108,7 +108,7 @@ public:
           onCmdVel(msg);
         });
 
-    // ---- 订阅 /weeder/steer_cmd（权威转向角，来自 lqr_control）----
+    // ---- 订阅 /weeder/steer_cmd（权威转向角，来自 path_tracker）----
     // std_msgs/Float64，单位弧度，左转（逆时针）为正 —— 与协议 ADCU_toVCU_01 的
     // 转向角符号同向，因此**不取反**，只做 弧度 -> 0.1 度 换算。
     steer_sub_ = create_subscription<std_msgs::msg::Float64>(
@@ -176,7 +176,7 @@ private:
 
     // angular.z -> 度：仅作**回退来源**缓存，不直接写 cmd01_。
     // 量纲上不严谨（把 rad/s 当角度用），但保留它是为了不破坏手动遥控
-    // —— 键盘/手柄只发 /cmd_vel。自动作业时 lqr_control 同时发
+    // —— 键盘/手柄只发 /cmd_vel。自动作业时 path_tracker 同时发
     // /weeder/steer_cmd，在 sendCommand() 里优先级更高，此值不生效。
     steer_from_cmd_vel_deg_ = std::clamp(msg->angular.z * 180.0 / M_PI,
                                          -max_steer_deg_, max_steer_deg_);
@@ -233,7 +233,7 @@ private:
         // 看门狗触发：回正。这是安全侧，不给任何来源翻盘的机会。
         cmd01_.steer_angle = 0;
       } else if (steer_age <= steer_timeout_s_) {
-        // 来源 1（权威）：新鲜的 /weeder/steer_cmd，lqr_control 算出的前轮转角
+        // 来源 1（权威）：新鲜的 /weeder/steer_cmd，path_tracker 算出的前轮转角
         cmd01_.steer_angle =
             static_cast<int16_t>(std::llround(steer_cmd_deg_ * 10.0));
       } else if (steer_fallback_to_cmd_vel_) {
@@ -245,7 +245,7 @@ private:
         cmd01_.steer_angle = 0;
       }
 
-      // 转向模式：必须与 lqr_control 的 steer_mode 一致，否则等效轴距对不上
+      // 转向模式：必须与 path_tracker 的 steer_mode 一致，否则等效轴距对不上
       cmd01_.steer_mode = steer_mode_;
 
       cmd01_.alive_counter =

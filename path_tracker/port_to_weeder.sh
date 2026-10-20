@@ -3,7 +3,7 @@
 # into the laser-weeder ROS 2 workspace.
 #
 # What this does (structural only):
-#   1. copies gnss_localization, global_path_planner and lqr_control into the
+#   1. copies gnss_localization, global_path_planner and path_tracker into the
 #      weeder workspace src/
 #   2. builds them in dependency order
 # It does NOT edit any config: every value that differs between the tracked
@@ -21,14 +21,14 @@ set -euo pipefail
 # If the whole MegaTrak tree lives inside src/, colcon finds every package in it
 # AND our top-level copies -> "Duplicate package names not supported".
 MEGATRAK_SRC="${MEGATRAK_SRC:-$HOME/MegaTrak-main}"
-# Where you extracted lqr_control (the folder that CONTAINS lqr_control/).
-LQR_SRC="${LQR_SRC:-$HOME}"
+# Where you extracted path_tracker (the folder that CONTAINS path_tracker/).
+PATH_TRACKER_SRC="${PATH_TRACKER_SRC:-$HOME}"
 # Target workspace.
 WS="${WS:-$HOME/ros2_ws}"
 SRC_DIR="$WS/src"
 
 echo "== MegaTrak 源: $MEGATRAK_SRC"
-echo "== lqr_control 源: $LQR_SRC/lqr_control"
+echo "== path_tracker 源: $PATH_TRACKER_SRC/path_tracker"
 echo "== 目标工作区: $WS"
 echo
 
@@ -63,7 +63,7 @@ mkdir -p "$SRC_DIR"
 fail=0
 copy_pkg gnss_localization "$MEGATRAK_SRC/sensor_node/gnss_localization"        || fail=1
 copy_pkg global_path_planner "$MEGATRAK_SRC/navigation_node/global_path_planner" || fail=1
-copy_pkg lqr_control       "$LQR_SRC/lqr_control"                               || fail=1
+copy_pkg path_tracker       "$PATH_TRACKER_SRC/path_tracker"                      || fail=1
 
 # weeder_msgs 是本项目自己的接口包，不再从 MegaTrak 的旧消息包拷贝。
 if [[ ! -d "$SRC_DIR/weeder_msgs" ]]; then
@@ -100,10 +100,10 @@ echo "== 构建（依赖优先：weeder_msgs -> 其余）=="
 cd "$WS"
 # shellcheck disable=SC1091
 [[ -f /opt/ros/humble/setup.bash ]] && source /opt/ros/humble/setup.bash
-colcon build --packages-up-to lqr_control --symlink-install
+colcon build --packages-up-to path_tracker --symlink-install
 
 echo
 echo "== 构建完成。接下来必须做两件事 =="
 echo "1) 按 PORT_CHECKLIST.md 改配置（串口/杆臂标定/差分账号/日志路径）—— 未改前不要上实车。"
 echo "2) source install/setup.bash 后先跑单元测试："
-echo "     colcon test --packages-select lqr_control && colcon test-result --verbose"
+echo "     colcon test --packages-select path_tracker && colcon test-result --verbose"

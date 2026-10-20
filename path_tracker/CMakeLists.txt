@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(lqr_control)
+project(path_tracker)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -38,9 +38,9 @@ target_link_libraries(${PROJECT_NAME}_lib Eigen3::Eigen)
 ament_target_dependencies(${PROJECT_NAME}_lib ${DEPS})
 
 # ---- Node executable ----
-add_executable(lqr_node src/lqr_node.cpp src/lqr_control_main.cpp)
-target_link_libraries(lqr_node ${PROJECT_NAME}_lib)
-ament_target_dependencies(lqr_node ${DEPS})
+add_executable(path_tracker_node src/path_tracker_node.cpp src/path_tracker_main.cpp)
+target_link_libraries(path_tracker_node ${PROJECT_NAME}_lib)
+ament_target_dependencies(path_tracker_node ${DEPS})
 
 # ---- Tests ----
 if(BUILD_TESTING)
@@ -62,7 +62,7 @@ install(TARGETS ${PROJECT_NAME}_lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
-install(TARGETS lqr_node
+install(TARGETS path_tracker_node
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY include/ DESTINATION include)

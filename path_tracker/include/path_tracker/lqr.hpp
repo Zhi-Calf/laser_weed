@@ -3,14 +3,14 @@
 // Derived from MegaTrak path_controller (control_node/path_controller/src/lqr.cpp),
 // re-derived for Ackermann / four-wheel steering kinematics. See README for the
 // derivation. The differential-drive B matrix of MegaTrak is NOT reusable.
-#ifndef LQR_CONTROL__LQR_HPP_
-#define LQR_CONTROL__LQR_HPP_
+#ifndef PATH_TRACKER__LQR_HPP_
+#define PATH_TRACKER__LQR_HPP_
 
 #include <Eigen/Dense>
 
 #include <vector>
 
-namespace lqr_control
+namespace path_tracker
 {
 
 /// One trajectory point with the geometric attributes needed by the controller.
@@ -153,6 +153,6 @@ private:
   RobotState robot_state_;
 };
 
-}  // namespace lqr_control
+}  // namespace path_tracker
 
-#endif  // LQR_CONTROL__LQR_HPP_
+#endif  // PATH_TRACKER__LQR_HPP_

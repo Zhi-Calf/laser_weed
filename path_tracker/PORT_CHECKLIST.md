@@ -91,9 +91,9 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 
 ---
 
-## 3. lqr_control（控制，替代 path_controller）
+## 3. path_tracker（控制，替代 path_controller）
 
-文件：`~/ros2_ws/src/lqr_control/config/lqr_control.yaml`
+文件：`~/ros2_ws/src/path_tracker/config/path_tracker.yaml`
 
 | 参数 | 默认值 | 除草机要改成 | 级别 |
 |---|---|---|---|
@@ -113,19 +113,19 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 （基于你 2026-10-15 提供的版本改写，9 项已有修复全部保留），直接覆盖：
 
 ```bash
-cp ~/lqr_control/patch/chassis_node.cpp \
+cp ~/path_tracker/patch/chassis_node.cpp \
    ~/ros2_ws/src/laser_weed_ros2_node/weeder_base/src/chassis_node.cpp
 cd ~/ros2_ws
 colcon build --packages-select weeder_base --symlink-install
 ```
 
 改动内容、新增参数、`steer_mode` 一致性要求、台架验证方法见 `patch/PATCH_NOTES.md`。
-不改的话 lqr_control 发的转向指令到不了底盘。
+不改的话 path_tracker 发的转向指令到不了底盘。
 
 一句话：新增 `/weeder/steer_cmd`（Float64，弧度，左正，符号与协议同向不取反）作为权威转向来源；
 原 `/cmd_vel` 的 `angular.z` 映射降级为可选回退（供手动遥控），自动作业时不生效。
 
-⚠️ **`steer_mode` 必须与 lqr_control 的同名参数填同一个值**。原代码没设这个字段（恒为 0），
+⚠️ **`steer_mode` 必须与 path_tracker 的同名参数填同一个值**。原代码没设这个字段（恒为 0），
 若控制器按双阿克曼（等效轴距 L/2）算转角而底盘按单阿克曼执行，转角会差一倍。
 
 ⚠️ **实车自动作业建议关掉回退**：`-p steer_fallback_to_cmd_vel:=false`，
@@ -148,7 +148,7 @@ rosdep 装不了或想手动确认，这几个是硬依赖（对应 rosdep 键�
 
 | 库 | 用途 | Jammy/Humble 包名 | 谁用 |
 |---|---|---|---|
-| `eigen` | 矩阵/几何 | `libeigen3-dev` | 两个模块 + lqr_control |
+| `eigen` | 矩阵/几何 | `libeigen3-dev` | 两个模块 + path_tracker |
 | `geographiclib` | 经纬度↔ENU 投影 | ⚠️ **Jammy/Humble 是 `libgeographic-dev`；Noble/Jazzy 是 `libgeographiclib-dev`** | 两个模块 |
 | `boost` | 多边形几何适配 | `libboost-dev` | global_path_planner |
 | `yaml-cpp` | 参数写回 | `libyaml-cpp-dev` | gnss_localization |
@@ -190,11 +190,11 @@ cd ~/ros2_ws
 source /opt/ros/humble/setup.bash
 
 # 依赖优先构建（脚本已做，手动的话）
-colcon build --packages-up-to lqr_control
+colcon build --packages-up-to path_tracker
 source install/setup.bash
 
 # 单元测试：验证四轮转向 LQR 推导 + 路径剖面
-colcon test --packages-select lqr_control
+colcon test --packages-select path_tracker
 colcon test-result --verbose
 
 # 起 GNSS（方案 A 举例）
@@ -215,7 +215,7 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: un
 ros2 topic echo /global_path_planner/path --once
 
 # 起控制（先不上实车，看它算出的转向角对不对）
-ros2 launch lqr_control lqr_control.launch.py
+ros2 launch path_tracker path_tracker.launch.py
 ros2 topic echo /chassis/cmd
 
 # 都对了再起 CAN 桥连实车

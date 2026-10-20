@@ -98,8 +98,8 @@ inline bool parseFirstRowMarginForRidge(double first_row_margin, double ridge_wi
 ///
 /// 发布以下话题 (均为节点相对名, 完整名为 /global_path_planner/<topic>):
 ///   ~/path                  全局路径 (weeder_msgs/Path, transient_local; x/y + waypoint_types,
-///                           0=作业 / 1=掉头), 供 path_controller 跟踪; 当前 lqr_control
-///                           只读 x/y, waypoint_types 预留给机具/激光分段控制
+///                           0=作业 / 1=掉头), 供 path_tracker 跟踪; 它当前只读 x/y,
+///                           waypoint_types 预留给机具/激光分段控制
 ///   ~/path_points           路径点的 RViz marker
 ///   ~/key_points            关键点的 RViz marker (每条垄的两个端点)
 ///   ~/boundary_points       地块边界点的 RViz marker

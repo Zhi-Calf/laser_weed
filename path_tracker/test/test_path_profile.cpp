@@ -1,5 +1,5 @@
 // Copyright 2026. Unit tests for the path profile (heading / arc length / curvature).
-#include "lqr_control/path_profile.hpp"
+#include "path_tracker/path_profile.hpp"
 
 #include <gtest/gtest.h>
 
@@ -7,8 +7,8 @@
 #include <utility>
 #include <vector>
 
-using lqr_control::TrajectoryPoint;
-using lqr_control::computePathProfile;
+using path_tracker::TrajectoryPoint;
+using path_tracker::computePathProfile;
 
 namespace
 {

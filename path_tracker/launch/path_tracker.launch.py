@@ -9,8 +9,8 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    pkg_share = get_package_share_directory('lqr_control')
-    default_params = os.path.join(pkg_share, 'config', 'lqr_control.yaml')
+    pkg_share = get_package_share_directory('path_tracker')
+    default_params = os.path.join(pkg_share, 'config', 'path_tracker.yaml')
 
     params_file = LaunchConfiguration('params_file')
     use_sim_time = LaunchConfiguration('use_sim_time')
@@ -19,7 +19,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'params_file',
             default_value=default_params,
-            description='Full path to the lqr_control parameter file',
+            description='Full path to the path_tracker parameter file',
         ),
         DeclareLaunchArgument(
             'use_sim_time',
@@ -31,9 +31,9 @@ def generate_launch_description():
         # commands to reach the vehicle. It is intentionally NOT started here:
         # it owns the CAN interface and may be launched separately on the robot.
         Node(
-            package='lqr_control',
-            executable='lqr_node',
-            name='lqr_control',
+            package='path_tracker',
+            executable='path_tracker_node',
+            name='path_tracker',
             output='screen',
             parameters=[
                 params_file,

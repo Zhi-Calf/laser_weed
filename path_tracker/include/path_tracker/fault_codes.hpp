@@ -1,15 +1,15 @@
-// Copyright 2026. Fault codes for the lqr_control node.
+// Copyright 2026. Fault codes for the path_tracker node.
 //
 // Coding convention mirrors MegaTrak (3-digit module number + 2-digit index).
-// lqr_control occupies the same role in the chain as MegaTrak's path_controller,
+// path_tracker occupies the same role in the chain as MegaTrak's path_controller,
 // so it reuses the 101xx range and keeps the same semantics per code for logs
 // and future health-reporting integrations.
-#ifndef LQR_CONTROL__FAULT_CODES_HPP_
-#define LQR_CONTROL__FAULT_CODES_HPP_
+#ifndef PATH_TRACKER__FAULT_CODES_HPP_
+#define PATH_TRACKER__FAULT_CODES_HPP_
 
 #include <cstdint>
 
-namespace lqr_control
+namespace path_tracker
 {
 namespace fault
 {
@@ -49,6 +49,6 @@ inline constexpr const char * kSourceApp = "app";
 inline constexpr const char * kSourceVcu = "vcu";
 
 }  // namespace fault
-}  // namespace lqr_control
+}  // namespace path_tracker
 
-#endif  // LQR_CONTROL__FAULT_CODES_HPP_
+#endif  // PATH_TRACKER__FAULT_CODES_HPP_

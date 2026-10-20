@@ -3,11 +3,11 @@
 // Finite-difference geometry ported from MegaTrak
 // control_node/path_controller/src/path_profile.cpp. Model-independent, so the
 // maths is reused unchanged; only the output container differs.
-#include "lqr_control/path_profile.hpp"
+#include "path_tracker/path_profile.hpp"
 
 #include <cmath>
 
-namespace lqr_control
+namespace path_tracker
 {
 
 bool computePathProfile(
@@ -95,4 +95,4 @@ bool computePathProfile(
   return true;
 }
 
-}  // namespace lqr_control
+}  // namespace path_tracker

@@ -5,7 +5,7 @@ global_path_planner 现在启动时直接从 YAML 读取田块和几何参数，
 `set_source` 服务。仿真链路因此简化为：
 
     ① global_path_planner 启动后立即按 YAML 田块规划
-    ② 本节点确认路径非空后切 UNMANNED，lqr_control 开始驱动
+    ② 本节点确认路径非空后切 UNMANNED，path_tracker 开始驱动
 
 田块、垄宽、田边余量和路径来源都在 global_path_planner.yaml 中配置。
 """
@@ -82,7 +82,7 @@ class SimOrchestratorNode(Node):
             msg.data = True
             self.unmanned_pub.publish(msg)
             self.get_logger().info(
-                '已切 UNMANNED，lqr_control 现在应该开始驱动。')
+                '已切 UNMANNED，path_tracker 现在应该开始驱动。')
             self._advance(DONE)
 
     def _advance(self, new_phase):
@@ -92,7 +92,7 @@ class SimOrchestratorNode(Node):
             self.get_logger().info('=== 时序完成，仿真已在跑 ===')
             self.get_logger().info(
                 '看 RViz：绿箭头应从偏离路径处收敛贴上去，沿弓字形行走；'
-                '橙球是 lqr_control 的跟踪目标点，应随车前进。')
+                '橙球是 path_tracker 的跟踪目标点，应随车前进。')
         else:
             self.get_logger().info(
                 '→ 阶段 %d: %s' % (new_phase, PHASE_NAMES[new_phase]))

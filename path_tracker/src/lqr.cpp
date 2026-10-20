@@ -1,11 +1,11 @@
 // Copyright 2026. LQR lateral controller implementation for four-wheel steering.
-#include "lqr_control/lqr.hpp"
+#include "path_tracker/lqr.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
-namespace lqr_control
+namespace path_tracker
 {
 
 namespace
@@ -284,4 +284,4 @@ LQROutput LQR::getControlOutput()
   return output;
 }
 
-}  // namespace lqr_control
+}  // namespace path_tracker

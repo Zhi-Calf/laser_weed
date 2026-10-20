@@ -7,12 +7,12 @@
 //
 // Motion is gated by the system-wide /work_mode signal rather than a
 // controller-private arm topic.
-#ifndef LQR_CONTROL__LQR_NODE_HPP_
-#define LQR_CONTROL__LQR_NODE_HPP_
+#ifndef PATH_TRACKER__PATH_TRACKER_NODE_HPP_
+#define PATH_TRACKER__PATH_TRACKER_NODE_HPP_
 
-#include "lqr_control/fault_codes.hpp"
-#include "lqr_control/lqr.hpp"
-#include "lqr_control/path_profile.hpp"
+#include "path_tracker/fault_codes.hpp"
+#include "path_tracker/lqr.hpp"
+#include "path_tracker/path_profile.hpp"
 
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -26,13 +26,13 @@
 #include <string>
 #include <vector>
 
-namespace lqr_control
+namespace path_tracker
 {
 
-class LqrNode : public rclcpp::Node
+class PathTrackerNode : public rclcpp::Node
 {
 public:
-  LqrNode();
+  PathTrackerNode();
 
 private:
   void loadParameters();
@@ -123,6 +123,6 @@ private:
   double odom_sigma_{0.0};   // worst of the two horizontal pose sigmas
 };
 
-}  // namespace lqr_control
+}  // namespace path_tracker
 
-#endif  // LQR_CONTROL__LQR_NODE_HPP_
+#endif  // PATH_TRACKER__PATH_TRACKER_NODE_HPP_

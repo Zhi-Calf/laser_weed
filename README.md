@@ -10,21 +10,21 @@
 GNSS 接收机
     │ 串口
     ▼
-gnss_localization ──/gnss_driver/odom──► lqr_control
-global_path_planner ──/global_path_planner/path──► lqr_control
+gnss_localization ──/gnss_driver/odom──► path_tracker
+global_path_planner ──/global_path_planner/path──► path_tracker
     (weeder_msgs/msg/Path；YAML poly 首个顶点 = ENU 原点)
 
-lqr_control ──/chassis/cmd──► weeder_base ──CAN──► VCU
+path_tracker ──/chassis/cmd──► weeder_base ──CAN──► VCU
                 (速度 + 前轮转角)          │
                                            └──/chassis/state
 
-/work_mode：lqr_control 驾驶模式使能
+/work_mode：path_tracker 驾驶模式使能
 ```
 
 仿真时，`sim_vehicle` 同时替代 `gnss_localization` 和真实底盘，形成闭环：
 
 ```text
-sim_vehicle ──/gnss_driver/odom──► lqr_control
+sim_vehicle ──/gnss_driver/odom──► path_tracker
      ▲                                  │
      └──────/chassis/cmd─────────┘
 ```
@@ -35,7 +35,7 @@ sim_vehicle ──/gnss_driver/odom──► lqr_control
 |---|---|
 | `gnss_localization` | 读取 RTK 接收机 GIAVP 数据，投影到 ENU，发布 odom、origin、status 和 `odom→base_link` TF；提供 NTRIP 与千寻 SDK 两种差分客户端 |
 | `global_path_planner` | 根据 YAML 中的田块边界生成弓字形全覆盖路径 |
-| `lqr_control` | 四轮转向 LQR 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
+| `path_tracker` | 四轮转向 LQR 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
 | `weeder_base` | CAN 协议编解码、SocketCAN 驱动、50Hz 指令发送、10Hz 状态发布、全部底盘/BMS 状态接收 |
 | `weeder_msgs` | 车辆、BMS、GNSS、工作模式、全覆盖路径等 ROS2 消息 |
 | `sim_vehicle` | 无硬件仿真：模拟 RTK、车辆运动学、工作模式，并可一键启动完整链路 |
@@ -58,7 +58,7 @@ uint8[] waypoint_types
 - `1` = 掉头段
 
 规划器以 `transient_local` QoS 按 10Hz 重发该消息；LQR 控制器根据
-`x/y` 计算曲率、航向和跟踪目标。当前 `lqr_control` 不读取
+`x/y` 计算曲率、航向和跟踪目标。当前 `path_tracker` 不读取
 `waypoint_types`，该字段保留给后续机具/激光分段控制。
 
 ## 底盘指令
@@ -80,7 +80,7 @@ bool estop
 bool ctrl_mode
 ```
 
-`lqr_control` 每拍发布一次该消息，`weeder_base/chassis_node` 接收后转换为
+`path_tracker` 每拍发布一次该消息，`weeder_base/chassis_node` 接收后转换为
 `ADCU_toVCU_01`（`0x0C01D01C`），以 20ms（50Hz）周期发送给 VCU。
 
 手动遥控或测试工具也必须发布 `weeder_msgs/msg/ChassisCmd`，不再使用
@@ -135,7 +135,7 @@ ros2 launch sim_vehicle weeder_sim.launch.py
 
 - `sim_vehicle`：模拟 RTK、车辆运动学和工作模式
 - `global_path_planner`：从 YAML 读取田块并自动规划
-- `lqr_control`
+- `path_tracker`
 - `sim_orchestrator`：确认路径生成后自动切换 UNMANNED
 - `rviz2`：预置可视化
 
@@ -176,7 +176,7 @@ ros2 launch gnss_localization ntrip_client.launch.py
 ros2 launch gnss_localization sdk_client.launch.py
 
 ros2 launch global_path_planner planner.launch.py
-ros2 launch lqr_control lqr_control.launch.py
+ros2 launch path_tracker path_tracker.launch.py
 ros2 launch weeder_base can.launch.py interface:=can0
 ```
 
@@ -211,15 +211,15 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 | 差分账号 | `ntrip_client.yaml` / `sdk_client.yaml` | 按设备分别配置；SDK 1.29 还需配置 `sdk_openapi_host/port`、`sdk_oss_host/port` 和 NOSR 坐标框架/历元 |
 | ENU 原点 | `gnss_localization/config/gnss_driver.yaml` | `origin_lat` / `origin_lon` / `origin_alt`，必须等于 `poly` 第一个顶点 |
 | 田块顶点 / 垄宽 / 田边余量 | `global_path_planner/config/global_path_planner.yaml` | `poly` / `ridge_width` / `field_margin`，修改后重启规划器 |
-| `wheelbase` | `lqr_control/config/lqr_control.yaml` | 单阿克曼填真实轴距，双阿克曼填 `L/2` |
-| `steer_mode` | `lqr_control` | 由路径跟踪控制器随 `/chassis/cmd` 下发 |
+| `wheelbase` | `path_tracker/config/path_tracker.yaml` | 单阿克曼填真实轴距，双阿克曼填 `L/2` |
+| `steer_mode` | `path_tracker` | 由路径跟踪控制器随 `/chassis/cmd` 下发 |
 | `cmd_topic` | 两侧配置文件 | 默认 `/chassis/cmd` |
 | `can_interface` | `weeder_base/config/weeder_base.yaml` | 仿真用 `vcan0`，实车用 `can0` |
 
 ## 安全机制
 
-`lqr_control` 任一安全门控失败都会输出零速、零转角并停车。
-下表故障码定义在 `lqr_control/include/lqr_control/fault_codes.hpp`；当前节点
+`path_tracker` 任一安全门控失败都会输出零速、零转角并停车。
+下表故障码定义在 `path_tracker/include/path_tracker/fault_codes.hpp`；当前节点
 尚未通过 ROS 话题发布故障，也未把故障码写入日志，下表是预留映射：
 
 | 门控 | 参数 | 故障码（预留） |
@@ -244,7 +244,7 @@ colcon test-result --verbose
 ```
 
 `weeder_base` 覆盖协议编码、位域、有符号数、范围检查和 BMS 第二版修布局；
-`lqr_control` 覆盖四轮转向运动学、前馈、符号、闭环收敛和协议限幅；
+`path_tracker` 覆盖四轮转向运动学、前馈、符号、闭环收敛和协议限幅；
 `global_path_planner` 覆盖弓字形规划、覆盖率、凸性校验、YAML 配置契约、严格线段相交和节点 `/path` 发布契约；
 `gnss_localization` 覆盖 GIAVP 解析、参数写回和 YAML 参数一致性。
 
@@ -257,7 +257,7 @@ colcon test-result --verbose
   两处不一致时路径与 odom 会产生固定偏移，当前没有运行时一致性校验
 - `sdk_client` 随包的千寻 SDK 1.29.5 release 库仅支持 aarch64；x86 开发机默认只编译源码做 API 检查，不生成可执行文件
 - 千寻 SDK 1.29 默认服务器域名已关闭，`sdk_client.yaml` 中的 OpenAPI/OSS 域名和端口必须显式配置
-- `lqr_control` 仅适用于 `steer_mode=0`（单阿克曼）和 `1`（双阿克曼）
+- `path_tracker` 仅适用于 `steer_mode=0`（单阿克曼）和 `1`（双阿克曼）
 - 当前不支持倒车，底盘档位固定为 D
 - 仿真为理想模型，不含轮胎侧偏、执行器延迟、RTK 延迟和地面打滑
 - 协议中车速原始值的单位表述仍有歧义（`Value=0.001X` 与 mm/s），实车联调时需用抓包确认；

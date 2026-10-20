@@ -3,14 +3,14 @@
 
 替代真实的 gnss_localization + 底盘，构成一个闭环：
 
-    lqr_control ──/chassis/cmd──► sim_vehicle ──/gnss_driver/odom──► lqr_control
+    path_tracker ──/chassis/cmd──► sim_vehicle ──/gnss_driver/odom──► path_tracker
                                       └─TF odom->base_link─►
 
 同时模拟 gnss_driver 的两个前置输出，让 global_path_planner 能工作：
     /gnss_driver/origin  (NavSatFix, latched)  ENU 投影原点
     /work_mode           (WorkMode, latched)   手动/无人模式切换
 
-运动学：单阿克曼自行车模型（与 lqr_control 的 B 矩阵 v*dt/L 同源）
+运动学：单阿克曼自行车模型（与 path_tracker 的 B 矩阵 v*dt/L 同源）
     x'   = v·cos(yaw)
     y'   = v·sin(yaw)
     yaw' = (v/L)·tan(delta)
@@ -38,7 +38,7 @@ TWO_PI = 2.0 * math.pi
 
 
 def wrap_angle(a):
-    """归一化到 [-pi, pi)。与 lqr_control / stanley 的约定一致。"""
+    """归一化到 [-pi, pi)。与 path_tracker / stanley 的约定一致。"""
     return (a + math.pi) % TWO_PI - math.pi
 
 
@@ -46,7 +46,7 @@ class SimVehicleNode(Node):
     def __init__(self):
         super().__init__("sim_vehicle")
 
-        # ---- 车辆参数：wheelbase 必须与 lqr_control 的 wheelbase 一致，
+        # ---- 车辆参数：wheelbase 必须与 path_tracker 的 wheelbase 一致，
         #      否则仿真的"真实车辆"和控制器假设的模型不是同一台车，
         #      跟踪误差会收敛到一个非零稳态值，看起来像控制器调不好。
         self.declare_parameter("wheelbase", 1.2)
@@ -69,13 +69,13 @@ class SimVehicleNode(Node):
         self.declare_parameter("origin_lon", 112.4497271)
         self.declare_parameter("origin_alt", 100.0)
 
-        # ---- 模拟 RTK 精度。lqr_control 的门控是 sigma <= rtk_max_sigma(0.05)
+        # ---- 模拟 RTK 精度。path_tracker 的门控是 sigma <= rtk_max_sigma(0.05)
         #      且 sigma > 0，所以这里必须给一个非零的小值，否则控制器一直停车。
         #      0.02 对应 gnss_driver 的 acc_rtk_fixed（固定解）。
         self.declare_parameter("rtk_sigma", 0.02)
 
         # ---- 工作模式：false = MANUAL（规划器自动规划），
-        #      true = UNMANNED（允许 lqr_control 驱动底盘）。
+        #      true = UNMANNED（允许 path_tracker 驱动底盘）。
         #      发 /sim/unmanned 切换。见 RUN_SIM.md 的时序说明。
         self.declare_parameter("start_unmanned", False)
 
@@ -114,9 +114,9 @@ class SimVehicleNode(Node):
         self.last_cmd_time = self.get_clock().now()
 
         # ---- QoS：必须与下游订阅端匹配，否则一条都收不到 ----
-        # lqr_control 用 SensorDataQoS 订阅 odom
+        # path_tracker 用 SensorDataQoS 订阅 odom
         self.qos_sensor = qos_profile_sensor_data
-        # planner 与 lqr_control 都用 transient_local + reliable 订阅这两个话题
+        # planner 与 path_tracker 都用 transient_local + reliable 订阅这两个话题
         self.qos_latched = QoSProfile(
             depth=1,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -128,7 +128,7 @@ class SimVehicleNode(Node):
             ChassisCmd, self.cmd_topic, self.on_chassis_cmd, 10)
         self.create_subscription(
             Bool, "/sim/unmanned", self.on_unmanned, 10)
-        # 仅用于"对齐到路径起点"，仿真本身不跟路径（那是 lqr_control 的事）。
+        # 仅用于"对齐到路径起点"，仿真本身不跟路径（那是 path_tracker 的事）。
         # QoS 必须与 planner 的发布端匹配：transient_local + reliable。
         self.create_subscription(
             Path, "/global_path_planner/path", self.on_path, self.qos_latched)
@@ -186,13 +186,13 @@ class SimVehicleNode(Node):
         if msg.data != self.unmanned:
             self.unmanned = msg.data
             self.get_logger().info(
-                "工作模式切换 -> %s" % ("UNMANNED（允许 lqr_control 驱动）"
+                "工作模式切换 -> %s" % ("UNMANNED（允许 path_tracker 驱动）"
                                        if self.unmanned else "MANUAL（规划器自动规划）"))
 
     def on_path(self, msg):
         """收到规划路径后，把车对齐到起点附近（只做一次）。
 
-        对齐后留 align_offset 的横向偏差，这样能直观看到 lqr_control 把车
+        对齐后留 align_offset 的横向偏差，这样能直观看到 path_tracker 把车
         收敛回路径的过程。若 align_to_path_start=false 则跳过，用绝对初始位姿。
         """
         if self.aligned or not self.align_to_path or len(msg.x) < 2 or len(msg.x) != len(msg.y):
@@ -221,12 +221,12 @@ class SimVehicleNode(Node):
         now = self.get_clock().now()
 
         # 指令超时保护：与 chassis_node 的看门狗同理，没有新鲜指令就停车回正。
-        # 否则 lqr_control 一旦被门控停掉，仿真车还会按最后一条指令一直跑。
+        # 否则 path_tracker 一旦被门控停掉，仿真车还会按最后一条指令一直跑。
         if (now - self.last_cmd_time).nanoseconds * 1e-9 > self.cmd_timeout_s:
             self.v_cmd = 0.0
             self.delta_cmd = 0.0
 
-        # 单阿克曼自行车模型积分（与 lqr_control 的离散模型同源）
+        # 单阿克曼自行车模型积分（与 path_tracker 的离散模型同源）
         self.v = self.v_cmd
         if self.v > 1e-6:
             self.x += self.v * math.cos(self.yaw) * self.dt
@@ -242,7 +242,7 @@ class SimVehicleNode(Node):
     def publish_odom(self):
         """模拟 gnss_driver 的 ~/odom：ENU 位姿 + RTK 精度协方差。
 
-        协方差是 lqr_control RTK 门控的判据（sqrt(max(cov[0], cov[7])) <= 0.05），
+        协方差是 path_tracker RTK 门控的判据（sqrt(max(cov[0], cov[7])) <= 0.05），
         必须填非零小值，否则控制器判定"定位质量未知"而一直停车。
         """
         m = Odometry()
@@ -265,7 +265,7 @@ class SimVehicleNode(Node):
         m.pose.covariance[14] = var   # z
         m.pose.covariance[35] = math.radians(0.2) ** 2   # yaw
 
-        # 车体系前进速度，lqr_control 读这个填 robot_state_.linear_v
+        # 车体系前进速度，path_tracker 读这个填 robot_state_.linear_v
         m.twist.twist.linear.x = self.v
         m.twist.covariance[0] = 0.01
 
@@ -317,8 +317,8 @@ class SimVehicleNode(Node):
         """1Hz 重发 latched 话题。
 
         origin：planner 的 ENU 投影原点，未到位时规划器不会规划。
-        work_mode：lqr_control 要求 UNMANNED 才驱动，靠 /sim/unmanned 切换。
-                   必须持续发：lqr_control 的 work_mode_timeout_s=3.0，
+        work_mode：path_tracker 要求 UNMANNED 才驱动，靠 /sim/unmanned 切换。
+                   必须持续发：path_tracker 的 work_mode_timeout_s=3.0，
                    停发会被判超时。
         """
         now = self.get_clock().now().to_msg()

@@ -140,7 +140,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /lqr_control/target_point
+        Value: /path_tracker/target_point
       Value: true
 
     # ---- RTK 里程计轨迹。

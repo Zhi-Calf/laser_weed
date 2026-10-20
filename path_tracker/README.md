@@ -1,4 +1,4 @@
-# lqr_control
+# path_tracker
 
 激光除草机器人（四轮转向底盘）的 LQR 路径跟踪控制器。
 
@@ -63,7 +63,7 @@ MegaTrak 的 `lqr_R_w` 是**角速度代价**，本包的 `lqr_R_steer` 是**转
 
 ## 2. CAN 指令接口
 
-`lqr_control` 每个控制周期只发布一条 `/chassis/cmd`
+`path_tracker` 每个控制周期只发布一条 `/chassis/cmd`
 （`weeder_msgs/ChassisCmd`），同时携带：
 
 | 字段 | 单位 | 约定 |
@@ -101,7 +101,7 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 | 订阅 | `/global_path_planner/path` | `weeder_msgs/Path` | `global_path_planner`（transient_local） |
 | 订阅 | `/work_mode` | `weeder_msgs/WorkMode` | 模式管理方/APP（transient_local） |
 | 发布 | `/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
-| 发布 | `/lqr_control/target_point` | `visualization_msgs/Marker` | RViz |
+| 发布 | `/path_tracker/target_point` | `visualization_msgs/Marker` | RViz |
 
 当前路径回调**只读取** `Path.x/y`；`waypoint_types`（作业/掉头）暂不参与控制，
 字段保留给后续机具或激光分段控制。
@@ -169,28 +169,28 @@ LQR 的状态量只有 `[横向误差, 航向误差]`，**没有沿路径方向�
 #      mv ~/ros2_ws/src/MegaTrak-main ~/MegaTrak-main
 
 # 1) 把依赖包放进工作区（weeder_msgs 已由本项目提供）
-cp -r lqr_control ~/ros2_ws/src/
+cp -r path_tracker ~/ros2_ws/src/
 
 # 2) 先建依赖包，再建本包（colcon 会按拓扑顺序自动处理，但首次建议显式建依赖）
 cd ~/ros2_ws
-colcon build --packages-up-to lqr_control
+colcon build --packages-up-to path_tracker
 source install/setup.bash
 
 # 3) 单元测试（验证四轮转向推导）
-colcon test --packages-select lqr_control
+colcon test --packages-select path_tracker
 colcon test-result --verbose
 
 # 起节点
-ros2 launch lqr_control lqr_control.launch.py
+ros2 launch path_tracker path_tracker.launch.py
 ```
 
-纯算法层（`lqr.cpp` + `path_profile.cpp`，编成 `lqr_control_lib`）零 ROS 依赖，但**测试可执行文件依赖 rclcpp/gtest，且 `lqr_node` 依赖 weeder_msgs**，所以整个包必须在完整 ROS2 环境里 `colcon build`，不能脱离 ROS 单独编译。
+纯算法层（`lqr.cpp` + `path_profile.cpp`，编成 `path_tracker_lib`）零 ROS 依赖，但**测试可执行文件依赖 rclcpp/gtest，且 `path_tracker_node` 依赖 weeder_msgs**，所以整个包必须在完整 ROS2 环境里 `colcon build`，不能脱离 ROS 单独编译。
 
 ---
 
 ## 6. 调参起点
 
-`config/lqr_control.yaml` 里的默认值是**保守起点，不是可用值**。必须按实车改的：
+`config/path_tracker.yaml` 里的默认值是**保守起点，不是可用值**。必须按实车改的：
 
 | 参数 | 说明 |
 |---|---|
@@ -215,7 +215,7 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 | `weeder_msgs` | 消息定义 | 项目自有，`colcon build` 生成接口 |
 | `gnss_localization` | `sensor_node/` | 原样拷，改 config |
 | `global_path_planner` | `navigation_node/` | 原样拷，改 config |
-| `lqr_control` | 本包 | 替代 path_controller，已统一到 WorkMode |
+| `path_tracker` | 本包 | 替代 path_controller，已统一到 WorkMode |
 
 **GNSS 必改配置**（`gnss_driver.yaml` / `ntrip_client.yaml` / `sdk_client.yaml`）：
 
@@ -237,7 +237,7 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 
 **已知限制**：`global_path_planner` 只接受**凸多边形**田块、不支持田块内障碍物挖空（`bow.cpp:61-66` 非凸直接拒）。除草场景若田块内有不可作业的障碍物（树、石头），这个规划器处理不了，需要额外做地块切分。
 
-**坐标系必须对齐**：GNSS 广播的 TF 是 `odom → base_link`（语义 ENU，`gnss_driver.cpp:693`），`lqr_control` 的 `frame_id` 默认已是 `odom`、订阅 `/gnss_driver/odom`，三者一致。若除草机的 `base_link` 定义（后轴中心 vs 几何中心）与履带车不同，杆臂标定那步要一并考虑。
+**坐标系必须对齐**：GNSS 广播的 TF 是 `odom → base_link`（语义 ENU，`gnss_driver.cpp:693`），`path_tracker` 的 `frame_id` 默认已是 `odom`、订阅 `/gnss_driver/odom`，三者一致。若除草机的 `base_link` 定义（后轴中心 vs 几何中心）与履带车不同，杆臂标定那步要一并考虑。
 
 ---
 

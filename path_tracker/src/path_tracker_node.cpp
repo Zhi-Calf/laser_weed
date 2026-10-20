@@ -1,5 +1,5 @@
 // Copyright 2026. ROS 2 node implementation for the four-wheel-steering LQR.
-#include "lqr_control/lqr_node.hpp"
+#include "path_tracker/path_tracker_node.hpp"
 
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -8,7 +8,7 @@
 #include <cmath>
 #include <utility>
 
-namespace lqr_control
+namespace path_tracker
 {
 
 namespace
@@ -18,10 +18,10 @@ constexpr int kWarnIntervalMs = 3000;
 constexpr double kRad2Deg = 57.29577951308232;
 
 /// Node name used in logs.
-constexpr const char * kNodeName = "lqr_control";
+constexpr const char * kNodeName = "path_tracker";
 }  // namespace
 
-LqrNode::LqrNode()
+PathTrackerNode::PathTrackerNode()
 : Node(kNodeName)
 {
   // Order matters: the LQR object must exist before loadParameters() configures
@@ -44,7 +44,7 @@ LqrNode::LqrNode()
     cmd_topic_.c_str());
 }
 
-void LqrNode::loadParameters()
+void PathTrackerNode::loadParameters()
 {
   control_hz_ = declare_parameter<double>("control_hz", 10.0);
   wheelbase_ = declare_parameter<double>("wheelbase", 1.0);
@@ -143,7 +143,7 @@ void LqrNode::loadParameters()
   lqr_->setSnapWindow(snap_window_);
 }
 
-void LqrNode::setupInterfaces()
+void PathTrackerNode::setupInterfaces()
 {
   // gnss_driver publishes odom with SensorDataQoS (best effort, keep last 5);
   // a reliable subscriber would never match that publisher, so mirror its QoS.
@@ -168,7 +168,7 @@ void LqrNode::setupInterfaces()
 
   cmd_pub_ = create_publisher<weeder_msgs::msg::ChassisCmd>(cmd_topic_, 10);
   if (viz_) {
-    viz_pub_ = create_publisher<visualization_msgs::msg::Marker>("/lqr_control/target_point", 10);
+    viz_pub_ = create_publisher<visualization_msgs::msg::Marker>("/path_tracker/target_point", 10);
   }
 
   const auto t = now();
@@ -178,7 +178,7 @@ void LqrNode::setupInterfaces()
   last_work_mode_time_ = t;
 }
 
-void LqrNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
+void PathTrackerNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   last_odom_time_ = now();
@@ -205,7 +205,7 @@ void LqrNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
   odom_sigma_ = std::sqrt(worst_var);
 }
 
-void LqrNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg)
+void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg)
 {
   if (msg->x.size() < 2 || msg->x.size() != msg->y.size()) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
@@ -268,7 +268,7 @@ void LqrNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg)
     traj.size(), traj.front().x, traj.front().y, traj.back().x, traj.back().y);
 }
 
-void LqrNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg)
+void PathTrackerNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   last_work_mode_time_ = now();
@@ -288,7 +288,7 @@ void LqrNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg)
   }
 }
 
-bool LqrNode::rtkQualityOk(double & worst_sigma) const
+bool PathTrackerNode::rtkQualityOk(double & worst_sigma) const
 {
   worst_sigma = odom_sigma_;
   // A sigma of exactly 0 means the driver never filled the covariance; treat
@@ -296,7 +296,7 @@ bool LqrNode::rtkQualityOk(double & worst_sigma) const
   return odom_sigma_ > 0.0 && odom_sigma_ <= rtk_max_sigma_;
 }
 
-void LqrNode::publishStop()
+void PathTrackerNode::publishStop()
 {
   weeder_msgs::msg::ChassisCmd zero;
   zero.gear = 0;
@@ -309,7 +309,7 @@ void LqrNode::publishStop()
   cmd_pub_->publish(zero);
 }
 
-void LqrNode::controlTick()
+void PathTrackerNode::controlTick()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   const auto t = now();
@@ -459,7 +459,7 @@ void LqrNode::controlTick()
   }
 }
 
-void LqrNode::publishViz(const TrajectoryPoint & target)
+void PathTrackerNode::publishViz(const TrajectoryPoint & target)
 {
   visualization_msgs::msg::Marker m;
   m.header.frame_id = frame_id_;
@@ -482,4 +482,4 @@ void LqrNode::publishViz(const TrajectoryPoint & target)
   viz_pub_->publish(m);
 }
 
-}  // namespace lqr_control
+}  // namespace path_tracker

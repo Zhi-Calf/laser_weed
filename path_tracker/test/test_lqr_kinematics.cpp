@@ -3,16 +3,16 @@
 // These tests are the safety net for the port: they pin down the derivation
 // claims made in the README, in particular that the feedforward steering angle
 // equals L*kappa (not v*kappa as in MegaTrak's differential-drive model).
-#include "lqr_control/lqr.hpp"
+#include "path_tracker/lqr.hpp"
 
 #include <gtest/gtest.h>
 
 #include <cmath>
 #include <vector>
 
-using lqr_control::LQR;
-using lqr_control::RobotState;
-using lqr_control::TrajectoryPoint;
+using path_tracker::LQR;
+using path_tracker::RobotState;
+using path_tracker::TrajectoryPoint;
 
 namespace
 {

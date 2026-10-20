@@ -3,10 +3,10 @@
 在没有实车、RTK 接收机和 CAN 硬件的条件下，把整条控制链跑通：
 
 ```text
-sim_vehicle ──/gnss_driver/odom──► lqr_control ──/chassis/cmd──► sim_vehicle
-     └──/work_mode──────────────────► lqr_control
+sim_vehicle ──/gnss_driver/odom──► path_tracker ──/chassis/cmd──► sim_vehicle
+     └──/work_mode──────────────────► path_tracker
 
-global_path_planner（YAML poly 首个顶点为原点）──/path──► lqr_control
+global_path_planner（YAML poly 首个顶点为原点）──/path──► path_tracker
 ```
 
 `sim_vehicle` 同时扮演三个角色：GNSS 定位、车辆运动学和工作模式管理。
@@ -28,7 +28,7 @@ ros2 launch sim_vehicle weeder_sim.launch.py
 |---|---|
 | `sim_vehicle` | 发布 RTK odom/origin、车辆运动学、`/work_mode` |
 | `global_path_planner` | 读取 YAML 田块，使用 `poly` 首个顶点作为原点并立即规划 |
-| `lqr_control` | 跟踪 `/global_path_planner/path` |
+| `path_tracker` | 跟踪 `/global_path_planner/path` |
 | `sim_orchestrator` | 确认路径生成后切 UNMANNED |
 | `rviz2` | 预置田块、路径、车辆和目标点可视化 |
 
@@ -79,7 +79,7 @@ global_path_planner 启动后按 YAML 田块立即规划
     ↓
 sim_orchestrator 检测到非空 /global_path_planner/path
     ↓
-sim_orchestrator 切 UNMANNED → lqr_control 开始驱动
+sim_orchestrator 切 UNMANNED → path_tracker 开始驱动
 ```
 
 ## 四、手动分终端调试
@@ -109,7 +109,7 @@ ros2 launch global_path_planner planner.launch.py
 
 ```bash
 source install/setup.bash
-ros2 launch lqr_control lqr_control.launch.py
+ros2 launch path_tracker path_tracker.launch.py
 ```
 
 在切 UNMANNED 前，控制器会持续输出停车。
@@ -135,7 +135,7 @@ ros2 topic pub --once /sim/unmanned std_msgs/msg/Bool "{data: true}"
 | 掉头关键点 | `/global_path_planner/key_points` |
 | 全覆盖路径 | `/global_path_planner/path` |
 | 仿真车 | `/sim_vehicle/marker` |
-| 跟踪目标点 | `/lqr_control/target_point` |
+| 跟踪目标点 | `/path_tracker/target_point` |
 
 `/gnss_driver/odom` 使用 SensorDataQoS（Best Effort）。手动添加显示时
 必须把 RViz 的 Reliability 改成 **Best Effort**。
@@ -163,7 +163,7 @@ ros2 topic echo /work_mode --once
 以及规划器启动日志中的 YAML 配置摘要。`poly` 至少需要 3 个顶点，
 `ridge_width` 必须大于 0，`field_margin` 不能过大。
 
-**lqr_control 一直“定位精度不足”**
+**path_tracker 一直“定位精度不足”**
 
 `sim_vehicle` 未运行，或 `rtk_sigma` 被设成 0。默认 0.02 是正确的。
 

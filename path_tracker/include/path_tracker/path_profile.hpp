@@ -3,14 +3,14 @@
 // Ported from MegaTrak control_node/path_controller/src/path_profile.cpp.
 // The algorithm is model-independent (pure geometry) so it is reused as-is.
 // Only the container changes: it fills std::vector<TrajectoryPoint> directly.
-#ifndef LQR_CONTROL__PATH_PROFILE_HPP_
-#define LQR_CONTROL__PATH_PROFILE_HPP_
+#ifndef PATH_TRACKER__PATH_PROFILE_HPP_
+#define PATH_TRACKER__PATH_PROFILE_HPP_
 
-#include "lqr_control/lqr.hpp"
+#include "path_tracker/lqr.hpp"
 
 #include <vector>
 
-namespace lqr_control
+namespace path_tracker
 {
 
 /// Annotate raw x/y points with heading, accumulated arc length, curvature and
@@ -27,6 +27,6 @@ bool computePathProfile(
   double default_v,
   std::vector<TrajectoryPoint> * out);
 
-}  // namespace lqr_control
+}  // namespace path_tracker
 
-#endif  // LQR_CONTROL__PATH_PROFILE_HPP_
+#endif  // PATH_TRACKER__PATH_PROFILE_HPP_
