@@ -44,13 +44,13 @@ inline constexpr double kLineOverhang = 1.0;
 // 掉头圆弧的采样上限 (rad/步)
 inline constexpr double kMaxArcStepRad = 5.0 * M_PI / 180.0;
 
-// 把半圆的顶点从"B-C 中点"往外推、推到"盖住靠外那个垄端"所需的步数
-inline constexpr int kTurnOutwardSteps = 20;
+// 半圆越界时沿垄内缩的搜索步数
+inline constexpr int kTurnSearchSteps = 20;
 
 // 掉头允许伸出**地块边界**的量 (m)
 inline constexpr double kTurnOverrunTolerance = 0.05;
 
-// 两条垄**不平行**时"与两条垄都相切的圆"的最小可用半径 (m)
+// 掉头圆弧的最小可用半径 (m)
 inline constexpr double kTurnCornerMinRadius = 0.05;
 
 // 浮点数相等: 绝对值差不超过它

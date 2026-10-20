@@ -31,29 +31,25 @@ namespace global_path_planner {
 // 顺序与分组: 通用/兜底 -> 规划失败·输入类 -> 规划失败·参数类 -> 规划失败·内部兜底。
 // 自相交码 10409 是后加的输入类细分, 编号追加在末尾以保持已有码不变。
 // 规划失败细分与 PlanStatus 的两组 (isBadInput() / isBadParams()) 一一对应。
-// **PlanStatus 的取值重排不影响这里**: 心跳发出去的是本表的 ID, 与枚举内部的号无关 —— 枚举
-// 重排后这一列一个字都不用动 (planStatusFaultCode 按符号映射)。
+// **PlanStatus 的取值重排不影响这里**: planStatusFaultCode 按符号映射, 与本表的 ID 一一对应。
 //
-// 故障码只是"原因标签", 供 APP/云端展示"存在某个故障"; 不含等级。
-// 决策动作由心跳的 status (STOP_MOTION 等) 表达, 不在此重复 —— 与 tractor_base
-// 同一分工: 那边的 FaultSeverity 也只服务于"把底盘自检故障映射成本模块动作",
-// 对外发布的 fault_codes 同样是纯 ID。本节点没有自己的执行器, 只发 ID + 心跳状态。
+// 故障码只是"原因标签", 供日志与离线诊断使用; 不含等级。
+// 本节点目前不发布故障码或心跳消息, 规划失败只写日志并保持空路径。
 enum GlobalPathPlannerFaultCode : uint32_t {
-  FAULT_NONE                  = 10400,   // 无故障 (模块号 104 + 序号 00)
-  FAULT_PLAN_FAILED           = 10401,   // 路径规划失败 (无路点; 通用/兜底: 未细分状态)
-  FAULT_PLAN_INPUT_TOO_FEW    = 10402,   // kInputTooFew   : 输入边界点不足 (< 3 个)
-  FAULT_PLAN_DEDUP_TOO_FEW    = 10403,   // kDedupTooFew   : 去重后的边界点不足 (< 3 个)
-  FAULT_PLAN_HULL_TOO_FEW     = 10404,   // kHullTooFew    : 凸包点不足 (顶点退化/共线)
-  FAULT_PLAN_NON_CONVEX       = 10405,   // kNonConvex     : 地块非凸
-  FAULT_PLAN_BAD_FIELD_MARGIN = 10406,   // kBadFieldMargin: field_margin 不合理
-  FAULT_PLAN_BAD_RIDGE_WIDTH  = 10407,   // kBadRidgeWidth : ridge_width 不合理
-  FAULT_PLAN_INTERNAL         = 10408,   // kInternal      : 内部兜底
-  FAULT_PLAN_SELF_INTERSECTING = 10409,  // kSelfIntersecting: 输入边界自相交 (非简单多边形)
+  FAULT_NONE                   = 10400,   // 无故障 (模块号 104 + 序号 00)
+  FAULT_PLAN_FAILED            = 10401,   // 路径规划失败 (无路点; 通用/兜底: 未细分状态)
+  FAULT_PLAN_INPUT_TOO_FEW     = 10402,   // kInputTooFew   : 输入边界点不足 (< 3 个)
+  FAULT_PLAN_DEDUP_TOO_FEW     = 10403,   // kDedupTooFew   : 去重后的边界点不足 (< 3 个)
+  FAULT_PLAN_HULL_TOO_FEW      = 10404,   // kHullTooFew    : 凸包点不足 (顶点退化/共线)
+  FAULT_PLAN_NON_CONVEX        = 10405,   // kNonConvex     : 地块非凸
+  FAULT_PLAN_BAD_FIELD_MARGIN  = 10406,   // kBadFieldMargin: field_margin 不合理
+  FAULT_PLAN_BAD_RIDGE_WIDTH   = 10407,   // kBadRidgeWidth : ridge_width 不合理
+  FAULT_PLAN_INTERNAL          = 10408,   // kInternal      : 内部兜底
+  FAULT_PLAN_SELF_INTERSECTING = 10409,   // kSelfIntersecting: 输入边界自相交 (非简单多边形)
 };
 
-// PlanStatus -> 故障码: 心跳里 fault_codes 发出去的就是这些 ID, APP/云端据此区分"为什么没有
-// 路径"(点数不够 / 重复点太多 / 退化共线 / 非凸 / 自相交 / field_margin 不合理 /
-// ridge_width 不合理 / 内部错误), 不必去看日志文本。
+// PlanStatus -> 故障码: 日志里带上这些 ID, 用于区分"为什么没有路径"(点数不够 / 重复点太多 /
+// 退化共线 / 非凸 / 自相交 / field_margin 不合理 / ridge_width 不合理 / 内部错误)。
 // 三点约定:
 //   * kOk 映射到 FAULT_NONE —— 函数是全的, 调用方不用特判"成功"这一支;
 //   * 每个失败状态都有**唯一**专码 (10402..10409), 不与通用码 10401 混用;

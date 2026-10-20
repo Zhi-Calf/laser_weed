@@ -58,7 +58,7 @@ inline bool isBadParams(PlanStatus status) {
   return status == PlanStatus::kBadFieldMargin || status == PlanStatus::kBadRidgeWidth;
 }
 
-// 状态 -> 简短标签 (日志/心跳 detail 用): 数值与标签一起给, 现场不必去翻枚举定义。
+// 状态 -> 简短标签 (日志/诊断用): 数值与标签一起给, 现场不必去翻枚举定义。
 inline const char* planStatusName(PlanStatus status) {
   switch (status) {
     case PlanStatus::kOk:
@@ -93,8 +93,8 @@ inline constexpr uint8_t kSegTurn          = 1;       // 掉头弧 (地头转弯
 // 新接口的两个载体: `plan(const BowInput&) -> BowOutput` (注意非 const: 状态写进对象成员)。
 //   * 输入由调用方拥有并传入, 规划过程**绝不修改**它 (内部只改自己的"生效值"副本);
 //   * 输出整包返回: 路径/关键点/观测值/状态全在里面, 对象上不导出 getter。
-// 因此: 同一个 `PlanBowShapedPath` 实例可被**多线程并发调用**, 没有共享可变状态, 也不会出现
-// "读到上一轮结果 / 半成品状态"这类问题 (见 test/test_bow_parallel.cpp)。
+// 因此: 同一个 `PlanBowShapedPath` 实例同一时刻只能用于一次规划 (规划状态写在成员上);
+// 不同实例之间没有共享状态, "每线程一个实例"可以并行 (见 test/test_bow_parallel.cpp)。
 struct BowInput {
   Polygon_2 cell;                    // 地块顶点 (凸、按边界顺序、简单多边形, ENU, 单位 m)
   double ridge_width      = 0.0;     // 垄宽 (m, 必须 > 0)
@@ -115,8 +115,6 @@ struct BowOutput {
   std::vector<Point_2> key_waypoints;     // 每条垄的两个端点 (掉头点)
   double sweep_dir_deg           = 0.0;   // 选定的扫描方向 (deg)
   double turn_max_overrun        = 0.0;   // 掉头伸出地块边界的最大距离 (m) —— [TURN_BOUNDARY]
-  double turn_max_pocket         = 0.0;   // 掉头处沿垄向、路径中心线到垄端的最大缺口 (m) —— [TURN_POCKET]
-  double turn_pocket_margin_hint = 0.0;   // 想盖住那条盲带需要的 field_margin (m) —— [TURN_POCKET] 建议值
   bool ok() const {
     return status == PlanStatus::kOk;
   }
@@ -175,10 +173,9 @@ private:
   std::optional<TurnGeometry> makeTurnGeometry(const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4) const;
   std::vector<Point_2> sampleCircularArc(const Point_2& center, double radius, double start_angle, double sweep, const Point_2& t1, const Point_2& t2) const;
   std::vector<Point_2> buildHalfCircleTurn(const TurnGeometry& geometry);
-  std::vector<Point_2> legacyTurn(const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4);
+  std::vector<Point_2> buildTurn(const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4);
   double overrunOf(const Point_2& p);
   double maxOverrunOf(const std::vector<Point_2>& pts);
-  void updateTurnPocket(double pocket, double margin_hint);
 
 private:
   void fail(PlanStatus st, const std::string& msg) {

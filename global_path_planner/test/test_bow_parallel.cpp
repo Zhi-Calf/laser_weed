@@ -40,8 +40,7 @@ bool SameOutput(const BowOutput& a, const BowOutput& b) {
     return false;
   if (!SamePath(a.waypoints, b.waypoints) || !SamePath(a.key_waypoints, b.key_waypoints) || !SamePath(a.inner_polygon, b.inner_polygon))
     return false;
-  return SameBits(a.sweep_dir_deg, b.sweep_dir_deg) && SameBits(a.turn_max_overrun, b.turn_max_overrun) && SameBits(a.turn_max_pocket, b.turn_max_pocket) &&
-         SameBits(a.turn_pocket_margin_hint, b.turn_pocket_margin_hint);
+  return SameBits(a.sweep_dir_deg, b.sweep_dir_deg) && SameBits(a.turn_max_overrun, b.turn_max_overrun);
 }
 
 Polygon_2 Rect(double w, double h) {

@@ -266,7 +266,7 @@ std::vector<Point_2> PlanBowShapedPath::smoothTurns(const std::vector<Point_2>& 
   // P1/P2 正好是本窗口的 P3/P4 (垄 i 的末端 -> 垄 i+1 的起点 -> ... )。
   size_t i = 0;
   while (i + 3 < key_waypoints.size()) {
-    const std::vector<Point_2> turn = legacyTurn(key_waypoints[i], key_waypoints[i + 1], key_waypoints[i + 2], key_waypoints[i + 3]);
+    const std::vector<Point_2> turn = buildTurn(key_waypoints[i], key_waypoints[i + 1], key_waypoints[i + 2], key_waypoints[i + 3]);
     output_.turn_max_overrun        = std::max(output_.turn_max_overrun, maxOverrunOf(turn));
     if (!turn.empty()) {
       // T1 仍在当前垄上, 保持 WORK; 若与上一个点重合, append 会跳过。
@@ -282,7 +282,7 @@ std::vector<Point_2> PlanBowShapedPath::smoothTurns(const std::vector<Point_2>& 
         append(turn.back(), kSegWork);
       } else {
         // 非平行半圆的出口 t2 可能不在下一条垄起点 P3 上。此时把 t2 标 TURN,
-        // 让 t2 -> 下一个切点 T1' 的直线连接段被识别为掉头段; 不改变路径几何。
+        // 让 t2 -> 下一个掉头起点 T1' 的直线连接段被识别为掉头段; 不改变路径几何。
         const bool has_exit_connector = (turn.back() - key_waypoints[i + 2]).norm() > kMinVertexSpacing;
         for (size_t k = 1; k + 1 < turn.size(); ++k)
           append(turn[k], kSegTurn);
@@ -296,93 +296,10 @@ std::vector<Point_2> PlanBowShapedPath::smoothTurns(const std::vector<Point_2>& 
   return result;
 }
 
-// ============================================================
-// inner_path 两端补到区域顶点 (贴边行走的那一小段)
-// ============================================================
-// 垄端点由"扫描线 ∩ 区域"裁得, 本来就落在区域边界边上; 于是:
-//   * 起点 P1 在边 AB 上: 看 ∠(A, P1, P2) —— > 90° 的那个顶点在车头"背后"(该边相对垄向往回斜),
-//     把它放到 P1 前面: 车先从顶点沿这条边走到 P1 再拐进垄, 端头那块三角带才走到, 且那处拐角
-//     (180° - ∠) < 90°;
-//   * 终点 Pn 在边 CD 上: 同理看 ∠(P_{n-1}, Pn, C) —— > 90° 的顶点在车头"前方", 接在 Pn 后面
-//     继续走到它, 正好收边。
-// 两个条件都不满足 (矩形地块: 边界边 ⊥ 垄向, 夹角正好 = 90°; 或端点没贴在边界边上) 就原样返回 ——
-// 那些情形与旧版逐位相同。
-std::vector<Point_2> PlanBowShapedPath::extendEndsToRegionCorners(
-  const std::vector<Point_2>& path,
-  const Segment_2& near_side_edge,
-  const Segment_2& far_side_edge,
-  const std::vector<uint8_t>* in_types,
-  std::vector<uint8_t>* out_types) {
-  // 逐点类型: 与返回的路径保持同步 (发布时写入 Path.waypoint_types)。先按输入的路径初始化,
-  // 后面的早退分支 (原样返回) 也就自动是对的; 长度对不上 (不是同一条路径) 时按 WORK 起, 免得把
-  // 错位的标签传下去。
-  if (out_types != nullptr) {
-    if (in_types != nullptr && in_types->size() == path.size())
-      *out_types = *in_types;
-    else
-      out_types->assign(path.size(), kSegWork);
-  }
-  if (path.size() < 2)
-    return path;
-  // 退化地块 (取不到有效的 AB/CD) 时原样返回
-  if ((near_side_edge.second - near_side_edge.first).norm() < kMinVertexSpacing || (far_side_edge.second - far_side_edge.first).norm() < kMinVertexSpacing)
-    return path;
-
-  std::vector<Point_2> out = path;
-  tryExtendPathEnd({"首端 (AB)", near_side_edge, 0, path[0] - path[1], true}, path, out, out_types);
-  tryExtendPathEnd({"末端 (CD)", far_side_edge, path.size() - 1, path.back() - path[path.size() - 2], false}, path, out, out_types);
-  return out;
-}
-
-bool PlanBowShapedPath::tryExtendPathEnd(const EndExtensionSpec& spec, const std::vector<Point_2>& path, std::vector<Point_2>& out, std::vector<uint8_t>* out_types) const {
-  if (spec.end_index >= path.size()) {
-    return false;
-  }
-  // 与旧版一致: 端头首段 (或末段) 退化时不补角, 否则搜索方向无法可靠归一化。
-  if (!(spec.search_dir.norm() > kMinVertexSpacing)) {
-    return false;
-  }
-  const Point_2& end = path[spec.end_index];
-  if (!pointOnSegment(end, spec.edge)) {
-    return false;
-  }
-
-  Point_2 corner;
-  if (!pickEdgeCorner(end, spec.search_dir, spec.edge, corner)) {
-    return false;
-  }
-
-  const size_t others = countOtherPointsOnEdge(path, spec.edge, end);
-  if (others > 0) {
-    SPDLOG_INFO("{}: 那条边上还有 {} 个路径点 (不是端头边), 不补 —— 前提是只有 path 的起点/终点在 AB/CD 上", spec.label, others);
-    return false;
-  }
-
-  const Segment_2 extension = spec.at_front ? Segment_2{corner, end} : Segment_2{end, corner};
-  if (segmentCrossesPath(extension, path)) {
-    SPDLOG_INFO("{}顶点 ({:.3f}, {:.3f}) 在 {:.2f} m 外且那段会横穿已铺路径: 不补 (只补不穿)", spec.label, corner.x(), corner.y(), (corner - end).norm());
-    return false;
-  }
-
-  SPDLOG_INFO("{}沿区域边界边补到顶点: 垄端 ({:.3f}, {:.3f}) -> 顶点 ({:.3f}, {:.3f}), 补 {:.3f} m", spec.label, end.x(), end.y(), corner.x(), corner.y(), (corner - end).norm());
-  if (spec.at_front) {
-    out.insert(out.begin(), corner);
-    if (out_types != nullptr) {
-      out_types->insert(out_types->begin(), kSegWork);
-    }
-  } else {
-    out.push_back(corner);
-    if (out_types != nullptr) {
-      out_types->push_back(kSegWork);
-    }
-  }
-  return true;
-}
-
 // 计算点超过地块边界的量
 double PlanBowShapedPath::overrunOf(const Point_2& p) {
   if (field_.size() < 3)
-    return 0.0;   // 没有地块信息时不限制 (理论上不会发生)
+    return 0.0;
   const Point_2 inner = vertexMean(field_);
   double worst        = 0.0;
   for (size_t i = 0; i < field_.size(); ++i) {
@@ -401,11 +318,6 @@ double PlanBowShapedPath::maxOverrunOf(const std::vector<Point_2>& pts) {
   for (const auto& p : pts)
     worst = std::max(worst, overrunOf(p));
   return worst;
-}
-
-void PlanBowShapedPath::updateTurnPocket(double pocket, double margin_hint) {
-  output_.turn_max_pocket         = pocket;
-  output_.turn_pocket_margin_hint = margin_hint;
 }
 
 // 按弧长和单步转角上限采样一段圆弧。
@@ -462,7 +374,7 @@ std::optional<PlanBowShapedPath::TurnGeometry> PlanBowShapedPath::makeTurnGeomet
 }
 
 // ============================================================
-// 所有掉头: 半圆，必要时沿垄向外推
+// 所有掉头: 半圆，以 base_center 为基准；仅在越界时沿垄向内缩
 // ============================================================
 std::vector<Point_2> PlanBowShapedPath::buildHalfCircleTurn(const TurnGeometry& geometry) {
   const Point_2& P2  = geometry.p2;
@@ -478,37 +390,122 @@ std::vector<Point_2> PlanBowShapedPath::buildHalfCircleTurn(const TurnGeometry& 
     return sampleCircularArc(center, geometry.radius, a0, sweep, t1, t2);
   };
 
-  const Point_2 base_center = 0.5 * (P2 + P3) - geometry.radius * geometry.in_dir;
-  const double push         = 0.5 * std::abs((P3 - P2).dot(geometry.in_dir));
-  double used_push          = 0.0;
-  std::vector<Point_2> arc  = build_arc(base_center);
-  if (push > kEpsilon) {
-    for (int step = kTurnOutwardSteps; step >= 1; --step) {
-      const double candidate_push    = push * static_cast<double>(step) / static_cast<double>(kTurnOutwardSteps);
-      std::vector<Point_2> candidate = build_arc(base_center + candidate_push * geometry.in_dir);
-      if (maxOverrunOf(candidate) <= kTurnOverrunTolerance) {
-        arc       = std::move(candidate);
-        used_push = candidate_push;
+  const Point_2 base_center     = 0.5 * (P2 + P3) - geometry.radius * geometry.in_dir;
+  std::vector<Point_2> base_arc = build_arc(base_center);
+  std::vector<Point_2> arc      = base_arc;
+  const double base_overrun     = maxOverrunOf(base_arc);
+  if (base_overrun > kTurnOverrunTolerance) {
+    double best_overrun           = base_overrun;
+    std::vector<Point_2> best_arc = base_arc;
+    bool found_safe               = false;
+    for (int step = 1; step <= kTurnSearchSteps; ++step) {
+      const double shift             = -geometry.radius * static_cast<double>(step) / static_cast<double>(kTurnSearchSteps);
+      std::vector<Point_2> candidate = build_arc(base_center + shift * geometry.in_dir);
+      const double overrun           = maxOverrunOf(candidate);
+      if (overrun < best_overrun) {
+        best_overrun = overrun;
+        best_arc     = candidate;
+      }
+      if (overrun <= kTurnOverrunTolerance) {
+        arc        = std::move(candidate);
+        found_safe = true;
         break;
       }
     }
-  }
-
-  const double reach   = (base_center + used_push * geometry.in_dir).dot(geometry.in_dir) + geometry.radius;
-  const double far_end = std::max(P2.dot(geometry.in_dir), P3.dot(geometry.in_dir));
-  const double pocket  = std::max(0.0, far_end - reach);
-  if (pocket > output_.turn_max_pocket) {
-    updateTurnPocket(pocket, field_margin_ + maxOverrunOf(build_arc(base_center + push * geometry.in_dir)));
+    if (!found_safe) {
+      arc = std::move(best_arc);   // 一个半径内没有安全位置时, 取越界最小的候选。
+    }
   }
   return arc;
 }
 
-std::vector<Point_2> PlanBowShapedPath::legacyTurn(const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4) {
+std::vector<Point_2> PlanBowShapedPath::buildTurn(const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4) {
   const auto geometry = makeTurnGeometry(P1, P2, P3, P4);
   if (!geometry) {
     return {P2, P3};
   }
   return buildHalfCircleTurn(*geometry);
+}
+
+// ============================================================
+// inner_path 两端补到区域顶点 (贴边行走的那一小段)
+// ============================================================
+// 垄端点由"扫描线 ∩ 区域"裁得, 本来就落在区域边界边上; 于是:
+//   * 起点 P1 在边 AB 上: 看 ∠(A, P1, P2) —— > 90° 的那个顶点在车头"背后"(该边相对垄向往回斜),
+//     把它放到 P1 前面: 车先从顶点沿这条边走到 P1 再拐进垄, 端头那块三角带才走到, 且那处拐角
+//     (180° - ∠) < 90°;
+//   * 终点 Pn 在边 CD 上: 同理看 ∠(P_{n-1}, Pn, C) —— > 90° 的顶点在车头"前方", 接在 Pn 后面
+//     继续走到它, 正好收边。
+// 两个条件都不满足 (矩形地块: 边界边 ⊥ 垄向, 夹角正好 = 90°; 或端点没贴在边界边上) 就原样返回 ——
+// 那些情形与旧版逐位相同。
+std::vector<Point_2> PlanBowShapedPath::extendEndsToRegionCorners(
+  const std::vector<Point_2>& path,
+  const Segment_2& near_side_edge,
+  const Segment_2& far_side_edge,
+  const std::vector<uint8_t>* in_types,
+  std::vector<uint8_t>* out_types) {
+  // 逐点类型: 与返回的路径保持同步 (发布时写入 Path.waypoint_types)。先按输入的路径初始化,
+  // 后面的早退分支 (原样返回) 也就自动是对的; 长度对不上 (不是同一条路径) 时按 WORK 起, 免得把
+  // 错位的标签传下去。
+  if (out_types != nullptr) {
+    if (in_types != nullptr && in_types->size() == path.size())
+      *out_types = *in_types;
+    else
+      out_types->assign(path.size(), kSegWork);
+  }
+  if (path.size() < 2)
+    return path;
+  if ((near_side_edge.second - near_side_edge.first).norm() < kMinVertexSpacing || (far_side_edge.second - far_side_edge.first).norm() < kMinVertexSpacing)
+    return path;
+
+  std::vector<Point_2> out = path;
+  tryExtendPathEnd({"首端 (AB)", near_side_edge, 0, path[0] - path[1], true}, path, out, out_types);
+  tryExtendPathEnd({"末端 (CD)", far_side_edge, path.size() - 1, path.back() - path[path.size() - 2], false}, path, out, out_types);
+  return out;
+}
+
+bool PlanBowShapedPath::tryExtendPathEnd(const EndExtensionSpec& spec, const std::vector<Point_2>& path, std::vector<Point_2>& out, std::vector<uint8_t>* out_types) const {
+  if (spec.end_index >= path.size()) {
+    return false;
+  }
+  if (!(spec.search_dir.norm() > kMinVertexSpacing)) {
+    return false;
+  }
+  const Point_2& end = path[spec.end_index];
+  if (!pointOnSegment(end, spec.edge)) {
+    return false;
+  }
+
+  Point_2 corner;
+  if (!pickEdgeCorner(end, spec.search_dir, spec.edge, corner)) {
+    return false;
+  }
+
+  const size_t others = countOtherPointsOnEdge(path, spec.edge, end);
+  if (others > 0) {
+    SPDLOG_INFO("{}: 那条边上还有 {} 个路径点 (不是端头边), 不补 —— 前提是只有 path 的起点/终点在 AB/CD 上", spec.label, others);
+    return false;
+  }
+
+  const Segment_2 extension = spec.at_front ? Segment_2{corner, end} : Segment_2{end, corner};
+  if (segmentCrossesPath(extension, path)) {
+    SPDLOG_INFO("{}顶点 ({:.3f}, {:.3f}) 在 {:.2f} m 外且那段会横穿已铺路径: 不补 (只补不穿)", spec.label, corner.x(), corner.y(), (corner - end).norm());
+    return false;
+  }
+
+  SPDLOG_INFO("{}沿区域边界边补到顶点: 垄端 ({:.3f}, {:.3f}) -> 顶点 ({:.3f}, {:.3f}), 补 {:.3f} m", spec.label, end.x(), end.y(), corner.x(), corner.y(), (corner - end).norm());
+  if (spec.at_front) {
+    out.insert(out.begin(), corner);
+    if (out_types != nullptr) {
+      out_types->insert(out_types->begin(), kSegWork);
+    }
+  } else {
+    out.push_back(corner);
+    if (out_types != nullptr) {
+      out_types->push_back(kSegWork);
+    }
+  }
+  return true;
 }
 
 // ============================================================
@@ -552,7 +549,7 @@ void PlanBowShapedPath::generateWaypoints() {
     return;
   }
 
-  // 7. 内区弓字形: 掉头固定用半圆/直线几何 (legacyTurn) —— 这里**不插值**, 统一在拼接后插值一次。
+  // 7. 内区弓字形: 掉头固定用半圆/直线几何 (buildTurn) —— 这里**不插值**, 统一在拼接后插值一次。
   output_.key_waypoints = flattenRidges(ridges);
   for (size_t i = 0; i < output_.key_waypoints.size(); ++i) {
     SPDLOG_INFO("关键点[{}]: x = {:.4f}, y = {:.4f}", i, output_.key_waypoints[i].x(), output_.key_waypoints[i].y());
@@ -616,31 +613,17 @@ void PlanBowShapedPath::generateWaypoints() {
     }
   }
 
-  // 按掉头出界量告警 (阈值 5 cm)
-  if (output_.turn_max_overrun > 0.05) {
+  // 按掉头出界量告警
+  if (output_.turn_max_overrun > kTurnOverrunTolerance) {
     SPDLOG_WARN("掉头最多有 {:.2f} m 伸出地块边界 (该处的垄端外侧没有留出余量)。", output_.turn_max_overrun);
-  }
-
-  //  斜地头处掉头够不到"靠外那个垄端"留下的盲带 (垄端沿垄向错开越多越宽):
-  //  半圆掉头的顶点已经推到了"还不伸出地块边界"的最外位置, 剩下的只能靠加大 field_margin_
-  //  (把内缩区域收小, 让半圆有地方伸出去) 或减小垄宽 (半圆半径跟着变小) 来消。
-  if (output_.turn_max_pocket > 0.05) {
-    SPDLOG_WARN(
-      "斜地头处每个掉头最多有 {:.2f} m 宽的带作业不到 (半圆掉头半径 {:.2f} m, 够不到沿垄向靠外的那个垄端)。"
-      "想盖住: 把 field_margin 加大到 >= {:.2f} m (当前 {:.2f} m)。",
-      output_.turn_max_pocket,
-      0.5 * ridge_width_,
-      output_.turn_pocket_margin_hint,
-      field_margin_);
   }
 
   // 汇总输出本次规划结果
   SPDLOG_INFO(
-    "扫描方向 {:.1f}°: {} 条垄; 掉头 {} 次 (半圆, 半径 {:.3f} m = 垄距/2), 掉头最大出界 {:.2f} m",
+    "扫描方向 {:.1f}°: {} 条垄; 掉头 {} 次 (半圆), 掉头最大出界 {:.2f} m",
     output_.sweep_dir_deg,
     ridges.size(),
     ridges.size() > 0 ? ridges.size() - 1 : 0,
-    0.5 * ridge_width_,
     output_.turn_max_overrun);
 }
 
@@ -648,9 +631,8 @@ void PlanBowShapedPath::generateWaypoints() {
 // 公开接口
 // ============================================================
 // 规划入口。状态在对象里 (见 bow.hpp 的私有成员), 所以这是**非 const** 方法: 一个实例同一时刻只
-// 用于一次规划 (本节点按单线程执行器跑: 没有工作线程也没有锁 —— 见 global_path_planner.cpp 里
-// updatePathFromInputs / planGeometry 的并发说明); 不同实例之间没有共享
-// 状态, 所以"每线程一个实例"可以并行 (见 test/test_bow_parallel.cpp)。
+// 用于一次规划 (本节点按单线程执行器跑: 没有工作线程也没有锁); 不同实例之间没有共享状态,
+// 所以"每线程一个实例"可以并行 (见 test/test_bow_parallel.cpp)。
 // 结果整包返回, 对象上不导出 getter。
 BowOutput PlanBowShapedPath::plan(const BowInput& in) {
   // 入参落到成员上 (类的状态); 几何步骤只读这些成员, **绝不回写调用方传进来的 in**。

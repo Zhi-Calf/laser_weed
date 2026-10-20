@@ -50,17 +50,22 @@ public:
     return planner.buildHalfCircleTurn(*geometry);
   }
 
-  static std::vector<Point_2> LegacyTurn(PlanBowShapedPath& planner,
-                                         const Point_2& P1, const Point_2& P2,
-                                         const Point_2& P3,
-                                         const Point_2& P4) {
-    return planner.legacyTurn(P1, P2, P3, P4);
+  static std::vector<Point_2> BuildTurn(PlanBowShapedPath& planner,
+                                        const Point_2& P1, const Point_2& P2,
+                                        const Point_2& P3,
+                                        const Point_2& P4) {
+    return planner.buildTurn(P1, P2, P3, P4);
   }
 
   static std::vector<Point_2> SmoothTurns(PlanBowShapedPath& planner,
                                           const std::vector<Point_2>& keys,
                                           std::vector<uint8_t>* types) {
     return planner.smoothTurns(keys, types);
+  }
+
+  static double MaxOverrun(PlanBowShapedPath& planner,
+                           const std::vector<Point_2>& pts) {
+    return planner.maxOverrunOf(pts);
   }
 
   static double TurnCross(const Point_2& P1, const Point_2& P2,
@@ -451,39 +456,27 @@ TEST(BowPlannerCoverage, NoFarFallbackWhenRowsAlreadyReachFarEdge) {
   }
 }
 
-// 斜地头的掉头覆盖: 两个垄端沿垄向错开 |d| 时, 旧几何把半圆的顶点压在 B-C **中点**上, 于是
-// "靠外那个垄端"谁也盖不到 —— 它到作业段的距离正好是 |d|/2, 每个斜地头掉头处丢一条 |d|/2 深
-// 的带 (实测 60x20 梯形 t=40 / 垄宽 3 m / 余量 1.5 m: 作业区未覆盖 2.52%; 平行四边形 (斜 40 m)
-// 3.70%)。现在顶点压到"靠外的那个垄端"上, 只在"再往外推就伸出地块边界"时才回退, 回退剩下的
-// 残量由 getTurnMaxPocket() 报出 ([TURN_POCKET], 并给出需要的 field_margin)。
-TEST(BowPlannerCoverage, SkewedHeadlandTurnCoversBothRowEnds) {
+// 斜地头: 半圆顶点停在 B-C 中点, 不向垄端外推; 掉头本身不许越界, 作业区覆盖率保持下限。
+TEST(BowPlannerCoverage, SkewedHeadlandTurnStaysInsideAndKeepsCoverage) {
   struct Case {
     std::string name;
     Polygon_2 field;
-    double max_pocket;     // 期望的最大盲带 (m)
-    bool fully_covered;    // true = 错开量没超过余量, 应当一条都不剩
     double min_coverage;   // 期望的作业区覆盖率下限 (含掉头段)
   };
   const std::vector<Case> cases{
     // 60x20 梯形, 右端斜; 垄宽 3 / 余量 1.5 (= 垄宽/2, 现场推荐配置)
-    {"trap top 20", {Point_2(0.0, 0.0), Point_2(60.0, 0.0), Point_2(40.0, 20.0), Point_2(0.0, 20.0)}, 0.05, true, 0.994},
-    {"trap top 40", {Point_2(0.0, 0.0), Point_2(60.0, 0.0), Point_2(20.0, 20.0), Point_2(0.0, 20.0)}, 1.55, false, 0.980},
+    {"trap top 20", {Point_2(0.0, 0.0), Point_2(60.0, 0.0), Point_2(40.0, 20.0), Point_2(0.0, 20.0)}, 0.991},
+    {"trap top 40", {Point_2(0.0, 0.0), Point_2(60.0, 0.0), Point_2(20.0, 20.0), Point_2(0.0, 20.0)}, 0.974},
     // 平行四边形 (斜 40 m)
-    {"para skew 40", {Point_2(0.0, 0.0), Point_2(60.0, 0.0), Point_2(100.0, 20.0), Point_2(40.0, 20.0)}, 1.55, false, 0.975},
+    {"para skew 40", {Point_2(0.0, 0.0), Point_2(60.0, 0.0), Point_2(100.0, 20.0), Point_2(40.0, 20.0)}, 0.962},
   };
 
   for (const auto& c : cases) {
     BowFacade planner;
     ASSERT_TRUE(planner.init(c.field, 3.0, 0.1, 1.5)) << c.name;
 
-    // 掉头不许为覆盖伸出地块边界 (5 cm 以内, 与 [TURN_BOUNDARY] 的阈值同一套)
+    // 掉头不许伸出地块边界 (5 cm 以内, 与 [TURN_BOUNDARY] 的阈值同一套)
     EXPECT_LE(planner.getTurnMaxOverrun(), 0.05 + 1e-9) << c.name << ": 掉头出了地块边界";
-    // 盲带: 错开量装得下时应当一条不剩; 装不下时要有界, 并且必须报出来 (不能静默漏掉)
-    EXPECT_LE(planner.getTurnMaxPocket(), c.max_pocket) << c.name << ": 掉头处盲带过大";
-    if (c.fully_covered)
-      EXPECT_LE(planner.getTurnMaxPocket(), 0.05) << c.name << ": 这个错开量本该能完全盖住";
-    else
-      EXPECT_GT(planner.getTurnMaxPocket(), 0.05) << c.name << ": 盖不住的残量必须报出来 ([TURN_POCKET])";
 
     // 作业区 (内缩区域) 被整条路径覆盖的比例 —— 掉头段也算覆盖
     const double inner = CoveredAreaRatio(planner.getInnerPolygon(), planner.getWaypoints(), 1.5, 0.1);
@@ -601,11 +594,59 @@ TEST(BowPlannerTurn, NonParallelRowsUseHalfCircle) {
   const Point_2 P4(0.0, 3.0);
 
   const auto half_circle = BowPlannerTestAccess::BuildHalfCircleTurn(planner, P1, P2, P3, P4);
-  const auto legacy = BowPlannerTestAccess::LegacyTurn(planner, P1, P2, P3, P4);
-  ASSERT_EQ(legacy.size(), half_circle.size());
-  for (size_t i = 0; i < legacy.size(); ++i) {
-    EXPECT_NEAR((legacy[i] - half_circle[i]).norm(), 0.0, 1e-12) << "第 " << i << " 个点";
+  const auto built = BowPlannerTestAccess::BuildTurn(planner, P1, P2, P3, P4);
+  ASSERT_EQ(built.size(), half_circle.size());
+  for (size_t i = 0; i < built.size(); ++i) {
+    EXPECT_NEAR((built[i] - half_circle[i]).norm(), 0.0, 1e-12) << "第 " << i << " 个点";
   }
+}
+
+// base_center 的半圆越界时, 应沿垄向地块内部搜索, 而不是把圆弧直接留在界外。
+TEST(BowPlannerTurn, BaseArcOutsideFieldShiftsInward) {
+  PlanBowShapedPath planner;
+  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(60.0, 0.0),
+                        Point_2(40.0, 20.0), Point_2(0.0, 20.0)};
+  BowPlannerTestAccess::Configure(planner, 3.0, 0.2, 0.0, field);
+
+  const Point_2 P1(54.0, 1.5);
+  const Point_2 P2(60.0, 1.5);
+  const Point_2 P3(55.5, 4.5);
+  const Point_2 P4(48.0, 4.5);
+
+  // 半径 = 1.5 m; base 半圆最外点 (57.75, 3) 超出斜边 x + y = 60 约 0.75 m。
+  const Point_2 base_bulge(0.5 * (P2.x() + P3.x()), 0.5 * (P2.y() + P3.y()));
+  EXPECT_GT(BowPlannerTestAccess::MaxOverrun(planner, {base_bulge}), 0.05);
+
+  const auto arc = BowPlannerTestAccess::BuildHalfCircleTurn(planner, P1, P2, P3, P4);
+  ASSERT_FALSE(arc.empty());
+  EXPECT_LE(BowPlannerTestAccess::MaxOverrun(planner, arc), 0.05);
+
+  double max_x = -std::numeric_limits<double>::infinity();
+  for (const auto& p : arc)
+    max_x = std::max(max_x, p.x());
+  EXPECT_LT(max_x, base_bulge.x() - 0.5) << "圆弧没有沿垄向地块内部移动";
+}
+
+// base 半圆本身安全时保持在 base_center, 不再为覆盖垄端向外推。
+TEST(BowPlannerTurn, SafeBaseArcStaysAtBaseCenter) {
+  PlanBowShapedPath planner;
+  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0),
+                        Point_2(12.0, 4.0), Point_2(0.0, 4.0)};
+  BowPlannerTestAccess::Configure(planner, 2.0, 0.2, 0.0, field);
+
+  const Point_2 P1(4.0, 0.0);
+  const Point_2 P2(10.0, 0.0);
+  const Point_2 P3(8.0, 2.0);
+  const Point_2 P4(4.0, 2.0);
+
+  // 半径 = 1 m; base_center = (8, 1), 半圆最外点 x = 9。
+  // 若向垄端外推 1 m, 最外点会到 x = 10。
+  const auto arc = BowPlannerTestAccess::BuildHalfCircleTurn(planner, P1, P2, P3, P4);
+  ASSERT_FALSE(arc.empty());
+  double max_x = -std::numeric_limits<double>::infinity();
+  for (const auto& p : arc)
+    max_x = std::max(max_x, p.x());
+  EXPECT_NEAR(max_x, 9.0, 1e-9) << "base 安全时圆弧被外推了";
 }
 
 // 真实生产路径中的非平行垄来自末行兜底; 该处也统一使用半圆。
@@ -631,10 +672,10 @@ TEST(BowPlannerTurn, FallbackRowTransitionUsesHalfCircle) {
     ++nonparallel;
 
     const auto half   = BowPlannerTestAccess::BuildHalfCircleTurn(planner, P1, P2, P3, P4);
-    const auto legacy = BowPlannerTestAccess::LegacyTurn(planner, P1, P2, P3, P4);
-    ASSERT_EQ(legacy.size(), half.size());
-    for (size_t k = 0; k < legacy.size(); ++k) {
-      EXPECT_NEAR((legacy[k] - half[k]).norm(), 0.0, 1e-12);
+    const auto built = BowPlannerTestAccess::BuildTurn(planner, P1, P2, P3, P4);
+    ASSERT_EQ(built.size(), half.size());
+    for (size_t k = 0; k < built.size(); ++k) {
+      EXPECT_NEAR((built[k] - half[k]).norm(), 0.0, 1e-12);
     }
   }
   EXPECT_GT(nonparallel, 0u) << "该三角形样例应产生末行兜底非平行垄";
@@ -654,10 +695,10 @@ TEST(BowPlannerTurn, ParallelRowsUseHalfCircle) {
   const Point_2 P4(0.0, 2.0);
 
   const auto half_circle = BowPlannerTestAccess::BuildHalfCircleTurn(planner, P1, P2, P3, P4);
-  const auto legacy      = BowPlannerTestAccess::LegacyTurn(planner, P1, P2, P3, P4);
-  ASSERT_EQ(legacy.size(), half_circle.size());
-  for (size_t i = 0; i < legacy.size(); ++i) {
-    EXPECT_NEAR((legacy[i] - half_circle[i]).norm(), 0.0, 1e-12) << "第 " << i << " 个点";
+  const auto built       = BowPlannerTestAccess::BuildTurn(planner, P1, P2, P3, P4);
+  ASSERT_EQ(built.size(), half_circle.size());
+  for (size_t i = 0; i < built.size(); ++i) {
+    EXPECT_NEAR((built[i] - half_circle[i]).norm(), 0.0, 1e-12) << "第 " << i << " 个点";
   }
 }
 
@@ -818,7 +859,7 @@ TEST(BowPlannerInput, ReportsInputFailureStage) {
   EXPECT_EQ(degenerated.status, PlanStatus::kHullTooFew) << "实际状态: " << planStatusName(degenerated.status);
   EXPECT_TRUE(isBadInput(degenerated.status));
 
-  // 状态标签 (日志/心跳 detail 用) + 归类判据: 参数类与内部兜底都不算"输入数据异常"
+  // 状态标签 (日志/诊断用) + 归类判据: 参数类与内部兜底都不算"输入数据异常"
   EXPECT_STREQ(planStatusName(PlanStatus::kInputTooFew), "input_too_few");
   EXPECT_STREQ(planStatusName(PlanStatus::kDedupTooFew), "dedup_too_few");
   EXPECT_STREQ(planStatusName(PlanStatus::kNonConvex), "non_convex");
@@ -839,7 +880,7 @@ TEST(BowPlannerInput, ReportsInputFailureStage) {
   EXPECT_FALSE(isBadParams(PlanStatus::kInternal));
 }
 
-// 规划状态 -> 心跳故障码: 每个失败状态都有唯一专码 (APP/云端据此区分"为什么没有路径"),
+// 规划状态 -> 故障码: 每个失败状态都有唯一专码 (日志/诊断据此区分"为什么没有路径"),
 // kOk 映射到 FAULT_NONE; 通用码 10401 只留给"还没走到规划"的兜底, 不与细分码混用。
 TEST(PlanStatusFaultCode, MapsEveryFailureStatusToItsOwnCode) {
   // 故障码表在包命名空间里 (bow.hpp 的 PlanStatus 在全局命名空间)
@@ -967,8 +1008,8 @@ TEST(BowPlannerCoverage, TurnArcsStayNearField) {
   }
 }
 
-// 掉头不许伸出地块边界 —— 梯形 / 斜地头 / 扇形 (三角形) 地块上, 只按"相切"求解的圆弧可能
-// 从长边穿出去。掉头固定为半圆/直线几何 (垂足对齐), 这里把这条钉死:
+// 掉头不许伸出地块边界 —— 梯形 / 斜地头 / 扇形 (三角形) 地块上, 半圆也可能从长边穿出去。
+// 掉头固定为半圆/直线几何 (base_center 越界时沿垄向内缩), 这里把这条钉死:
 //   * 地头 >= 垄宽/2 (= 掉头半径 R) 且地块不是极端斜角 -> 干净不越界 (<= 5 cm);
 //   * 地头 < R, 或行端错开量远大于 R 的极端斜地块 -> 几何上转不进去 (R 的圆弧放不下),
 //     此时要求"越界量不超过 R", 并由 [TURN_BOUNDARY] 告警让操作手加大 margin。
@@ -1003,8 +1044,8 @@ TEST(F2cTurn, TurnsStayInsideTheFieldOnSkewedFields) {
     const auto& wp   = planner.getWaypoints();
     ASSERT_GE(keys.size(), 4u) << c.name;
 
-    // 路径 = 垄 + 与两条垄相切的半圆 (半圆的端点就是切点, 见 legacyTurn): 除首末点外整条路径
-    // 都不该有折角 (衔接处相切)。退化地块上 legacyTurn 会退回直线连接, 那种情形会在这里报出来。
+    // 路径 = 垄 + 半圆掉头 (平行垄时半圆端点位于垄端内侧 R; 非平行垄可能另有连接段):
+    // 除首末点及端头补角外整条路径都不该有明显折角。退化地块上会退回直线连接, 那种情形会在这里报出来。
     // 两个例外 (都是设计如此): 起点/终点被"步骤 8"沿区域边界边补到顶点 —— 那里是"沿边走到垄端
     // 再拐进垄"的接缝 (夹角 > 90° 才补 => 拐角 < 90°), 就是第 2 个点与倒数第 2 个点。
     // 见 test_bow_planner 的 PathEndsFollowRegionSpec。
@@ -1014,7 +1055,7 @@ TEST(F2cTurn, TurnsStayInsideTheFieldOnSkewedFields) {
       EXPECT_LT(NodeTurnDeg(wp[i - 1], wp[i], wp[i + 1]), 10.0) << c.name << " 路径有折角 @" << wp[i].transpose();
     }
 
-    // 全程不许伸出地块边界超过 c.tol (掉头 = 与两条垄相切的半圆, 外伸 ≈ 掉头半径)
+    // 全程不许伸出地块边界超过 c.tol (掉头 = 半圆, 外伸 ≈ 掉头半径)
     const auto field_model = ToBoostPolygon(c.field);
     const double out_tol   = std::max(c.tol, radius) + 0.05;
     for (const auto& p : wp) {
@@ -1024,16 +1065,11 @@ TEST(F2cTurn, TurnsStayInsideTheFieldOnSkewedFields) {
   }
 }
 
-// 两条垄**不平行** (末行兜底行, 或行端被裁得很短的碎行) 时的掉头几何, 钉住"落入哪条分支":
-//   * 相切圆分支满足准入 -> 用那条弧;
-//   * 不满足 (切点离垄端太远 / 转角不合法 / 会伸出地块边界) -> **退回半圆几何** (顶点压在 B-C 中点,
-//     再按"不伸出地块边界"往外推) —— 也就是继续走平行分支那一条代码路径; **不是**直线连接。
-//
-// 反例就是这里钉的东西: 旧实现 (以及当前注释一度写成的那样) 是 `return {P2, P3};` 直线连接 ——
-// 那样这段路径会贴着弦、行端出现 ~20° 折角。
+// 两条垄**不平行** (末行兜底行, 或行端被裁得很短的碎行) 时也统一用半圆几何:
+// 顶点压在 B-C 中点, 越界时沿垄向内缩; **不是**直线连接。
 //
 // 用例: 三角 60x20 / 垄宽 3 / 余量 2 —— 第一条垄是 0.015 m 的碎行 (方向由 1 mm 量化决定, 与下一条垄
-// 差 ~2° -> 命中"不平行"门限; 且切点/转角不入准入), 于是第一次掉头一定走"退回半圆"这一支。
+// 差 ~2° -> 命中"不平行"门限), 于是第一次掉头也走半圆。
 TEST(F2cTurn, NonParallelRidgesFallBackToAnArcNotAStraightLine) {
   const Polygon_2 tri{Point_2(0.0, 0.0), Point_2(60.0, 0.0), Point_2(0.0, 20.0)};
   BowFacade planner;
@@ -1161,14 +1197,14 @@ TEST(F2cCoverage, TrackedRobotRecommendedConfigHasNoCrossings) {
     ASSERT_TRUE(planner.init(c.field, c.ridge, 0.1, margin)) << c.name;
     const auto& wp = planner.getWaypoints();
 
-    // 掉头 = 与两条垄相切的半圆 (半径 = 垄距/2) + 沿垄向的短直线; 窄小地块上垄端沿垄向错开
+    // 掉头 = 半圆 (平行垄时半径 = 垄距/2) + 垄内连接段; 窄小地块上垄端沿垄向错开
     // 会让它在垄端外伸一点 (量级 = 掉头半径 + 错开量的一半), 由 [TURN_BOUNDARY] 报出。
     // 这里挡的是"整条路径跑到田外几十厘米"那类退化。
     EXPECT_LE(planner.getTurnMaxOverrun(), 0.5 * c.ridge + 0.05) << c.name << ": 掉头出界不该超过掉头半径";
     EXPECT_EQ(CountSelfCrossings(wp), 0) << c.name << ": 路径与已经走过的路径相交 (掉头弧横穿垄线)";
 
     const double inner = CoveredAreaRatio(planner.getInnerPolygon(), wp, 0.5 * c.ridge, 0.1);
-    // 下限 99.4%: 掉头半圆的端点(切点)在垄端以内退 R (= 垄宽/2), 即每条垄端让出约 R 不作业,
+    // 下限 99.4%: 平行垄的掉头半圆端点在垄端以内退 R (= 垄宽/2), 即每条垄端让出约 R 不作业,
     // 内区覆盖率因此从 99.5%+ 略降; 这里挡的是"整片漏盖"的退化。
     EXPECT_GE(inner, 0.994) << c.name << ": 作业区覆盖率只有 " << 100.0 * inner << "%; 诊断见 [COVERAGE]/[HEADLAND] 日志";
   }

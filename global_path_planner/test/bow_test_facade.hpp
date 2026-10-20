@@ -3,7 +3,7 @@
 // 测试专用适配器: 让既有单测的断言体在 API 改为"结果整包返回"之后**一行都不用改**。
 //
 // 背景: `PlanBowShapedPath` 现在的接口是 plan(BowInput) -> BowOutput, 结果不再留在对象上供 getter
-// 取用, 于是 `init(...) / lastResult() / getWaypoints() ...` 这套旧 API 就没有了。但 37 个用例的
+// 取用, 于是 `init(...) / lastResult() / getWaypoints() ...` 这套旧 API 就没有了。但既有用例的
 // 断言体 (垄数/覆盖率/自交/契约) 是**几何契约**, 与"结果从哪取"无关 —— 全部重写成 `out.waypoints`
 // 只会制造上千行机械 diff 与误改风险。所以这里放一个**只给测试用**的门面, 语义就是旧 API:
 //   组装 BowInput -> 调引擎 -> 把 BowOutput 缓存在自己身上 -> getter 转发到缓存。
@@ -52,9 +52,6 @@ public:
   }
   double getTurnMaxOverrun() const {
     return out_.turn_max_overrun;
-  }
-  double getTurnMaxPocket() const {
-    return out_.turn_max_pocket;
   }
   const std::vector<Point_2>& getWaypoints() const {
     return out_.waypoints;

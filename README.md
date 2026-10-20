@@ -241,7 +241,7 @@ colcon test-result --verbose
 
 `weeder_base` 覆盖协议编码、位域、有符号数、范围检查和 BMS 第二版修布局；
 `lqr_control` 覆盖四轮转向运动学、前馈、符号、闭环收敛和协议限幅；
-`global_path_planner` 覆盖弓字形规划、覆盖率、凸性校验、YAML 配置契约和严格线段相交；
+`global_path_planner` 覆盖弓字形规划、覆盖率、凸性校验、YAML 配置契约、严格线段相交和节点 `/path` 发布契约；
 `gnss_localization` 覆盖 GIAVP 解析、参数写回和 YAML 参数一致性。
 
 ## 已知限制
