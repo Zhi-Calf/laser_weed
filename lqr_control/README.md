@@ -222,7 +222,7 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 - `serial_port`：履带车是 `/dev/ttyUSB0`(driver)、`/dev/ttyUSB1`(差分)，按除草机实际接线改
 - `calib_offset_x/y/heading`：**杆臂是履带车的物理安装参数（出厂 x=0.5m），除草机天线位置不同，必须重新标定**——填错会让 `/gnss_driver/odom` 整体偏移，下游全部跟错
 - `log_dir`：`/opt/agri/logs` 按除草机部署路径改
-- NTRIP/千寻账号：`ntrip_user/password` 或 `sdk_key/secret/dev_id` **绑定设备，履带车的不能共用**，需为除草机重新申请
+- NTRIP/千寻账号：`ntrip_user/password` 或 `sdk_key/secret/dev_id` **绑定设备，履带车的不能共用**，需为除草机重新申请；千寻 SDK 1.29 还需按服务端要求配置 `sdk_openapi_*` / `sdk_oss_*` 和 NOSR 坐标框架/历元
 - 差分方案二选一：ntrip_client（走 NTRIP caster，需账号）或 sdk_client（走千寻 SDK，需为设备申请 key）。用户暂未定，两个都保留，实车确认硬件后再决定跑哪个
 
 **规划器必改配置**（`global_path_planner.yaml`）：

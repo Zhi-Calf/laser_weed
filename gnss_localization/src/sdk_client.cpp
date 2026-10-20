@@ -133,7 +133,7 @@ void sdkStartCallback(qxwz_int32_t status_code, qxwz_uint32_t cap_id) {
   if (!g_sdk_instance) {
     return;
   }
-  if (status_code == QXWZ_SDK_STAT_CAP_START_SUCC) {
+  if (status_code == QXWZ_SDK_STAT_CAP_START_SUCC || status_code == QXWZ_SDK_STAT_CAP_RESTART_SUCC) {
     SPDLOG_INFO("千寻 SDK start 成功: cap_id={}", cap_id);
   } else {
     // 启动能力异步失败会导致永远收不到 RTCM, 属致命错误。
@@ -141,6 +141,26 @@ void sdkStartCallback(qxwz_int32_t status_code, qxwz_uint32_t cap_id) {
     SPDLOG_ERROR("千寻 SDK start 失败: code={}, cap_id={}", status_code, cap_id);
     g_sdk_instance->sdk_nosr_start_failed_.store(true);
   }
+}
+
+// SDK 能力状态回调: 1.29 SDK 新增。能力级错误不一定走 status_cb,
+// 这里把能力服务端异常和长时间无差分数据纳入现有会话健康判定。
+void sdkCapStatusCallback(qxwz_uint32_t cap_id, qxwz_int32_t status_code) {
+  if (!g_sdk_instance) {
+    return;
+  }
+  if (status_code == QXWZ_SDK_ERR_CAP_DIFF_DATA_TIME_OUT || status_code == QXWZ_SDK_ERR_CAP_DATA_PENDING ||
+      status_code == QXWZ_SDK_ERR_RTCM_DATA_EXCEPTION) {
+    const int n = g_sdk_instance->transient_error_count_.fetch_add(1) + 1;
+    SPDLOG_WARN("千寻 SDK 能力 {} 一分钟无差分数据 (code={}), 累计 {}", cap_id, status_code, n);
+    return;
+  }
+  if (status_code < 0) {
+    SPDLOG_ERROR("千寻 SDK 能力 {} 异常: code={}", cap_id, status_code);
+    g_sdk_instance->sdk_error_code_.store(status_code);
+    return;
+  }
+  SPDLOG_DEBUG("千寻 SDK 能力 {} 状态: code={}", cap_id, status_code);
 }
 
 // 判断 status 回调码是否为"进行中/非错误"的瞬时提示 (不应判为故障)。
@@ -157,6 +177,7 @@ bool IsTransientStatus(qxwz_int32_t code) {
     case QXWZ_SDK_ERR_ACTIVATING:          // -19  激活进行中
     case QXWZ_SDK_ERR_RESUMING_DSK:        // -20  恢复 DSK 中
     case QXWZ_SDK_ERR_IN_PROGRESS:         // -21  通用"进行中"
+    case QXWZ_SDK_ERR_API_CALLED_TOO_FAST: // -30  调用过快, 稍后重试
     case QXWZ_SDK_ERR_DEC_INCOMP_DATA:     // -611 数据不完整 (等待后续数据, 非致命)
       return true;
     default:
@@ -175,6 +196,8 @@ bool IsRetryableStatus(qxwz_int32_t code) {
     case QXWZ_SDK_ERR_DEC_CRC_CHECK_FAIL:    // -604 单帧 CRC 失败
     case QXWZ_SDK_ERR_DEC_XOR_CHECK_FAIL:    // -606 单帧 XOR 校验失败
     case QXWZ_SDK_ERR_DEC_UNKNOWN:           // -700 解码未知错误
+    case QXWZ_SDK_ERR_CAP_DATA_PENDING:      // -220 差分数据准备中
+    case QXWZ_SDK_ERR_RTCM_DATA_EXCEPTION:   // -511 NOSR 数据异常, SDK 可重试
       return true;
     default:
       return false;
@@ -204,9 +227,9 @@ void sdkStatusCallback(qxwz_int32_t status_code) {
   g_sdk_instance->sdk_error_code_.store(status_code);
 }
 
-// SDK 坐标系设置回调
-void sdkSetCoordSysCallback(qxwz_int32_t status_code) {
-  SPDLOG_INFO("千寻 SDK set_coord_sys 回调: code={}", status_code);
+// SDK NOSR 坐标框架/历元设置回调
+void sdkSetNosrCoordCallback(qxwz_int32_t status_code) {
+  SPDLOG_INFO("千寻 SDK set_nosr_coord_epoch_config 回调: code={}", status_code);
   if (g_sdk_instance) {
     g_sdk_instance->sdk_coordsys_code_.store(status_code);
     g_sdk_instance->sdk_coordsys_done_.store(true);
@@ -292,6 +315,12 @@ void SdkClient::loadParameters() {
   declare_parameter("sdk_secret", "");
   declare_parameter("dev_id", "");
   declare_parameter("dev_type", "");
+  declare_parameter("sdk_openapi_host", "openapi.qxwz.com");
+  declare_parameter("sdk_openapi_port", 8443);
+  declare_parameter("sdk_oss_host", "oss.qxwz.com");
+  declare_parameter("sdk_oss_port", 8008);
+  declare_parameter("sdk_coord_frame", static_cast<int>(kQxwzCoordFrameWgs84));
+  declare_parameter("sdk_coord_epoch", "2005.0");
   declare_parameter("gga_interval_sec", 1.0);
   declare_parameter("sdk_reconnect_delay_sec", 1.0);
   declare_parameter("first_gga_timeout_sec", 30.0);
@@ -309,6 +338,12 @@ void SdkClient::loadParameters() {
   sdk_secret_                = get_parameter("sdk_secret").as_string();
   dev_id_                    = get_parameter("dev_id").as_string();
   dev_type_                  = get_parameter("dev_type").as_string();
+  sdk_openapi_host_          = get_parameter("sdk_openapi_host").as_string();
+  sdk_openapi_port_          = get_parameter("sdk_openapi_port").as_int();
+  sdk_oss_host_              = get_parameter("sdk_oss_host").as_string();
+  sdk_oss_port_              = get_parameter("sdk_oss_port").as_int();
+  sdk_coord_frame_           = get_parameter("sdk_coord_frame").as_int();
+  sdk_coord_epoch_           = get_parameter("sdk_coord_epoch").as_string();
   gga_interval_sec_          = get_parameter("gga_interval_sec").as_double();
   sdk_reconnect_delay_sec_   = get_parameter("sdk_reconnect_delay_sec").as_double();
   first_gga_timeout_sec_     = get_parameter("first_gga_timeout_sec").as_double();
@@ -320,9 +355,34 @@ void SdkClient::loadParameters() {
   serial_write_fail_count_   = get_parameter("serial_write_fail_count").as_int();
   sdk_transient_error_max_   = get_parameter("sdk_transient_error_max").as_int();
 
+  // 1.29 SDK 关闭了默认域名，init 必须拿到完整的 serv_conf；端口非法时回退到官方默认值。
+  const auto valid_port = [](int port) { return port > 0 && port <= 65535; };
+  if (sdk_openapi_host_.empty()) {
+    SPDLOG_WARN("sdk_openapi_host 为空, 使用默认 openapi.qxwz.com");
+    sdk_openapi_host_ = "openapi.qxwz.com";
+  }
+  if (sdk_oss_host_.empty()) {
+    SPDLOG_WARN("sdk_oss_host 为空, 使用默认 oss.qxwz.com");
+    sdk_oss_host_ = "oss.qxwz.com";
+  }
+  if (sdk_coord_epoch_.empty()) {
+    SPDLOG_WARN("sdk_coord_epoch 为空, 使用默认 2005.0");
+    sdk_coord_epoch_ = "2005.0";
+  }
+  if (!valid_port(sdk_openapi_port_)) {
+    SPDLOG_WARN("sdk_openapi_port={} 非法, 使用默认 8443", sdk_openapi_port_);
+    sdk_openapi_port_ = 8443;
+  }
+  if (!valid_port(sdk_oss_port_)) {
+    SPDLOG_WARN("sdk_oss_port={} 非法, 使用默认 8008", sdk_oss_port_);
+    sdk_oss_port_ = 8008;
+  }
+
   SPDLOG_INFO("========== 千寻 SDK 客户端参数加载 ==========");
   SPDLOG_INFO("串口: {}@{}", serial_port_, serial_baud_);
   SPDLOG_INFO("SDK: key={} dev_id={} dev_type={}", sdk_key_.empty() ? "(未配置)" : sdk_key_, dev_id_, dev_type_);
+  SPDLOG_INFO("SDK 服务器: openapi={}:{}, oss={}:{}", sdk_openapi_host_, sdk_openapi_port_, sdk_oss_host_, sdk_oss_port_);
+  SPDLOG_INFO("NOSR 坐标框架: {}, 历元: {}", sdk_coord_frame_, sdk_coord_epoch_);
   SPDLOG_INFO("GGA 上传周期: {:.1f}s, 重连延迟: {:.1f}s, 首 GGA 超时: {:.1f}s, 首 RTCM 超时: {:.1f}s", gga_interval_sec_, sdk_reconnect_delay_sec_, first_gga_timeout_sec_, first_rtcm_timeout_sec_);
   SPDLOG_INFO("GGA 停摆超时: {:.1f}s, RTCM 停摆超时: {:.1f}s", gga_timeout_sec_, rtcm_timeout_sec_);
   SPDLOG_INFO(
@@ -333,7 +393,8 @@ void SdkClient::loadParameters() {
     sdk_transient_error_max_);
   SPDLOG_INFO("日志级别: {}, 目录: {}, 文件上限: {} MB, 文件数量: {}, 控制台: {}", log_level_, log_dir_, log_file_size_mb_, log_file_count_, log_enable_console_ ? "是" : "否");
   const char* sdk_ver = qxwz_sdk_version();
-  SPDLOG_INFO("千寻 SDK 版本: {}", sdk_ver ? sdk_ver : "(未知)");
+  const char* sdk_build = qxwz_sdk_get_build_info();
+  SPDLOG_INFO("千寻 SDK 版本: {} (build: {})", sdk_ver ? sdk_ver : "(未知)", sdk_build ? sdk_build : "(未知)");
   SPDLOG_INFO("=============================================");
 }
 
@@ -456,10 +517,17 @@ bool SdkClient::initSdk() {
   std::strncpy(sdk_config.dev_type, dev_type_.c_str(), sizeof(sdk_config.dev_type) - 1);
 
   // 配置回调
-  sdk_config.status_cb = sdkStatusCallback;
-  sdk_config.data_cb   = sdkDataCallback;
-  sdk_config.auth_cb   = sdkAuthCallback;
-  sdk_config.start_cb  = sdkStartCallback;
+  sdk_config.status_cb     = sdkStatusCallback;
+  sdk_config.data_cb       = sdkDataCallback;
+  sdk_config.auth_cb       = sdkAuthCallback;
+  sdk_config.start_cb      = sdkStartCallback;
+  sdk_config.cap_status_cb = sdkCapStatusCallback;
+
+  // 1.29 SDK 默认域名关闭，服务器域名/端口必须显式配置。
+  std::strncpy(sdk_config.serv_conf.openapi_host, sdk_openapi_host_.c_str(), sizeof(sdk_config.serv_conf.openapi_host) - 1);
+  sdk_config.serv_conf.openapi_port = static_cast<qxwz_uint32_t>(sdk_openapi_port_);
+  std::strncpy(sdk_config.serv_conf.oss_host, sdk_oss_host_.c_str(), sizeof(sdk_config.serv_conf.oss_host) - 1);
+  sdk_config.serv_conf.oss_port = static_cast<qxwz_uint32_t>(sdk_oss_port_);
 
   // NOSR 数据格式: 标准 RTCM
   qxwz_sdk_nosr_data_format_t data_fmt = QXWZ_SDK_NOSR_STD_FORMAT;
@@ -576,22 +644,30 @@ void SdkClient::workerLoop() {
     connect_failing = false;
     SPDLOG_INFO("千寻 SDK 认证成功");
 
-    // ---- 5. 设置坐标系为 WGS84  ----
+    // ---- 5. 设置 NOSR 坐标框架/历元 ----
     sdk_coordsys_done_.store(false);
     sdk_coordsys_code_.store(0);
-    qxwz_sdk_set_coord_sys(kQxwzCoordSysWgs84, sdkSetCoordSysCallback);
-    const auto coordsys_deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(coordsys_timeout_sec_);
-    while (running_ && !sdk_coordsys_done_.load() && std::chrono::steady_clock::now() < coordsys_deadline) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-    if (!sdk_coordsys_done_.load()) {
-      SPDLOG_WARN("坐标系设置超时, 沿用当前坐标系");
+    qxwz_nosr_coord_epoch_config_t coord_config{};
+    coord_config.coord_frame_value = sdk_coord_frame_;
+    std::strncpy(coord_config.epoch, sdk_coord_epoch_.c_str(), sizeof(coord_config.epoch) - 1);
+    const int coord_ret = qxwz_sdk_set_nosr_coord_epoch_config(&coord_config, sdkSetNosrCoordCallback);
+    const bool coord_async = (coord_ret == QXWZ_SDK_STAT_OK || coord_ret == QXWZ_SDK_ERR_GETTING_COORD_SYS || coord_ret == QXWZ_SDK_ERR_SETTING_COORD_SYS);
+    if (!coord_async) {
+      SPDLOG_WARN("请求设置 NOSR 坐标框架/历元失败: code={}, 沿用当前配置", coord_ret);
     } else {
-      const int32_t coordsys_ret = sdk_coordsys_code_.load();
-      if (coordsys_ret != QXWZ_SDK_STAT_OK) {
-        SPDLOG_WARN("坐标系设置失败: code={}, 沿用当前坐标系", coordsys_ret);
+      const auto coordsys_deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(coordsys_timeout_sec_);
+      while (running_ && !sdk_coordsys_done_.load() && std::chrono::steady_clock::now() < coordsys_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      }
+      if (!sdk_coordsys_done_.load()) {
+        SPDLOG_WARN("NOSR 坐标框架/历元设置超时, 沿用当前配置");
       } else {
-        SPDLOG_INFO("坐标系设置成功 (WGS84)");
+        const int32_t coordsys_ret = sdk_coordsys_code_.load();
+        if (coordsys_ret != QXWZ_SDK_STAT_OK) {
+          SPDLOG_WARN("NOSR 坐标框架/历元设置失败: code={}, 沿用当前配置", coordsys_ret);
+        } else {
+          SPDLOG_INFO("NOSR 坐标框架/历元设置成功 (frame={}, epoch={})", sdk_coord_frame_, sdk_coord_epoch_);
+        }
       }
     }
 

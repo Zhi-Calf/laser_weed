@@ -1,7 +1,16 @@
-/*
- * Copyright (c) 2015-2020 QXSI. All rights reserved.
+/**
+ * Copyright (c) 2015-2022 QXSI. All rights reserved.
+ *
+ * @file qxwz_types.h
+ * @brief header for type definition
+ * @version 1.0.0
+ * @author Kong Yingjun
+ * @date   2022-03-16
+ *
+ * CHANGELOG:
+ * DATE             AUTHOR          REASON
+ * 2022-03-16       Kong Yingjun    Init version;
  */
-
 #ifndef QXWZ_TYPES_H__
 #define QXWZ_TYPES_H__
 
@@ -91,6 +100,12 @@ typedef double qxwz_float64_t;
 typedef void qxwz_void_t;
 #endif
 
+/* time_t */
+#ifndef QXWZ_TIME_T
+#define QXWZ_TIME_T
+typedef qxwz_uint64_t qxwz_time_t;
+#endif
+
 /* NULL */
 #ifndef QXWZ_NULL
 #define QXWZ_NULL    ( void * ) 0
@@ -108,8 +123,13 @@ typedef enum {
 #endif
 
 /* MISRA-C[pm098] */
-#ifndef NULL
-#define NULL    ((void*)0)
+// #ifndef NULL
+// #define NULL    ((void*)0)
+// #endif
+
+/* unused var */
+#ifndef UNUSED_VAR
+#define UNUSED_VAR(x) ((void)(x))
 #endif
 
 #ifdef __cplusplus

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -12,10 +13,9 @@ namespace gnss_localization {
 
 class SerialPort;
 
-// 千寻 SDK 坐标系索引 (qxwz_sdk_set_coord_sys 的 coord_sys_index 参数)。
-// 参考《千寻SDK开发指南》13.2 节: 1:ITRF2008; 2:WGS84; 3:CGCS2000。
-// SDK 头文件未提供对应宏, 这里按官方文档取值命名。
-constexpr uint32_t kQxwzCoordSysWgs84 = 2;
+// 千寻 SDK 1.29 的 NOSR 坐标框架值 (qxwz_nosr_coord_epoch_config_t.coord_frame_value)。
+// 参考开发指南: 1:ITRF2008; 2:WGS84; 3:CGCS2000。
+constexpr int32_t kQxwzCoordFrameWgs84 = 2;
 
 // 千寻 SDK 差分客户端节点 (NOSR/RTCM 差分)。
 //
@@ -27,7 +27,7 @@ constexpr uint32_t kQxwzCoordSysWgs84 = 2;
 //   5. 断线/异常由 SDK 内部处理, 本节点负责串口层重连。
 //
 // 与 ntrip_client 的区别: ntrip_client 手动实现 NTRIP 协议 (socket + HTTP),
-// 本节点则调用千寻 SDK 静态库 (libqxwz-pssdk), 网络/认证/重连由 SDK 托管。
+// 本节点则调用千寻 SDK 1.29.5 静态库 (libqxwz-pssdk), 网络/认证/重连由 SDK 托管。
 // 二者为"二选一"的替代差分方案, 由 bringup 的 diff_mode 参数决定启动哪个。
 class SdkClient : public rclcpp::Node {
 public:
@@ -82,6 +82,12 @@ private:
   std::string sdk_secret_{""};                // SDK secret (DSS)
   std::string dev_id_{""};                    // 设备 ID
   std::string dev_type_{""};                  // 设备类型
+  std::string sdk_openapi_host_{"openapi.qxwz.com"};   // OpenAPI 服务器域名
+  int sdk_openapi_port_{8443};                         // OpenAPI 服务器端口
+  std::string sdk_oss_host_{"oss.qxwz.com"};           // OSS 服务器域名
+  int sdk_oss_port_{8008};                             // OSS 服务器端口
+  int sdk_coord_frame_{kQxwzCoordFrameWgs84};          // NOSR 坐标框架 (2 = WGS84)
+  std::string sdk_coord_epoch_{"2005.0"};              // NOSR 坐标历元 (年.月)
   double gga_interval_sec_{1.0};              // GGA 上传周期 (s)
   double sdk_reconnect_delay_sec_{1.0};       // SDK 会话重建延迟 (s); 串口打开/等待 GGA 等本地重试固定 200ms
   double first_gga_timeout_sec_{30.0};        // 等待首个 GGA 超时 (s)

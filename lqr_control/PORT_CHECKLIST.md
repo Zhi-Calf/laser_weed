@@ -62,11 +62,13 @@
 |---|---|---|---|
 | `serial_port` | `/dev/ttyUSB1` | 除草机接收机串口 | 🟡 |
 | `sdk_key` / `sdk_secret` / `dev_id` / `dev_type` | 空 | **为除草机这台设备申请的千寻账号** | 🔴 |
+| `sdk_openapi_host/port` / `sdk_oss_host/port` | 官方 HTTPS 默认值 | 按千寻服务端配置确认 | 🟡 |
+| `sdk_coord_frame` / `sdk_coord_epoch` | WGS84 / 2005.0 | 按差分服务坐标系确认 | 🟡 |
 | `log_dir` | `/opt/agri/logs` | 除草机日志目录 | 🟡 |
 
-**千寻 SDK 架构**：`ThirdParty/qxwz/lib/` 下有 aarch64 和 x86_64 两套静态库，CMake 按
-`CMAKE_SYSTEM_PROCESSOR` 自动选。VM 是 x86_64 用 x86 那套，实车若是 ARM（如 Jetson）用 aarch64——
-两者都已随包拷入，不用管。
+**千寻 SDK 架构**：随包的 SDK 1.29.5 release 库是 aarch64 版本（RK3588）。
+x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可执行文件；
+需要时可用 `-DQXWZ_SDK_LIB=<匹配架构的 1.29.x 库>` 指定库路径。
 
 ---
 

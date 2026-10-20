@@ -50,21 +50,30 @@ if(NOT GEOGRAPHIC_LIBRARY)
     "libgeographic-dev (Jammy/Humble).")
 endif()
 
-# 千寻 SDK (libqxwz-pssdk)。按 CPU 架构选择静态库:
-#   aarch64: 1.15.1 (车机/工控机)
-#   x86_64:  1.9.1  (开发机)
-# 头文件在 ThirdParty/qxwz/include, 库在 ThirdParty/qxwz/lib/<arch>。
+# 千寻 SDK 1.29.5 (RK3588/aarch64 release)。
+# 随包的 release 库是 aarch64 静态库；x86 开发机没有对应版本时跳过 sdk_client_node。
+# 头文件在 ThirdParty/qxwz/include, 库在 ThirdParty/qxwz/lib/aarch64。
 set(QXWZ_SDK_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/qxwz/include)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
-  set(QXWZ_SDK_LIB
-    ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/qxwz/lib/aarch64/libqxwz-pssdk-1.15.1-20230906-zhongke-aarch64-linux-gnu-production-release.a)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
-  set(QXWZ_SDK_LIB
-    ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/qxwz/lib/x86_64/libqxwz-pssdk-1.9.1-20210425-qa-x86-64-linux-gcc-4.8.4-default-production-release.a)
-else()
-  message(WARNING "未知架构 ${CMAKE_SYSTEM_PROCESSOR}, 千寻 SDK 将无法链接")
-  set(QXWZ_SDK_LIB "")
+set(QXWZ_SDK_LIB "" CACHE FILEPATH
+  "Path to the qxwz-pssdk 1.29.x static library (default: bundled aarch64 release)")
+if(NOT QXWZ_SDK_LIB)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    set(QXWZ_SDK_LIB
+      ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/qxwz/lib/aarch64/libqxwz-pssdk-1.29.5-20260916--unix--production-release.a)
+  endif()
 endif()
+if(QXWZ_SDK_LIB AND EXISTS "${QXWZ_SDK_LIB}")
+  set(QXWZ_SDK_AVAILABLE TRUE)
+else()
+  if(QXWZ_SDK_LIB)
+    message(WARNING "千寻 SDK 库不存在: ${QXWZ_SDK_LIB}; sdk_client_node 不会构建")
+  else()
+    message(WARNING "千寻 SDK 1.29.5 随包 release 库仅支持 aarch64 (RK3588); 当前 ${CMAKE_SYSTEM_PROCESSOR} 不构建 sdk_client_node。可通过 -DQXWZ_SDK_LIB=<path> 指定匹配的库。")
+  endif()
+  set(QXWZ_SDK_AVAILABLE FALSE)
+endif()
+
+find_package(Threads REQUIRED)
 
 add_executable(gnss_driver_node
   src/gnss_driver_main.cpp
@@ -119,32 +128,52 @@ target_compile_definitions(ntrip_client_node PRIVATE
   SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
 )
 
-add_executable(sdk_client_node
-  src/sdk_client_main.cpp
-  src/serial_port.cpp
-  src/sdk_client.cpp
-)
+if(QXWZ_SDK_AVAILABLE)
+  add_executable(sdk_client_node
+    src/sdk_client_main.cpp
+    src/serial_port.cpp
+    src/sdk_client.cpp
+  )
 
-target_include_directories(sdk_client_node PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  ${QXWZ_SDK_INCLUDE_DIR}
-)
+  target_include_directories(sdk_client_node PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    ${QXWZ_SDK_INCLUDE_DIR}
+  )
 
-ament_target_dependencies(sdk_client_node
-  rclcpp
-)
+  ament_target_dependencies(sdk_client_node
+    rclcpp
+  )
 
-target_link_libraries(sdk_client_node spdlog::spdlog ${QXWZ_SDK_LIB})
+  # qxwz release 静态库需要 pthread / dl / libm。
+  target_link_libraries(sdk_client_node spdlog::spdlog ${QXWZ_SDK_LIB} Threads::Threads ${CMAKE_DL_LIBS} m)
 
-# 让 SPDLOG_* 宏携带源码文件名与行号（source location）
-target_compile_definitions(sdk_client_node PRIVATE
-  SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
-)
+  # 让 SPDLOG_* 宏携带源码文件名与行号（source location）
+  target_compile_definitions(sdk_client_node PRIVATE
+    SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
+  )
+else()
+  # 没有匹配的 aarch64 库时仍编译一次源码，尽早发现 SDK 头文件/API 漂移。
+  add_library(sdk_client_source_check OBJECT src/sdk_client.cpp)
+  target_include_directories(sdk_client_source_check PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${QXWZ_SDK_INCLUDE_DIR}
+  )
+  ament_target_dependencies(sdk_client_source_check rclcpp)
+  target_compile_definitions(sdk_client_source_check PRIVATE
+    SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
+  )
+endif()
 
-install(TARGETS gnss_driver_node ntrip_client_node sdk_client_node
+install(TARGETS gnss_driver_node ntrip_client_node
   DESTINATION lib/${PROJECT_NAME}
 )
+
+if(QXWZ_SDK_AVAILABLE)
+  install(TARGETS sdk_client_node
+    DESTINATION lib/${PROJECT_NAME}
+  )
+endif()
 
 install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}

@@ -180,6 +180,10 @@ ros2 launch lqr_control lqr_control.launch.py
 ros2 launch weeder_base can.launch.py interface:=can0
 ```
 
+`sdk_client` 使用随包的千寻 SDK 1.29.5 release 库，当前提供的是
+**aarch64/RK3588** 版本；x86 开发机默认不构建该可执行文件，可通过
+`-DQXWZ_SDK_LIB=<匹配架构的 1.29.x 库>` 指定其他架构。
+
 4. 规划器启动后立即把 `poly` 第一个顶点作为 ENU 原点并生成路径。
    确认 RTK 固定且路径已生成后，再发布 UNMANNED 让控制器接管：
 
@@ -204,7 +208,7 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 |---|---|---|
 | 天线杆臂 `calib_offset_x/y` | `gnss_localization/config/gnss_driver.yaml` | 必须按实车安装位置测量 |
 | 串口 | `gnss_localization/config/*.yaml` | 按实际 `/dev/ttyUSB*` 或 `/dev/ttyACM*` 配置 |
-| 差分账号 | `ntrip_client.yaml` / `sdk_client.yaml` | 按设备分别配置 |
+| 差分账号 | `ntrip_client.yaml` / `sdk_client.yaml` | 按设备分别配置；SDK 1.29 还需配置 `sdk_openapi_host/port`、`sdk_oss_host/port` 和 NOSR 坐标框架/历元 |
 | ENU 原点 | `gnss_localization/config/gnss_driver.yaml` | `origin_lat` / `origin_lon` / `origin_alt`，必须等于 `poly` 第一个顶点 |
 | 田块顶点 / 垄宽 / 田边余量 | `global_path_planner/config/global_path_planner.yaml` | `poly` / `ridge_width` / `field_margin`，修改后重启规划器 |
 | `wheelbase` | `lqr_control/config/lqr_control.yaml` | 单阿克曼填真实轴距，双阿克曼填 `L/2` |
@@ -251,6 +255,8 @@ colcon test-result --verbose
   顶点乱序会被拒绝（`is_simple` 校验，状态码 `self_intersecting`）
 - ENU 原点同时配置在 `poly` 第一个顶点和 `gnss_driver.yaml` 的 `origin_*` 中，
   两处不一致时路径与 odom 会产生固定偏移，当前没有运行时一致性校验
+- `sdk_client` 随包的千寻 SDK 1.29.5 release 库仅支持 aarch64；x86 开发机默认只编译源码做 API 检查，不生成可执行文件
+- 千寻 SDK 1.29 默认服务器域名已关闭，`sdk_client.yaml` 中的 OpenAPI/OSS 域名和端口必须显式配置
 - `lqr_control` 仅适用于 `steer_mode=0`（单阿克曼）和 `1`（双阿克曼）
 - 当前不支持倒车，底盘档位固定为 D
 - 仿真为理想模型，不含轮胎侧偏、执行器延迟、RTK 延迟和地面打滑

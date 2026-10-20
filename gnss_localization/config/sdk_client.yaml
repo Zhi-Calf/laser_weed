@@ -1,7 +1,8 @@
 # 千寻 SDK 差分客户端节点配置
 # 千寻 SDK 差分: 上位机读接收机 GGA -> SDK 认证 -> 上传 GGA -> SDK 回调收 RTCM 写回串口。
 # 与 ntrip_client 为二选一的替代方案 (由 bringup 的 diff_mode 决定)。
-sdk_client_node:
+# 顶层键必须与 launch/节点名 sdk_client 一致。
+sdk_client:
   ros__parameters:
     # 串口 (接收机的串口)
     serial_port: "/dev/ttyUSB1"
@@ -12,6 +13,18 @@ sdk_client_node:
     sdk_secret: ""
     dev_id: ""
     dev_type: ""
+
+    # SDK 1.29 服务器配置 (默认域名已关闭, 必须通过 init 的 serv_conf 传入)
+    # 官方加密服务端口示例: OpenAPI 8443, OSS 8008; 非加密端口为 8000/8007。
+    sdk_openapi_host: "openapi.qxwz.com"
+    sdk_openapi_port: 8443
+    sdk_oss_host: "oss.qxwz.com"
+    sdk_oss_port: 8008
+
+    # NOSR 坐标框架/历元: frame 1=ITRF2008, 2=WGS84, 3=CGCS2000; epoch 格式 "年.月"
+    # 若差分服务要求其他历元, 按服务端实际坐标系修改。
+    sdk_coord_frame: 2
+    sdk_coord_epoch: "2005.0"
 
     # 行为
     gga_interval_sec: 1.0             # GGA 上传周期 (s)
