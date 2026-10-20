@@ -8,7 +8,7 @@
 
 | 方向 | CAN 报文 | 周期 | ROS2 接口 |
 |---|---|---|---|
-| 下发 | `ADCU_toVCU_01` (`0x0C01D01C`) | 100ms | 订阅 `/chassis/cmd` (`weeder_msgs/ChassisCmd`) |
+| 下发 | `ADCU_toVCU_01` (`0x0C01D01C`) | 20ms（50Hz） | 订阅 `/chassis/cmd` (`weeder_msgs/ChassisCmd`) |
 | 上行 | `Chassis_State_01` (`0x18011CD0`) | 20ms（VCU 周期） | `/chassis/state`（节点固定 10Hz 发布） |
 | 上行 | `Chassis_State_02` (`0x18021CD0`) | 100ms | `/chassis/state` |
 | 上行 | `Chassis_State_03` (`0x18031CD0`) | 100ms | `/chassis/state` |

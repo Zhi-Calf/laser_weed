@@ -7,7 +7,7 @@ namespace protocol {
 
 // ============================================================
 // CAN ID 定义 (29位扩展帧)
-// 依据: 激光除草机无人驾驶通讯协议--第二版.xlsx
+// 依据: 激光除草机无人驾驶通讯协议--第二版修.xlsx
 // ============================================================
 namespace can_id {
 
@@ -27,12 +27,16 @@ constexpr uint32_t CHASSIS_STATE_21 = 0x18211CD0;   // 500ms BMS1
 constexpr uint32_t CHASSIS_STATE_22 = 0x18221CD0;   // 500ms BMS2
 
 // ADCU -> VCU
-constexpr uint32_t ADCU_TO_VCU_01 = 0x0C01D01C;   // 节点发送周期固定 100ms
+constexpr uint32_t ADCU_TO_VCU_01 = 0x0C01D01C;   // 节点发送周期固定 20ms
 
 }   // namespace can_id
 
+namespace timing {
+constexpr int kAdcuCmdPeriodMs = 20;   // ADCU -> VCU_01 下发周期
+}   // namespace timing
+
 // ============================================================
-// 协议物理范围 (见通讯协议第二版)
+// 协议物理范围 (见通讯协议第二版修)
 // ============================================================
 namespace limits {
 constexpr uint16_t kMaxSpeedMmps    = 1400;   // 目标/实际车速 0~1400 mm/s
@@ -119,35 +123,31 @@ struct MotorElecState {
 // 复用 MotorElecState
 
 // ------------------------------------------------------------
-// State_21: 500ms - BMS 基本状态 (第二版, 全部信号重排)
+// State_21: 500ms - BMS 基本状态 (第二版修)
 //
-// ⚠️ 以下按第二版文档字面实现, 3 处疑点待 VCU 侧确认:
-//   (1) BMS_SOC 分辨率写 1 (Value=X), 第一版为 0.1;
-//       16bit 存整数百分比不合理, 疑为表格漏改分辨率
-//   (2) BMS_Current 为 unsigned 且偏移 0, 无法表示充电时的负电流
-//       (第一版为 Value=X*0.1-3200, 偏移正是为负电流设计)
-//   (3) BMS_FullChargeCapacity 单位写 A, 按惯例应为 Ah
+// 第二版修明确:
+//   BMS_Current 为 signed, Value=X*0.1-1000, 充电为负、放电为正;
+//   BMS_FullChargeCapacity 单位为 AH。
 //
-// 第二版已删除: power_on / heating_status / charge_status / soh
+// 第二版修已删除: power_on / heating_status / charge_status / soh
 // ------------------------------------------------------------
 struct ChassisState21 {
   uint16_t soc_raw                  = 0;   // bit0,  %, Value=X
   float soc                         = 0.0f;
   uint16_t voltage_raw              = 0;   // bit16, V, Value=X*0.01
   float voltage                     = 0.0f;
-  uint16_t current_raw              = 0;   // bit32, A, Value=X*0.01
+  int16_t current_raw               = 0;   // bit32, A, Value=X*0.1-1000 (充电为负)
   float current                     = 0.0f;
-  uint16_t full_charge_capacity_raw = 0;   // bit48, A(疑为Ah), Value=X*0.01
+  uint16_t full_charge_capacity_raw = 0;   // bit48, AH, Value=X*0.01
   float full_charge_capacity        = 0.0f;
 };
 
 // ------------------------------------------------------------
-// State_22: 500ms - BMS 故障与电压 (第二版, 全部信号重排)
+// State_22: 500ms - BMS 故障与电压 (第二版修)
 //
-// ⚠️ BMS_StateOfCharge 信号名与描述"放电循环次数"不符,
-//    命名疑为复制未改, 此处按描述语义命名为 cycle_count
+// 第一路信号在新文档中命名为 BMS_BatDischargeCycle, 此处保持语义名 cycle_count。
 //
-// 第二版已删除: error_level / fault_count / 最高最低温度及温度位置(-40 偏移)
+// 第二版修已删除: error_level / fault_count / 最高最低温度及温度位置(-40 偏移)
 // ------------------------------------------------------------
 struct ChassisState22 {
   uint16_t cycle_count      = 0;   // bit0,  次, 放电循环次数
@@ -156,13 +156,13 @@ struct ChassisState22 {
   uint16_t system_voltage   = 0;   // bit48, mV, VCU 控制器电压
 };
 
-// 第二版已取消 ChassisState23 (原 BMS 电芯电压报文)
+// 第二版修已取消 ChassisState23 (原 BMS 电芯电压报文)
 
 // ============================================================
 // 发送结构体 (ADCU -> VCU)
 // ============================================================
 
-// ADCU_toVCU_01: 10Hz (100ms) - 控制指令
+// ADCU_toVCU_01: 50Hz (20ms) - 控制指令
 // ⚠️ 注意: 本帧 Byte0 的 bit4~6 顺序与接收帧 State_01 相反
 //    发送帧: bit4=ReleaseBrake  bit5=EStop  bit6=Reset
 //    接收帧: bit4=EStop         bit5=Reset  bit6=ReleaseBrake
@@ -218,8 +218,8 @@ public:
   static bool isMotorElecStateId(uint32_t id);
   static bool decodeMotorElec(const CanFrame& f, MotorElecState& out);
 
-  // State_21 / 22 BMS (第二版)
-  // 第二版已取消 decodeState23
+  // State_21 / 22 BMS (第二版修)
+  // 第二版修已取消 decodeState23
   static bool decodeState21(const CanFrame& f, ChassisState21& out);
   static bool decodeState22(const CanFrame& f, ChassisState22& out);
 };

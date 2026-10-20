@@ -18,7 +18,7 @@ namespace weeder_base {
 // 底盘 ROS2 节点
 // ============================================================
 //
-// 下行: /chassis/cmd (速度 + 前轮转角) -> ADCU_toVCU_01 (10Hz)
+// 下行: /chassis/cmd (速度 + 前轮转角) -> ADCU_toVCU_01 (50Hz / 20ms)
 // 上行: VCU Chassis_State_01~11/21/22
 //       -> /chassis/state (类型化完整状态)
 //

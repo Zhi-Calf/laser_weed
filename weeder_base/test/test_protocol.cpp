@@ -34,7 +34,7 @@ int main() {
   check(f.id == can_id::ADCU_TO_VCU_01, "ID 匹配");
   check(f.dlc == 8, "DLC=8");
   check(f.is_extended, "扩展帧");
-  // Byte0 按第二版 ADCU_toVCU_01 布局:
+  // Byte0 按第二版修 ADCU_toVCU_01 布局:
   //   bit0~1=GearCmd=1(0x01)  bit2~3=SteerModeCmd=0
   //   bit4=ReleaseBrakeCmd=1(0x10)  bit5=EStopCmd=0
   //   bit6=ResetCmd=0  bit7=CtrlModeCmd=1(0x80)
@@ -46,6 +46,7 @@ int main() {
   check(f.data[3] == 0x64 && f.data[4] == 0x00, "Byte3~4 转向角小端 (100)");
   check(f.data[5] == 0x00, "Byte5 灯光全关");
   check(f.data[7] == 123, "Byte7 生命信号");
+  check(timing::kAdcuCmdPeriodMs == 20, "ADCU 下发周期=20ms");
 
   // 协议层兜底限幅: 调用方传入越界值时, 不能把非法值原样写到总线上。
   AdcuCommand01 cmd_high{};
@@ -171,7 +172,7 @@ int main() {
   check(CanProtocol::decodeMotorElec(rxe, se) == false, "非 State_04~11 返回 false");
 
   // ============================================================
-  // 5. decodeState21 / 22: BMS (第二版布局)
+  // 5. decodeState21 / 22: BMS (第二版修布局)
   // ============================================================
   printf("\n[decodeState21/22]\n");
   CanFrame rx21{};
@@ -180,7 +181,7 @@ int main() {
   rx21.is_extended = true;
   rx21.data[0] = 0x50; rx21.data[1] = 0x00;  // bit0  SOC   raw=0x0050=80   → 80%
   rx21.data[2] = 0x10; rx21.data[3] = 0x13;  // bit16 电压  raw=0x1310=4880 → 48.80V
-  rx21.data[4] = 0x88; rx21.data[5] = 0x13;  // bit32 电流  raw=0x1388=5000 → 50.00A
+  rx21.data[4] = 0x04; rx21.data[5] = 0x29;  // bit32 电流  raw=0x2904=10500 → 50.00A
   rx21.data[6] = 0xE8; rx21.data[7] = 0x03;  // bit48 容量  raw=0x03E8=1000 → 10.00
 
   ChassisState21 s21{};
@@ -188,11 +189,20 @@ int main() {
   check(s21.soc_raw == 80 && s21.soc > 79.9f && s21.soc < 80.1f, "SOC=80% (分辨率1)");
   check(s21.voltage_raw == 4880 && s21.voltage > 48.79f && s21.voltage < 48.81f,
         "电压=48.80V (×0.01)");
-  check(s21.current_raw == 5000 && s21.current > 49.99f && s21.current < 50.01f,
-        "电流=50.00A (×0.01, 无偏移)");
+  check(s21.current_raw == 10500 && s21.current > 49.99f && s21.current < 50.01f,
+        "放电电流=50.00A (×0.1-1000)");
   check(s21.full_charge_capacity_raw == 1000 &&
         s21.full_charge_capacity > 9.99f && s21.full_charge_capacity < 10.01f,
         "充满容量=10.00 (×0.01)");
+
+  // 充电时电流为负: raw=9000 → 0.1*9000-1000 = -100.0 A
+  CanFrame rx21_charge = rx21;
+  rx21_charge.data[4] = 0x28;
+  rx21_charge.data[5] = 0x23;
+  ChassisState21 s21_charge{};
+  check(CanProtocol::decodeState21(rx21_charge, s21_charge), "State21 充电帧返回 true");
+  check(s21_charge.current_raw == 9000 && s21_charge.current > -100.01f && s21_charge.current < -99.99f,
+        "充电电流=-100.00A (signed, 偏移1000)");
 
   CanFrame rx22{};
   rx22.id = can_id::CHASSIS_STATE_22;

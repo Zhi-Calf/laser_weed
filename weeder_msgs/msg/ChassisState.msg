@@ -1,5 +1,5 @@
 # 激光除草机底盘状态 (VCU -> ADCU)
-# 依据: 激光除草机无人驾驶通讯协议--第二版.xlsx
+# 依据: 激光除草机无人驾驶通讯协议--第二版修.xlsx
 
 std_msgs/Header header
 
@@ -57,8 +57,8 @@ uint16[4] steer_error_code
 bool state21_valid
 uint16 bms_soc                   # %
 float32 bms_voltage              # V
-float32 bms_current              # A
-float32 bms_full_charge_capacity # Ah (文档单位写 A)
+float32 bms_current              # A, 放电为正, 充电为负 (Value=X*0.1-1000)
+float32 bms_full_charge_capacity # AH
 
 # Chassis_State_22 (0x18221CD0, 500ms)
 bool state22_valid

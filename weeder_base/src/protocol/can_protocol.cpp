@@ -215,13 +215,11 @@ bool CanProtocol::decodeMotorElec(const CanFrame& f, MotorElecState& out) {
   return true;
 }
 
-// State_21: 500ms - BMS 基本状态 (第二版)
+// State_21: 500ms - BMS 基本状态 (第二版修)
 //   bit0  = BMS_SOC                    %, 分辨率 1
 //   bit16 = BMS_Voltage                V, Value=X*0.01
-//   bit32 = BMS_Current                A, Value=X*0.01 (unsigned, 无偏移)
-//   bit48 = BMS_FullChargeCapacity     Value=X*0.01
-// ⚠️ 疑点见 can_protocol.hpp 中 ChassisState21 的说明:
-//    SOC 分辨率 1 疑为漏改; 电流无符号无偏移无法表示充电负电流
+//   bit32 = BMS_Current                A, Value=X*0.1-1000 (signed, 充电为负)
+//   bit48 = BMS_FullChargeCapacity     AH, Value=X*0.01
 bool CanProtocol::decodeState21(const CanFrame& f, ChassisState21& out) {
   if (f.id != can_id::CHASSIS_STATE_21 || f.dlc < 8)
     return false;
@@ -229,15 +227,15 @@ bool CanProtocol::decodeState21(const CanFrame& f, ChassisState21& out) {
   out.soc                      = static_cast<float>(out.soc_raw);
   out.voltage_raw              = readU16LE(&f.data[2]);   // bit16
   out.voltage                  = out.voltage_raw * 0.01f;
-  out.current_raw              = readU16LE(&f.data[4]);   // bit32
-  out.current                  = out.current_raw * 0.01f;
+  out.current_raw              = readI16LE(&f.data[4]);   // bit32
+  out.current                  = out.current_raw * 0.1f - 1000.0f;
   out.full_charge_capacity_raw = readU16LE(&f.data[6]);   // bit48
   out.full_charge_capacity     = out.full_charge_capacity_raw * 0.01f;
   return true;
 }
 
-// State_22: 500ms - BMS 故障与电压 (第二版)
-//   bit0  = BMS_StateOfCharge   放电循环次数, 次
+// State_22: 500ms - BMS 故障与电压 (第二版修)
+//   bit0  = BMS_BatDischargeCycle   放电循环次数, 次
 //   bit16 = BMS_ErrorCode       电池故障码 (第二版扩为 16bit)
 //   bit32 = BMS_MaxVoltage      电芯最高电压, mV
 //   bit48 = System_Voltage      VCU 控制器电压, mV
@@ -251,7 +249,7 @@ bool CanProtocol::decodeState22(const CanFrame& f, ChassisState22& out) {
   return true;
 }
 
-// 第二版协议已取消 State_23 (0x18231CD0), decodeState23 一并删除。
+// 第二版修协议已取消 State_23 (0x18231CD0), decodeState23 一并删除。
 // 原字段去向:
 //   max_cell_voltage → State_22 的 BMS_MaxVoltage
 //   system_voltage   → State_22 的 System_Voltage

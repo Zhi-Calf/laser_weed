@@ -1,6 +1,6 @@
 // 底盘 ROS2 节点实现。
 //
-// 下行: /chassis/cmd (速度 + 转角) -> ADCU_toVCU_01 (10Hz)
+// 下行: /chassis/cmd (速度 + 转角) -> ADCU_toVCU_01 (50Hz / 20ms)
 // 上行: VCU Chassis_State_01~11/21/22 -> /chassis/state
 //
 // 时钟约定 (踩过的坑, 别改回去):
@@ -190,11 +190,12 @@ ChassisNode::ChassisNode(const rclcpp::NodeOptions& options) : Node("weeder_chas
   state_pub_ = create_publisher<weeder_msgs::msg::ChassisState>("/chassis/state", 10);
 
   // ---- 定时器 ----
-  // CAN 下发与 ROS 状态上报统一固定为 10 Hz。
-  send_timer_ = create_wall_timer(100ms, std::bind(&ChassisNode::sendCommand, this));
+  // CAN 下发按协议固定为 50 Hz (20ms); ROS 状态上报保持 10 Hz。
+  send_timer_ = create_wall_timer(std::chrono::milliseconds(protocol::timing::kAdcuCmdPeriodMs),
+                                  std::bind(&ChassisNode::sendCommand, this));
   pub_timer_  = create_wall_timer(100ms, std::bind(&ChassisNode::publishState, this));
 
-  SPDLOG_INFO("ChassisNode 启动: 接口={} rate=10Hz", can_interface_);
+  SPDLOG_INFO("ChassisNode 启动: 接口={} 下发=50Hz 状态=10Hz", can_interface_);
   SPDLOG_INFO("底盘指令: {}", cmd_topic_);
 }
 
@@ -270,7 +271,7 @@ void ChassisNode::onChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr msg
   cmd01_.steer_angle         = static_cast<int16_t>(std::llround(clamped_deg * 10.0));
 }
 
-// ---- 10Hz 周期下发 ADCU_toVCU_01 ----
+// ---- 50Hz (20ms) 周期下发 ADCU_toVCU_01 ----
 void ChassisNode::sendCommand() {
   if (!can_driver_ || !can_driver_->isOpen()) {
     return;   // 驱动侧已报过"未打开"
