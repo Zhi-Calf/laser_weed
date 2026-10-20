@@ -6,7 +6,6 @@
 //   * 垄间距     : 相邻两条垄的横向间距 = ridge_width, 且相邻垄行驶方向相反 (弓字形);
 //   * 分辨率     : 相邻路径点间距 <= path_resolution;
 //   * 内缩       : 地头余量 field_margin (只退垄方向两端; 横向铺满, 田边无盲带);
-//                  拐角上限 miter_limit (参数已接线, 但实测对向内偏置无影响 —— 见 MiterLimitDoesNotChangeInwardInset);
 //   * 首行/末行  : 首行固定距内缩边界 first_row_margin (默认 5 mm), 之后按 ridge_width 递推;
 //                  末行被推到区域外/压在远端边界上时兜底贴到"距远端 first_row_margin" ——
 //                  见 FirstRowMarginIsConfigurable / LastRowFallsBackToFarMargin;
@@ -30,6 +29,48 @@
 #include "global_path_planner/fault_codes.hpp"
 
 using bow_test::BowFacade;
+
+class BowPlannerTestAccess {
+public:
+  static void Configure(PlanBowShapedPath& planner, double ridge_width,
+                        double path_resolution, double field_margin,
+                        const Polygon_2& field) {
+    planner.ridge_width_      = ridge_width;
+    planner.path_resolution_  = path_resolution;
+    planner.field_margin_     = field_margin;
+    planner.field_            = field;
+  }
+
+  static std::vector<Point_2> BuildHalfCircleTurn(
+      PlanBowShapedPath& planner, const Point_2& P1, const Point_2& P2,
+      const Point_2& P3, const Point_2& P4) {
+    const auto geometry = planner.makeTurnGeometry(P1, P2, P3, P4);
+    if (!geometry)
+      return {};
+    return planner.buildHalfCircleTurn(*geometry);
+  }
+
+  static std::vector<Point_2> LegacyTurn(PlanBowShapedPath& planner,
+                                         const Point_2& P1, const Point_2& P2,
+                                         const Point_2& P3,
+                                         const Point_2& P4) {
+    return planner.legacyTurn(P1, P2, P3, P4);
+  }
+
+  static std::vector<Point_2> SmoothTurns(PlanBowShapedPath& planner,
+                                          const std::vector<Point_2>& keys,
+                                          std::vector<uint8_t>* types) {
+    return planner.smoothTurns(keys, types);
+  }
+
+  static double TurnCross(const Point_2& P1, const Point_2& P2,
+                          const Point_2& P3, const Point_2& P4) {
+    const Point_2 in_dir  = (P2 - P1).normalized();
+    const Point_2 out_dir = (P4 - P3).normalized();
+    return std::abs(in_dir.x() * out_dir.y() - in_dir.y() * out_dir.x());
+  }
+
+};
 
 namespace {
 
@@ -315,7 +356,7 @@ TEST(BowPlannerCoverage, FirstRowMarginIsConfigurable) {
   const Polygon_2 field     = RectangleField(20.0, 8.0);   // 内缩后 19 x 7, 扫描方向取长边 -> 垄沿 x
 
   BowFacade tight;
-  ASSERT_TRUE(tight.init(field, ridge_width, 0.2, field_margin, 2.0, 0.05));   // 50 mm
+  ASSERT_TRUE(tight.init(field, ridge_width, 0.2, field_margin, 0.05));   // 50 mm
   const auto& tight_keys = tight.getKeyWaypoints();
   double tight_min_y     = 1e9;
   for (const auto& p : tight_keys)
@@ -324,7 +365,7 @@ TEST(BowPlannerCoverage, FirstRowMarginIsConfigurable) {
   EXPECT_EQ(tight_keys.size() / 2, 4u) << "7 m 宽 / 2 m 垄宽: 首末各 50 mm -> 4 条";
 
   BowFacade loose;
-  ASSERT_TRUE(loose.init(field, ridge_width, 0.2, field_margin, 2.0, 0.5));   // 500 mm
+  ASSERT_TRUE(loose.init(field, ridge_width, 0.2, field_margin, 0.5));   // 500 mm
   const auto& loose_keys = loose.getKeyWaypoints();
   double loose_min_y     = 1e9;
   for (const auto& p : loose_keys)
@@ -334,7 +375,7 @@ TEST(BowPlannerCoverage, FirstRowMarginIsConfigurable) {
 
   // 越界值被夹到 [kMinFirstRowMargin, 垄宽/2]: 只告警, 不失败
   BowFacade clamped;
-  ASSERT_TRUE(clamped.init(field, ridge_width, 0.2, field_margin, 2.0, 5.0));
+  ASSERT_TRUE(clamped.init(field, ridge_width, 0.2, field_margin, 5.0));
   double clamped_min_y = 1e9;
   for (const auto& p : clamped.getKeyWaypoints())
     clamped_min_y = std::min(clamped_min_y, p.y());
@@ -547,48 +588,119 @@ TEST(BowPlannerInset, UniformMarginShrinksPolygon) {
   EXPECT_NEAR(std::abs(bg::area(region_model)), 19.0 * 7.0, 0.05);
 }
 
-// 拐角上限 miter_limit 的接线与实测行为:
-//   (a) 参数确实接到 plan()/init() 上 (第 5 个参数, 带默认值, 所以老调用不受影响);
-//   (b) **对向内偏置不影响结果** —— Clipper2 对凸多边形的凸顶点走"凹角分支" (插 3 点, 最后 union
-//       清理负区域), 得到的恒是**无上限的斜接尖点**, 因此 1.0 与 20.0 的内缩顶点逐位相同。
-// 这条用例是"该参数是留口、不是调拐角的手段"的可执行证据 (对照实验: 同一份顶点改成**向外**偏置,
-// miter_limit 立刻起作用 —— 1.0 出切角点, 20.0 出长尖刺)。哪天 Clipper2 改了行为、或本规划器换了
-// JoinType, 本用例会失败 —— 正好提醒同步更新 yaml 与文档里的说明。
-TEST(BowPlannerInset, MiterLimitDoesNotChangeInwardInset) {
-  const double ridge_width = 1.0;
-  const double resolution  = 0.5;
-  const double margin      = 0.5;
+// 非平行垄也统一使用半圆。
+TEST(BowPlannerTurn, NonParallelRowsUseHalfCircle) {
+  PlanBowShapedPath planner;
+  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0),
+                        Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
+  BowPlannerTestAccess::Configure(planner, 1.0, 0.2, 0.5, field);
 
-  const auto check_field = [&](const char* what, const Polygon_2& field) {
-    // 基准: miter_limit = 1.0 = "一律切角" (Clipper2 里 <= 1 的取值)
-    BowFacade baseline;
-    ASSERT_TRUE(baseline.init(field, ridge_width, resolution, margin, 1.0)) << what << ": miter_limit = 1.0 应能规划";
-    const Polygon_2 region_1 = baseline.getInnerPolygon();
-    ASSERT_GE(region_1.size(), 3u);
+  const Point_2 P1(0.0, 0.0);
+  const Point_2 P2(10.0, 0.0);
+  const Point_2 P3(10.0, 2.0);
+  const Point_2 P4(0.0, 3.0);
 
-    // 极端"尖锐": 20.0 —— 若 join 类型对向内偏置有效, 这里的顶点/坐标必然与上面不同
-    BowFacade sharp;
-    ASSERT_TRUE(sharp.init(field, ridge_width, resolution, margin, 20.0)) << what << ": miter_limit = 20.0 应能规划";
-    const Polygon_2& region_20 = sharp.getInnerPolygon();
-    EXPECT_EQ(region_20.size(), region_1.size()) << what << ": 向内偏置的顶点数不该随 miter_limit 变";
-    ASSERT_EQ(region_20.size(), region_1.size());
-    for (size_t i = 0; i < region_20.size(); ++i) {
-      EXPECT_NEAR((region_20[i] - region_1[i]).norm(), 0.0, 1e-12) << what << ": 第 " << i << " 个顶点不该受 miter_limit 影响";
+  const auto half_circle = BowPlannerTestAccess::BuildHalfCircleTurn(planner, P1, P2, P3, P4);
+  const auto legacy = BowPlannerTestAccess::LegacyTurn(planner, P1, P2, P3, P4);
+  ASSERT_EQ(legacy.size(), half_circle.size());
+  for (size_t i = 0; i < legacy.size(); ++i) {
+    EXPECT_NEAR((legacy[i] - half_circle[i]).norm(), 0.0, 1e-12) << "第 " << i << " 个点";
+  }
+}
+
+// 真实生产路径中的非平行垄来自末行兜底; 该处也统一使用半圆。
+TEST(BowPlannerTurn, FallbackRowTransitionUsesHalfCircle) {
+  PlanBowShapedPath planner;
+  BowInput in;
+  in.cell            = {Point_2(0.0, 0.0), Point_2(20.0, 0.0), Point_2(0.0, 10.0)};
+  in.ridge_width     = 1.0;
+  in.path_resolution = 0.2;
+  in.field_margin    = 0.5;
+  const BowOutput out = planner.plan(in);
+  ASSERT_TRUE(out.ok());
+
+  size_t nonparallel = 0;
+  for (size_t i = 0; i + 3 < out.key_waypoints.size(); i += 2) {
+    const Point_2& P1 = out.key_waypoints[i];
+    const Point_2& P2 = out.key_waypoints[i + 1];
+    const Point_2& P3 = out.key_waypoints[i + 2];
+    const Point_2& P4 = out.key_waypoints[i + 3];
+    if (BowPlannerTestAccess::TurnCross(P1, P2, P3, P4) <= 0.01) {
+      continue;
     }
+    ++nonparallel;
 
-    // 非法取值 (<= 1.0) 夹到 1.0: 不报错、不崩, 结果与"一律切角"逐位相同
-    BowFacade clamped;
-    ASSERT_TRUE(clamped.init(field, ridge_width, resolution, margin, -5.0)) << what << ": 非法 miter_limit 不该让规划失败";
-    const Polygon_2& region_clamped = clamped.getInnerPolygon();
-    ASSERT_EQ(region_clamped.size(), region_1.size());
-    for (size_t i = 0; i < region_clamped.size(); ++i) {
-      EXPECT_NEAR((region_clamped[i] - region_1[i]).norm(), 0.0, 1e-12) << what << ": 非法 miter_limit 应等价于 1.0";
+    const auto half   = BowPlannerTestAccess::BuildHalfCircleTurn(planner, P1, P2, P3, P4);
+    const auto legacy = BowPlannerTestAccess::LegacyTurn(planner, P1, P2, P3, P4);
+    ASSERT_EQ(legacy.size(), half.size());
+    for (size_t k = 0; k < legacy.size(); ++k) {
+      EXPECT_NEAR((legacy[k] - half[k]).norm(), 0.0, 1e-12);
     }
-  };
+  }
+  EXPECT_GT(nonparallel, 0u) << "该三角形样例应产生末行兜底非平行垄";
+}
 
-  // 直角地块 (拐角 90°) 与锐角三角形 (顶角约 18°): 后者是 join 类型最容易露出差别的地方。
-  check_field("直角矩形 20x8", RectangleField(20.0, 8.0));
-  check_field("锐角三角形", Polygon_2{Point_2(0.0, 0.0), Point_2(20.0, 0.0), Point_2(20.0, 3.247)});
+// 平行垄也使用半圆。
+TEST(BowPlannerTurn, ParallelRowsUseHalfCircle) {
+  PlanBowShapedPath planner;
+  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0),
+                        Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
+  BowPlannerTestAccess::Configure(
+    planner, 1.0, 0.2, 0.5, field);
+
+  const Point_2 P1(0.0, 0.0);
+  const Point_2 P2(10.0, 0.0);
+  const Point_2 P3(10.0, 2.0);
+  const Point_2 P4(0.0, 2.0);
+
+  const auto half_circle = BowPlannerTestAccess::BuildHalfCircleTurn(planner, P1, P2, P3, P4);
+  const auto legacy      = BowPlannerTestAccess::LegacyTurn(planner, P1, P2, P3, P4);
+  ASSERT_EQ(legacy.size(), half_circle.size());
+  for (size_t i = 0; i < legacy.size(); ++i) {
+    EXPECT_NEAR((legacy[i] - half_circle[i]).norm(), 0.0, 1e-12) << "第 " << i << " 个点";
+  }
+}
+
+// 直线兜底必须把连接段标成 TURN, 同时保持两端垄端点为 WORK。
+TEST(BowPlannerTurn, StraightFallbackIsMarkedTurn) {
+  PlanBowShapedPath planner;
+  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0),
+                        Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
+  BowPlannerTestAccess::Configure(planner, 1.0, 0.2, 0.5, field);
+
+  const std::vector<Point_2> keys{
+    Point_2(0.0, 0.0), Point_2(10.0, 0.0),
+    Point_2(20.0, 0.0000005), Point_2(0.0, 0.0000005)};
+  std::vector<uint8_t> types;
+  const auto path = BowPlannerTestAccess::SmoothTurns(planner, keys, &types);
+  ASSERT_EQ(path.size(), types.size());
+  ASSERT_GE(path.size(), 4u);
+  EXPECT_EQ(types.front(), kSegWork);
+  EXPECT_EQ(types.back(), kSegWork);
+  EXPECT_NE(std::find(types.begin(), types.end(), kSegTurn), types.end())
+      << "直线连接段应包含 TURN 点";
+  for (size_t i = 1; i < path.size(); ++i) {
+    EXPECT_GT((path[i] - path[i - 1]).norm(), 1e-9) << "路径不应插入重复点";
+  }
+}
+
+// 非平行半圆的出口 t2 不在下一垄起点时, t2->下一垄作业段起点应为 TURN。
+TEST(BowPlannerTurn, NonParallelHalfExitIsMarkedTurn) {
+  PlanBowShapedPath planner;
+  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0),
+                        Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
+  BowPlannerTestAccess::Configure(planner, 1.0, 0.2, 0.5, field);
+
+  const std::vector<Point_2> keys{
+    Point_2(0.0, 0.0), Point_2(10.0, 0.0),
+    Point_2(10.0, 2.0), Point_2(0.0, 3.0)};
+  std::vector<uint8_t> types;
+  const auto path = BowPlannerTestAccess::SmoothTurns(planner, keys, &types);
+  ASSERT_EQ(path.size(), types.size());
+  ASSERT_GE(path.size(), 3u);
+  EXPECT_EQ(types.back(), kSegWork);
+  EXPECT_EQ(types[types.size() - 2], kSegTurn)
+      << "非平行半圆出口后的连接段应标 TURN";
 }
 
 // 输入宽容度: 逆序 + 旋转起点 + 一条边上的共线点, 结果应与规范输入一致

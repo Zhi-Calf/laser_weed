@@ -147,7 +147,6 @@ private:
   double ridge_width_      = 0.0;     // 垄宽 (m): 行距
   double path_resolution_  = 0.2;     // /path 插值分辨率 (m): YAML 参数 path_resolution
   double field_margin_     = 0.0;     // 四周统一内缩的田边余量 (m)
-  double miter_limit_      = 2.0;     // 内缩偏置的拐角上限 (YAML 参数 miter_limit)
   double first_row_margin_ = 0.005;   // 首行/末行余量 (m, YAML 参数 first_row_margin)
 };
 

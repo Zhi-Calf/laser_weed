@@ -54,11 +54,7 @@ bool PlanBowShapedPath::preparePolygon(const Polygon_2& cell, Polygon_2& out) {
     return false;
   }
 
-  // 输入边界必须是简单多边形: 上面的凸包只检查"点集"的凸性, 自相交的顶点序列
-  // (例如四个角按对角交叉顺序给出) 仍会得到同一个凸包, 必须按给定顺序单独校验。
-  // 这里校验的是输入顺序, 因此有效的逆序/旋转起点仍然通过; 顶点乱序不再接受。
-  // 注意: 对注册成 ring 的 std::vector<Vector2d> 调 bg::is_simple 在 Boost 1.74 上恒为 true
-  // (它走的是 areal 几何的重载), 必须显式转成闭合 linestring 才会做线段相交检查。
+  // 输入边界必须是简单多边形
   bg::model::linestring<Point_2> input_line(pts.begin(), pts.end());
   input_line.push_back(pts.front());
   if (!bg::is_simple(input_line)) {
@@ -96,7 +92,8 @@ bool PlanBowShapedPath::preparePolygon(const Polygon_2& cell, Polygon_2& out) {
 // 按 field_margin_ 统一内缩四周 -> 交给 Clipper2 偏置 (negative delta = 向内)
 // ============================================================
 Polygon_2 PlanBowShapedPath::offsetUniformly(const Polygon_2& poly, double margin) {
-  const c2::PathsD inset = c2::InflatePaths(c2::PathsD{toClipperPath(poly)}, -margin, c2::JoinType::Miter, c2::EndType::Polygon, miter_limit_, kClipperPrecision);
+  // 凸多边形向内偏置不会进入 Clipper2 的 Miter join 分支, 拐角上限固定使用库默认值。
+  const c2::PathsD inset = c2::InflatePaths(c2::PathsD{toClipperPath(poly)}, -margin, c2::JoinType::Miter, c2::EndType::Polygon, 2.0, kClipperPrecision);
   if (inset.empty()) {
     SPDLOG_WARN("边界偏置 {:.3f} m 后区域为空", margin);
     return {};
@@ -227,6 +224,17 @@ std::vector<Segment_2> PlanBowShapedPath::makeRidgeSegments(const Polygon_2& reg
   return ridges;
 }
 
+// 把边展开为顶点序列
+std::vector<Point_2> PlanBowShapedPath::flattenRidges(const std::vector<Segment_2>& ridges) {
+  std::vector<Point_2> key;
+  key.reserve(ridges.size() * 2);
+  for (const auto& seg : ridges) {
+    key.push_back(seg.first);
+    key.push_back(seg.second);
+  }
+  return key;
+}
+
 // ============================================================
 // 掉头 (滚动圆弧)
 // ============================================================
@@ -246,6 +254,14 @@ std::vector<Point_2> PlanBowShapedPath::smoothTurns(const std::vector<Point_2>& 
     types->push_back(kSegWork);
   }
 
+  const auto append = [&](const Point_2& p, uint8_t type) {
+    if (!result.empty() && (p - result.back()).norm() <= kMinVertexSpacing)
+      return;
+    result.push_back(p);
+    if (types)
+      types->push_back(type);
+  };
+
   // 滑动窗口 [P1,P2,P3,P4]: 生成 P2->P3 这一段的掉头; 每步前进两个点, 于是下一窗口的
   // P1/P2 正好是本窗口的 P3/P4 (垄 i 的末端 -> 垄 i+1 的起点 -> ... )。
   size_t i = 0;
@@ -253,29 +269,30 @@ std::vector<Point_2> PlanBowShapedPath::smoothTurns(const std::vector<Point_2>& 
     const std::vector<Point_2> turn = legacyTurn(key_waypoints[i], key_waypoints[i + 1], key_waypoints[i + 2], key_waypoints[i + 3]);
     output_.turn_max_overrun        = std::max(output_.turn_max_overrun, maxOverrunOf(turn));
     if (!turn.empty()) {
-      if ((turn.front() - result.back()).norm() > kMinVertexSpacing) {
-        result.push_back(turn.front());
-        if (types)
-          types->push_back(kSegWork);   // T1 还在垄上 -> 行内作业段
-      }
-      // 弧的内部点标 TURN; 末点 (T2, 或退化情形的 P3) 仍落在垄上 -> WORK:
-      // T2 是下一条垄作业段的起点, 标成 WORK 才能让"T2 -> 下一个切点"这段长直段被认成行内段。
-      // 退化情形 (legacyTurn 返回 {P2,P3})
-      // 两端都是垄端点, 同样都是 WORK。
-      result.insert(result.end(), turn.begin() + 1, turn.end());
-      if (types) {
+      // T1 仍在当前垄上, 保持 WORK; 若与上一个点重合, append 会跳过。
+      append(turn.front(), kSegWork);
+
+      if (turn.size() == 2) {
+        // 退化直线兜底 {P2,P3}: 中间插一个 TURN 点, 让两段连接线都被识别为掉头段,
+        // 同时保留 P2/P3 为 WORK, 不污染两侧的垄线作业段。
+        const Point_2 mid = 0.5 * (turn.front() + turn.back());
+        if ((mid - turn.front()).norm() > kMinVertexSpacing && (mid - turn.back()).norm() > kMinVertexSpacing) {
+          append(mid, kSegTurn);
+        }
+        append(turn.back(), kSegWork);
+      } else {
+        // 非平行半圆的出口 t2 可能不在下一条垄起点 P3 上。此时把 t2 标 TURN,
+        // 让 t2 -> 下一个切点 T1' 的直线连接段被识别为掉头段; 不改变路径几何。
+        const bool has_exit_connector = (turn.back() - key_waypoints[i + 2]).norm() > kMinVertexSpacing;
         for (size_t k = 1; k + 1 < turn.size(); ++k)
-          types->push_back(kSegTurn);
-        if (turn.size() >= 2)
-          types->push_back(kSegWork);
+          append(turn[k], kSegTurn);
+        append(turn.back(), has_exit_connector ? kSegTurn : kSegWork);
       }
     }
     i += 2;
   }
 
-  result.push_back(key_waypoints.back());
-  if (types)
-    types->push_back(kSegWork);
+  append(key_waypoints.back(), kSegWork);
   return result;
 }
 
@@ -312,21 +329,12 @@ std::vector<Point_2> PlanBowShapedPath::extendEndsToRegionCorners(
     return path;
 
   std::vector<Point_2> out = path;
-  tryExtendPathEnd(
-    {"首端 (AB)", near_side_edge, 0, path[0] - path[1], true},
-    path, out, out_types);
-  tryExtendPathEnd(
-    {"末端 (CD)", far_side_edge, path.size() - 1,
-     path.back() - path[path.size() - 2], false},
-    path, out, out_types);
+  tryExtendPathEnd({"首端 (AB)", near_side_edge, 0, path[0] - path[1], true}, path, out, out_types);
+  tryExtendPathEnd({"末端 (CD)", far_side_edge, path.size() - 1, path.back() - path[path.size() - 2], false}, path, out, out_types);
   return out;
 }
 
-bool PlanBowShapedPath::tryExtendPathEnd(
-  const EndExtensionSpec& spec,
-  const std::vector<Point_2>& path,
-  std::vector<Point_2>& out,
-  std::vector<uint8_t>* out_types) const {
+bool PlanBowShapedPath::tryExtendPathEnd(const EndExtensionSpec& spec, const std::vector<Point_2>& path, std::vector<Point_2>& out, std::vector<uint8_t>* out_types) const {
   if (spec.end_index >= path.size()) {
     return false;
   }
@@ -346,23 +354,17 @@ bool PlanBowShapedPath::tryExtendPathEnd(
 
   const size_t others = countOtherPointsOnEdge(path, spec.edge, end);
   if (others > 0) {
-    SPDLOG_INFO(
-      "{}: 那条边上还有 {} 个路径点 (不是端头边), 不补 —— 前提是只有 path 的起点/终点在 AB/CD 上",
-      spec.label, others);
+    SPDLOG_INFO("{}: 那条边上还有 {} 个路径点 (不是端头边), 不补 —— 前提是只有 path 的起点/终点在 AB/CD 上", spec.label, others);
     return false;
   }
 
   const Segment_2 extension = spec.at_front ? Segment_2{corner, end} : Segment_2{end, corner};
   if (segmentCrossesPath(extension, path)) {
-    SPDLOG_INFO(
-      "{}顶点 ({:.3f}, {:.3f}) 在 {:.2f} m 外且那段会横穿已铺路径: 不补 (只补不穿)",
-      spec.label, corner.x(), corner.y(), (corner - end).norm());
+    SPDLOG_INFO("{}顶点 ({:.3f}, {:.3f}) 在 {:.2f} m 外且那段会横穿已铺路径: 不补 (只补不穿)", spec.label, corner.x(), corner.y(), (corner - end).norm());
     return false;
   }
 
-  SPDLOG_INFO(
-    "{}沿区域边界边补到顶点: 垄端 ({:.3f}, {:.3f}) -> 顶点 ({:.3f}, {:.3f}), 补 {:.3f} m",
-    spec.label, end.x(), end.y(), corner.x(), corner.y(), (corner - end).norm());
+  SPDLOG_INFO("{}沿区域边界边补到顶点: 垄端 ({:.3f}, {:.3f}) -> 顶点 ({:.3f}, {:.3f}), 补 {:.3f} m", spec.label, end.x(), end.y(), corner.x(), corner.y(), (corner - end).norm());
   if (spec.at_front) {
     out.insert(out.begin(), corner);
     if (out_types != nullptr) {
@@ -401,54 +403,13 @@ double PlanBowShapedPath::maxOverrunOf(const std::vector<Point_2>& pts) {
   return worst;
 }
 
-// ============================================================
-// 掉头几何: 输入校验 + 两条垄的法向、半径
-// ============================================================
-std::optional<PlanBowShapedPath::TurnGeometry> PlanBowShapedPath::makeTurnGeometry(
-  const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4) const {
-  if ((P2 - P1).norm() < kMinVertexSpacing || (P3 - P2).norm() < kMinVertexSpacing) {
-    SPDLOG_WARN(
-      "垄端间距过小: ({:.3f},{:.3f})->({:.3f},{:.3f}) 或 ({:.3f},{:.3f})->({:.3f},{:.3f}), 忽略掉头",
-      P1.x(), P1.y(), P2.x(), P2.y(), P2.x(), P2.y(), P3.x(), P3.y());
-    return std::nullopt;
-  }
-
-  const Point_2 in_dir = (P2 - P1).normalized();
-  Point_2 n            = Point_2(-in_dir.y(), in_dir.x());
-  const double lat     = (P3 - P2).dot(n);
-  if (std::abs(lat) < kMinVertexSpacing) {
-    SPDLOG_WARN(
-      "两条垄几乎共线: ({:.3f},{:.3f})->({:.3f},{:.3f}) 与 ({:.3f},{:.3f})->({:.3f},{:.3f}), 忽略掉头",
-      P1.x(), P1.y(), P2.x(), P2.y(), P2.x(), P2.y(), P3.x(), P3.y());
-    return std::nullopt;
-  }
-  if (lat < 0.0) {
-    n = -n;
-  }
-
-  const Point_2 out_dir = ((P4 - P3).norm() > kMinVertexSpacing) ? (P4 - P3).normalized() : -in_dir;
-  Point_2 n_cd          = perpendicular(out_dir);
-  if (n_cd.dot(P2 - P3) < 0.0) {
-    n_cd = -n_cd;
-  }
-  const Point_2 n_ab  = n;
-  const double d_b_cd = (P2 - P3).dot(n_cd);
-  const double d_c_ab = (P3 - P2).dot(n_ab);
-  const double radius = 0.5 * std::min(d_b_cd, d_c_ab);
-  if (!(radius > kTurnCornerMinRadius)) {
-    SPDLOG_WARN(
-      "半径非法: ({:.3f},{:.3f})->({:.3f},{:.3f}) 与 ({:.3f},{:.3f})->({:.3f},{:.3f}), 忽略掉头",
-      P1.x(), P1.y(), P2.x(), P2.y(), P2.x(), P2.y(), P3.x(), P3.y());
-    return std::nullopt;
-  }
-
-  return TurnGeometry{P2, P3, in_dir, out_dir, n_ab, n_cd, radius};
+void PlanBowShapedPath::updateTurnPocket(double pocket, double margin_hint) {
+  output_.turn_max_pocket         = pocket;
+  output_.turn_pocket_margin_hint = margin_hint;
 }
 
 // 按弧长和单步转角上限采样一段圆弧。
-std::vector<Point_2> PlanBowShapedPath::sampleCircularArc(
-  const Point_2& center, double radius, double start_angle, double sweep,
-  const Point_2& t1, const Point_2& t2) const {
+std::vector<Point_2> PlanBowShapedPath::sampleCircularArc(const Point_2& center, double radius, double start_angle, double sweep, const Point_2& t1, const Point_2& t2) const {
   const int by_len = static_cast<int>(std::ceil(std::abs(sweep) * radius / std::max(path_resolution_, 0.01)));
   const int by_ang = static_cast<int>(std::ceil(std::abs(sweep) / kMaxArcStepRad));
   const int steps  = std::max(2, std::max(by_len, by_ang));
@@ -464,71 +425,49 @@ std::vector<Point_2> PlanBowShapedPath::sampleCircularArc(
 }
 
 // ============================================================
-// 非平行垄: 与两条垄都相切的圆
+// 掉头几何: 输入校验 + 两条垄的法向、半径
 // ============================================================
-std::optional<std::vector<Point_2>> PlanBowShapedPath::tryTangentArc(const TurnGeometry& geometry) {
-  const Point_2& P2 = geometry.p2;
-  const Point_2& P3 = geometry.p3;
-  if (std::abs(geometry.in_dir.x() * geometry.out_dir.y() -
-               geometry.in_dir.y() * geometry.out_dir.x()) <= kTurnParallelTol) {
+std::optional<PlanBowShapedPath::TurnGeometry> PlanBowShapedPath::makeTurnGeometry(const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4) const {
+  if ((P2 - P1).norm() < kMinVertexSpacing || (P3 - P2).norm() < kMinVertexSpacing) {
+    SPDLOG_WARN("垄端间距过小: ({:.3f},{:.3f})->({:.3f},{:.3f}) 或 ({:.3f},{:.3f})->({:.3f},{:.3f}), 忽略掉头", P1.x(), P1.y(), P2.x(), P2.y(), P2.x(), P2.y(), P3.x(), P3.y());
     return std::nullopt;
   }
 
-  // 解 { (c - B)·n_ab = r, (c - C)·n_cd = r } -> 圆心。
-  const double det = geometry.n_ab.x() * geometry.n_cd.y() - geometry.n_ab.y() * geometry.n_cd.x();
-  const double rhs1 = geometry.radius + P2.dot(geometry.n_ab);
-  const double rhs2 = geometry.radius + P3.dot(geometry.n_cd);
-  const Point_2 center(
-    (rhs1 * geometry.n_cd.y() - geometry.n_ab.y() * rhs2) / det,
-    (geometry.n_ab.x() * rhs2 - rhs1 * geometry.n_cd.x()) / det);
-  const Point_2 t1 = center - geometry.radius * geometry.n_ab;
-  const Point_2 t2 = center - geometry.radius * geometry.n_cd;
-
-  const double turn_sign =
-    (geometry.in_dir.x() * geometry.n_ab.y() - geometry.in_dir.y() * geometry.n_ab.x()) > 0.0 ? 1.0 : -1.0;
-  const double a0 = std::atan2(t1.y() - center.y(), t1.x() - center.x());
-  const double a1 = std::atan2(t2.y() - center.y(), t2.x() - center.x());
-  double sweep    = (turn_sign > 0.0) ? (a1 - a0) : (a0 - a1);
-  sweep           = std::fmod(sweep, 2.0 * M_PI);
-  if (sweep < 0.0) {
-    sweep += 2.0 * M_PI;
+  const Point_2 in_dir = (P2 - P1).normalized();
+  Point_2 n            = Point_2(-in_dir.y(), in_dir.x());
+  const double lat     = (P3 - P2).dot(n);
+  if (std::abs(lat) < kMinVertexSpacing) {
+    SPDLOG_WARN("两条垄几乎共线: ({:.3f},{:.3f})->({:.3f},{:.3f}) 与 ({:.3f},{:.3f})->({:.3f},{:.3f}), 忽略掉头", P1.x(), P1.y(), P2.x(), P2.y(), P2.x(), P2.y(), P3.x(), P3.y());
+    return std::nullopt;
+  }
+  if (lat < 0.0) {
+    n = -n;
   }
 
-  // 切点离垄端太远、转角不合法或起点切向不沿垄时，退回半圆几何。
-  const double near_tol = 2.0 * ((ridge_width_ > kEpsilon) ? ridge_width_ : geometry.radius);
-  const double start_dir_dot =
-    (turn_sign * Point_2(-geometry.n_ab.y(), geometry.n_ab.x())).dot(geometry.in_dir);
-  if ((t1 - P2).norm() > near_tol || (t2 - P3).norm() > near_tol ||
-      (t2 - t1).norm() <= kMinVertexSpacing ||
-      sweep <= 30.0 * M_PI / 180.0 || sweep >= 330.0 * M_PI / 180.0 ||
-      start_dir_dot <= 0.0) {
+  const Point_2 out_dir = ((P4 - P3).norm() > kMinVertexSpacing) ? (P4 - P3).normalized() : -in_dir;
+  Point_2 n_cd          = perpendicular(out_dir);
+  if (n_cd.dot(P2 - P3) < 0.0) {
+    n_cd = -n_cd;
+  }
+  const Point_2 n_ab  = n;
+  const double d_b_cd = (P2 - P3).dot(n_cd);
+  const double d_c_ab = (P3 - P2).dot(n_ab);
+  const double radius = 0.5 * std::min(d_b_cd, d_c_ab);
+  if (!(radius > kTurnCornerMinRadius) || !std::isfinite(radius)) {
+    SPDLOG_WARN("半径非法: ({:.3f},{:.3f})->({:.3f},{:.3f}) 与 ({:.3f},{:.3f})->({:.3f},{:.3f}), 忽略掉头", P1.x(), P1.y(), P2.x(), P2.y(), P2.x(), P2.y(), P3.x(), P3.y());
     return std::nullopt;
   }
 
-  std::vector<Point_2> arc =
-    sampleCircularArc(center, geometry.radius, a0, turn_sign * sweep, t1, t2);
-  if (maxOverrunOf(arc) > kTurnOverrunTolerance) {
-    return std::nullopt;
-  }
-
-  // 盲带定义与半圆分支保持一致: 沿垄向，掉头切点 (路径中心线) 到垄端的最大缺口。
-  // 不能用 half_swath 抵扣: 切点处车头沿垄向，机具横杆垂直于垄向，覆盖的是横向而不是这段纵向缺口。
-  const double pocket = std::max(
-    std::max(0.0, P2.dot(geometry.in_dir) - t1.dot(geometry.in_dir)),
-    std::max(0.0, P3.dot(geometry.in_dir) - t2.dot(geometry.in_dir)));
-  if (pocket > output_.turn_max_pocket) {
-    updateTurnPocket(pocket, field_margin_);
-  }
-  return arc;
+  return TurnGeometry{P2, P3, in_dir, n_ab, radius};
 }
 
 // ============================================================
-// 平行/退化垄: 半圆，必要时沿垄向外推
+// 所有掉头: 半圆，必要时沿垄向外推
 // ============================================================
 std::vector<Point_2> PlanBowShapedPath::buildHalfCircleTurn(const TurnGeometry& geometry) {
-  const Point_2& P2 = geometry.p2;
-  const Point_2& P3 = geometry.p3;
-  const Point_2& n  = geometry.n_ab;
+  const Point_2& P2  = geometry.p2;
+  const Point_2& P3  = geometry.p3;
+  const Point_2& n   = geometry.n_ab;
   const double cross = geometry.in_dir.x() * n.y() - geometry.in_dir.y() * n.x();
   const double sweep = (cross > 0.0) ? M_PI : -M_PI;
 
@@ -559,39 +498,17 @@ std::vector<Point_2> PlanBowShapedPath::buildHalfCircleTurn(const TurnGeometry& 
   const double far_end = std::max(P2.dot(geometry.in_dir), P3.dot(geometry.in_dir));
   const double pocket  = std::max(0.0, far_end - reach);
   if (pocket > output_.turn_max_pocket) {
-    updateTurnPocket(
-      pocket,
-      field_margin_ + maxOverrunOf(build_arc(base_center + push * geometry.in_dir)));
+    updateTurnPocket(pocket, field_margin_ + maxOverrunOf(build_arc(base_center + push * geometry.in_dir)));
   }
   return arc;
 }
 
-void PlanBowShapedPath::updateTurnPocket(double pocket, double margin_hint) {
-  output_.turn_max_pocket         = pocket;
-  output_.turn_pocket_margin_hint = margin_hint;
-}
-
-std::vector<Point_2> PlanBowShapedPath::legacyTurn(
-  const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4) {
+std::vector<Point_2> PlanBowShapedPath::legacyTurn(const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4) {
   const auto geometry = makeTurnGeometry(P1, P2, P3, P4);
   if (!geometry) {
     return {P2, P3};
   }
-  if (const auto tangent_arc = tryTangentArc(*geometry)) {
-    return *tangent_arc;
-  }
   return buildHalfCircleTurn(*geometry);
-}
-
-// 把边展开为顶点序列
-std::vector<Point_2> PlanBowShapedPath::flattenRidges(const std::vector<Segment_2>& ridges) {
-  std::vector<Point_2> key;
-  key.reserve(ridges.size() * 2);
-  for (const auto& seg : ridges) {
-    key.push_back(seg.first);
-    key.push_back(seg.second);
-  }
-  return key;
 }
 
 // ============================================================
@@ -629,9 +546,7 @@ void PlanBowShapedPath::generateWaypoints() {
   // 6. 垄线段 (牛耕法: 扫描线 ∩ 区域; 末行兜底用 far_side_edge)
   const std::vector<Segment_2> ridges = makeRidgeSegments(region, sweep_dir, offset_dir, far_side_edge);
   if (ridges.empty()) {
-    // 排不出垄线 = 内缩区域相对垄宽太窄 (垄太大), 归**参数类里的 ridge_width** —— 内缩这一步本身
-    // 是成功的 (上面已经拿到有效区域), 不该算到 field_margin 头上 (见 bow.hpp 的状态说明)。
-    SPDLOG_ERROR("内缩区域里生成不出垄线 (区域太窄, 或扫描线与区域裁剪后为空; ridge_width_ {:.3f} m, field_margin_ {:.3f} m)", ridge_width_, field_margin_);
+    SPDLOG_ERROR("内缩区域里生成不出垄线 (ridge_width_ {:.3f} m, field_margin_ {:.3f} m)", ridge_width_, field_margin_);
     if (output_.ok())
       fail(PlanStatus::kBadRidgeWidth, "ridge_width 不合理: 内缩区域里生成不出垄线 (区域太窄, 或扫描线裁剪后为空); 垄宽 " + std::to_string(ridge_width_) + " m");
     return;
@@ -642,7 +557,6 @@ void PlanBowShapedPath::generateWaypoints() {
   for (size_t i = 0; i < output_.key_waypoints.size(); ++i) {
     SPDLOG_INFO("关键点[{}]: x = {:.4f}, y = {:.4f}", i, output_.key_waypoints[i].x(), output_.key_waypoints[i].y());
   }
-  // 逐点类型 (WORK/TURN): 发布时写入 Path.waypoint_types。
   std::vector<uint8_t> inner_types;
   const std::vector<Point_2> inner_path = smoothTurns(output_.key_waypoints, &inner_types);
 
@@ -737,27 +651,19 @@ void PlanBowShapedPath::generateWaypoints() {
 // 用于一次规划 (本节点按单线程执行器跑: 没有工作线程也没有锁 —— 见 global_path_planner.cpp 里
 // updatePathFromInputs / planGeometry 的并发说明); 不同实例之间没有共享
 // 状态, 所以"每线程一个实例"可以并行 (见 test/test_bow_parallel.cpp)。
-// 参数夹取顺序与规则、日志文案都与改造前逐字一致; 结果整包返回, 对象上不导出 getter。
+// 结果整包返回, 对象上不导出 getter。
 BowOutput PlanBowShapedPath::plan(const BowInput& in) {
   // 入参落到成员上 (类的状态); 几何步骤只读这些成员, **绝不回写调用方传进来的 in**。
   cell_             = in.cell;
   ridge_width_      = in.ridge_width;
   path_resolution_  = in.path_resolution;
   field_margin_     = in.field_margin;
-  miter_limit_      = in.miter_limit;
   first_row_margin_ = in.first_row_margin;
   output_           = BowOutput{};   // 本次调用的输出/观测值 (成员只作暂存, 不对外暴露)
-  // 拐角上限: Clipper2 只在 > 1 时才用它 (<= 1 时 join 分支一律切角); 这里把非法值 (<= 1 / NaN)
-  // 夹到 1, 与 field_margin 的 std::max(0.0, ...) 同一套处理 —— 参数不当不该让规划直接失败,
-  // 但要在日志里说清"你给的值没按原样生效"。std::max 对 NaN 返回第一个实参 (= 1.0), 也能兜住。
-  miter_limit_ = std::max(1.0, in.miter_limit);
-  if (miter_limit_ != in.miter_limit) {
-    SPDLOG_WARN("miter_limit 不合理: {} (必须 >= 1.0), 本次按 {:.3f} 处理", in.miter_limit, miter_limit_);
-  }
 
   // 首行余量: 下界 kMinFirstRowMargin (Clipper2 量化网格 ≈1 mm, 更小会被量化吃掉), 上界 垄宽/2
   // (超过就破了近端覆盖契约 —— 首行离边界太近, 机具半幅盖不住田边那侧)。越界只告警并夹取,
-  // 与 field_margin / miter_limit 同一套"不让参数把规划弄失败"的约定。
+  // 与 field_margin 同一套"不让参数把规划弄失败"的约定。
   // NaN 不必单独兜: std::max/min 的比较对 NaN 恒为 false, 会停在左侧实参 (先夹到下界, 再由
   // min 保持), 结果落在合法域里; 上面那个"值变了就告警"照样会报出来。
   first_row_margin_ = std::max(kMinFirstRowMargin, in.first_row_margin);

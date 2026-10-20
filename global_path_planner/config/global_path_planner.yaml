@@ -23,5 +23,4 @@ global_path_planner:
     ridge_width: 2.5              # 垄宽/行距 (m)，必须 > 0
     field_margin: 1.5             # 田边内缩余量 (m)，必须 >= 0；建议 >= ridge_width/2，保证机具半幅不越过田边
     path_resolution: 0.2          # 路径插值分辨率（单位：米）
-    first_row_margin: 0.005       # ---- 首行余量（单位：米）
-    miter_limit: 2.0              # 预留参数: Clipper2 拐角上限；对凸多边形的向内偏置实测不改变结果
+    first_row_margin: 0.005       # 首行余量（单位：米）

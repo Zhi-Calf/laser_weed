@@ -107,7 +107,6 @@ TEST(BowParallel, PerInstanceSameInputIsBitIdentical) {
   EXPECT_TRUE(SameBits(in.ridge_width, in_before.ridge_width));
   EXPECT_TRUE(SameBits(in.path_resolution, in_before.path_resolution));
   EXPECT_TRUE(SameBits(in.field_margin, in_before.field_margin));
-  EXPECT_TRUE(SameBits(in.miter_limit, in_before.miter_limit));
   EXPECT_TRUE(SameBits(in.first_row_margin, in_before.first_row_margin));
   EXPECT_TRUE(SamePath(in.cell, in_before.cell));
 }

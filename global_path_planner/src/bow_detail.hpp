@@ -44,9 +44,6 @@ inline constexpr double kLineOverhang = 1.0;
 // 掉头圆弧的采样上限 (rad/步)
 inline constexpr double kMaxArcStepRad = 5.0 * M_PI / 180.0;
 
-// 相邻两条垄算不算"平行"的判据 (方向叉积 = |sin 夹角|)
-inline constexpr double kTurnParallelTol = 0.01;
-
 // 把半圆的顶点从"B-C 中点"往外推、推到"盖住靠外那个垄端"所需的步数
 inline constexpr int kTurnOutwardSteps = 20;
 

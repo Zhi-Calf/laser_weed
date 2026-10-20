@@ -208,6 +208,7 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_bow_planner test/test_bow_planner.cpp)
   target_link_libraries(test_bow_planner ${PROJECT_NAME}_lib)
+  target_compile_definitions(test_bow_planner PRIVATE GLOBAL_PATH_PLANNER_TEST_ACCESS)
 
   # 扫描方向选取 (minWidthDirection) 的单元测试: 私有步骤经公开接口 plan() ->
   # BowOutput::sweep_dir_deg 观测, 覆盖"最小垂直宽度边方向"的选取、并列/epsilon 判据、

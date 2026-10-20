@@ -26,19 +26,18 @@ public:
   BowFacade() = default;
 
   // ---- 旧 API: init / plan ----
-  bool init(const Polygon_2& cell, double ridge_width, double path_resolution, double field_margin = 0.0, double miter_limit = 2.0,
+  bool init(const Polygon_2& cell, double ridge_width, double path_resolution, double field_margin = 0.0,
             double first_row_margin = 0.005) {
-    return plan(cell, ridge_width, path_resolution, field_margin, miter_limit, first_row_margin).ok();
+    return plan(cell, ridge_width, path_resolution, field_margin, first_row_margin).ok();
   }
 
-  BowOutput plan(const Polygon_2& cell, double ridge_width, double path_resolution, double field_margin = 0.0, double miter_limit = 2.0,
+  BowOutput plan(const Polygon_2& cell, double ridge_width, double path_resolution, double field_margin = 0.0,
                  double first_row_margin = 0.005) {
     BowInput in;
     in.cell             = cell;
     in.ridge_width      = ridge_width;
     in.path_resolution  = path_resolution;
     in.field_margin     = field_margin;
-    in.miter_limit      = miter_limit;
     in.first_row_margin = first_row_margin;
     out_                = engine_.plan(in);
     return out_;

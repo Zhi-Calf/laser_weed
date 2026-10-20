@@ -155,16 +155,13 @@ void GlobalPathPlannerNode::loadLogParameters() {
 }
 
 void GlobalPathPlannerNode::loadParameters() {
-
   declare_parameter("path_resolution", 0.2);
-  declare_parameter("miter_limit", 2.0);
   declare_parameter("first_row_margin", 0.005);
   declare_parameter("poly", std::vector<double>{});
   declare_parameter("ridge_width", 0.0);
   declare_parameter("field_margin", 0.0);
 
   path_resolution_  = std::max(0.0, get_parameter("path_resolution").as_double());
-  miter_limit_      = std::max(1.0, get_parameter("miter_limit").as_double());
   first_row_margin_ = get_parameter("first_row_margin").as_double();
 
   // ---- 田块几何 (全部来自 YAML, 启动后只读) ----
@@ -201,7 +198,7 @@ void GlobalPathPlannerNode::loadParameters() {
   SPDLOG_INFO("========== 全局路径规划参数加载 ==========");
   SPDLOG_INFO("日志目录: {}, 文件上限: {} MB, 文件数量: {}, 控制台: {}, 级别: {}", log_dir_, log_file_size_mb_, log_file_count_, log_enable_console_ ? "开启" : "关闭", log_level_);
   SPDLOG_INFO("路径分辨率: {:.3f} m (/path 的插值步长; yaml 参数, 只在启动时读一次)", path_resolution_);
-  SPDLOG_INFO("拐角上限 miter_limit: {:.3f} (预留参数, 对向内偏置无影响); first_row_margin: {:.3f} m", miter_limit_, first_row_margin_);
+  SPDLOG_INFO("first_row_margin: {:.3f} m", first_row_margin_);
   SPDLOG_INFO("田块: 顶点 {} 个, 垄宽 {:.3f} m, 田边余量 {:.3f} m", raw_vertices_.size(), ridge_width_, field_margin_);
   SPDLOG_INFO("===========================================");
 }
@@ -224,11 +221,9 @@ void GlobalPathPlannerNode::planGeometry() {
   input.ridge_width      = ridge_width_;
   input.path_resolution  = path_resolution_;
   input.field_margin     = field_margin_;
-  input.miter_limit      = miter_limit_;
   input.first_row_margin = first_row_margin_;
   const BowOutput out    = planner_.plan(input);
   if (!out.ok()) {
-    // 清空当前生效路径: 定时器会无条件重发, 失败后不能继续把上一条旧路径当成有效路径发布。
     waypoints_.clear();
     waypoint_types_.clear();
     key_waypoints_.clear();

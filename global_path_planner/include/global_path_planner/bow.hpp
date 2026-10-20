@@ -23,10 +23,10 @@ enum class PlanStatus : uint8_t {
   kOk = 0,   // 成功: waypoints 非空
 
   // ---- 输入数据异常的细分 (与 preparePolygon 的判定阶梯一一对应) ----
-  kInputTooFew = 1,   // 输入边界点不足 (< 3 个)
-  kDedupTooFew = 2,   // 去重后的边界点不足 (< 3 个)
-  kHullTooFew  = 3,   // 凸包点不足 (< 3 个或退化成线)
-  kNonConvex   = 4,   // 地块非凸 (顶点落在地块凸包内部)
+  kInputTooFew      = 1,   // 输入边界点不足 (< 3 个)
+  kDedupTooFew      = 2,   // 去重后的边界点不足 (< 3 个)
+  kHullTooFew       = 3,   // 凸包点不足 (< 3 个或退化成线)
+  kNonConvex        = 4,   // 地块非凸 (顶点落在地块凸包内部)
   kSelfIntersecting = 5,   // 输入边界自相交 (按给定顶点顺序不是简单多边形)
 
   // ---- 参数配置不合理的细分 (与 insetPolygon / makeRidgeSegments 的判定对应) ----
@@ -100,7 +100,6 @@ struct BowInput {
   double ridge_width      = 0.0;     // 垄宽 (m, 必须 > 0)
   double path_resolution  = 0.0;     // 跟踪路径 (/path) 的插值分辨率 (m)
   double field_margin     = 0.0;     // 四周统一内缩的田边余量 (m)
-  double miter_limit      = 2.0;     // 预留: Clipper2 拐角上限; 对凸多边形的向内偏置实测不改变结果
   double first_row_margin = 0.005;   // 首行/末行兜底离内缩边界的余量 (m)
 };
 
@@ -126,6 +125,10 @@ struct BowOutput {
 // ============================================================
 // 履带机器人的全覆盖路径规划算法
 // ============================================================
+#ifdef GLOBAL_PATH_PLANNER_TEST_ACCESS
+class BowPlannerTestAccess;   // 测试专用: 直接验证私有掉头几何
+#endif
+
 class PlanBowShapedPath {
 public:
   PlanBowShapedPath()  = default;
@@ -133,6 +136,9 @@ public:
   BowOutput plan(const BowInput& in);
 
 private:
+#ifdef GLOBAL_PATH_PLANNER_TEST_ACCESS
+  friend class BowPlannerTestAccess;
+#endif
   void generateWaypoints();
   bool preparePolygon(const Polygon_2& cell, Polygon_2& out);
   Polygon_2 offsetUniformly(const Polygon_2& poly, double margin);
@@ -141,6 +147,8 @@ private:
   std::vector<Segment_2> makeRidgeSegments(const Polygon_2& region, const Point_2& sweep_dir, const Point_2& offset_dir, const Segment_2& far_side_edge);
   std::vector<Point_2> flattenRidges(const std::vector<Segment_2>& ridges);
   std::vector<Point_2> smoothTurns(const std::vector<Point_2>& key_waypoints, std::vector<uint8_t>* types = nullptr);
+
+private:
   struct EndExtensionSpec {
     const char* label;
     Segment_2 edge;
@@ -148,35 +156,29 @@ private:
     Point_2 search_dir;
     bool at_front;
   };
-  bool tryExtendPathEnd(
-    const EndExtensionSpec& spec,
-    const std::vector<Point_2>& path,
-    std::vector<Point_2>& out,
-    std::vector<uint8_t>* out_types) const;
+  bool tryExtendPathEnd(const EndExtensionSpec& spec, const std::vector<Point_2>& path, std::vector<Point_2>& out, std::vector<uint8_t>* out_types) const;
   std::vector<Point_2> extendEndsToRegionCorners(
     const std::vector<Point_2>& path,
     const Segment_2& near_side_edge,
     const Segment_2& far_side_edge,
     const std::vector<uint8_t>* in_types = nullptr,
     std::vector<uint8_t>* out_types      = nullptr);
-  double overrunOf(const Point_2& p);
-  double maxOverrunOf(const std::vector<Point_2>& pts);
 
+private:
   struct TurnGeometry {
     Point_2 p2;
     Point_2 p3;
     Point_2 in_dir;
-    Point_2 out_dir;
     Point_2 n_ab;
-    Point_2 n_cd;
     double radius = 0.0;
   };
   std::optional<TurnGeometry> makeTurnGeometry(const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4) const;
   std::vector<Point_2> sampleCircularArc(const Point_2& center, double radius, double start_angle, double sweep, const Point_2& t1, const Point_2& t2) const;
-  std::optional<std::vector<Point_2>> tryTangentArc(const TurnGeometry& geometry);
   std::vector<Point_2> buildHalfCircleTurn(const TurnGeometry& geometry);
-  void updateTurnPocket(double pocket, double margin_hint);
   std::vector<Point_2> legacyTurn(const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4);
+  double overrunOf(const Point_2& p);
+  double maxOverrunOf(const std::vector<Point_2>& pts);
+  void updateTurnPocket(double pocket, double margin_hint);
 
 private:
   void fail(PlanStatus st, const std::string& msg) {
@@ -189,7 +191,6 @@ private:
   double ridge_width_      = 0.0;     // 垄宽 (m): 跟踪路径 (/path) 按此宽度;
   double path_resolution_  = 0.0;     // 路径分辨率 (m): 跟踪路径 (/path) 按此插值;
   double field_margin_     = 0.0;     // 边界内缩距离 (m): 边界内缩后的地块 (field_) 按此宽度;
-  double miter_limit_      = 2.0;     // Clipper2 拐角上限 (预留: 对向内偏置无影响);
   double first_row_margin_ = 0.005;   // 首行离内缩边界的余量 (m): 首行贴得越近, 田边盲带越小;
   Polygon_2 field_;                   // 规范化后的地块 (凸、顺时针) —— 掉头"不许出界"的判据
   BowOutput output_;                  // 规划结果 (plan() 落出去)
