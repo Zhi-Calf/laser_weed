@@ -36,7 +36,7 @@ sim_vehicle ──/gnss_driver/odom──► lqr_control
 | `gnss_localization` | 读取 RTK 接收机 GIAVP 数据，投影到 ENU，发布 odom、origin、status 和 `odom→base_link` TF；提供 NTRIP 与千寻 SDK 两种差分客户端 |
 | `global_path_planner` | 根据 YAML 中的田块边界生成弓字形全覆盖路径 |
 | `lqr_control` | 四轮转向 LQR 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
-| `weeder_base` | CAN 协议编解码、SocketCAN 驱动、10Hz 指令发送与状态上报、全部底盘/BMS 状态接收 |
+| `weeder_base` | CAN 协议编解码、SocketCAN 驱动、50Hz 指令发送、10Hz 状态发布、全部底盘/BMS 状态接收 |
 | `weeder_msgs` | 车辆、BMS、GNSS、工作模式、全覆盖路径等 ROS2 消息 |
 | `sim_vehicle` | 无硬件仿真：模拟 RTK、车辆运动学、工作模式，并可一键启动完整链路 |
 
@@ -81,17 +81,17 @@ bool ctrl_mode
 ```
 
 `lqr_control` 每拍发布一次该消息，`weeder_base/chassis_node` 接收后转换为
-`ADCU_toVCU_01`（`0x0C01D01C`），以 10Hz（100ms）周期发送给 VCU。
+`ADCU_toVCU_01`（`0x0C01D01C`），以 20ms（50Hz）周期发送给 VCU。
 
 手动遥控或测试工具也必须发布 `weeder_msgs/msg/ChassisCmd`，不再使用
 `geometry_msgs/Twist` 或单独的转角话题。
 
 ## 底盘状态
 
-`weeder_base` 接收协议第二版中的全部上行帧：
+`weeder_base` 接收协议第二版修中的全部上行帧：
 
 - `State_01~11`：底盘主状态、四轮转速、四轮转角、行走/转向电机电参
-- `State_21~22`：BMS SOC、电压、电流、容量、循环次数、故障码和电芯电压
+- `State_21~22`：BMS SOC、电压、电流（放电为正、充电为负）、容量、循环次数、故障码和电芯电压
 
 统一发布为：
 
@@ -239,7 +239,7 @@ colcon test
 colcon test-result --verbose
 ```
 
-`weeder_base` 覆盖协议编码、位域、有符号数、范围检查和 BMS 第二版布局；
+`weeder_base` 覆盖协议编码、位域、有符号数、范围检查和 BMS 第二版修布局；
 `lqr_control` 覆盖四轮转向运动学、前馈、符号、闭环收敛和协议限幅；
 `global_path_planner` 覆盖弓字形规划、覆盖率、凸性校验、YAML 配置契约和严格线段相交；
 `gnss_localization` 覆盖 GIAVP 解析、参数写回和 YAML 参数一致性。
@@ -254,7 +254,8 @@ colcon test-result --verbose
 - `lqr_control` 仅适用于 `steer_mode=0`（单阿克曼）和 `1`（双阿克曼）
 - 当前不支持倒车，底盘档位固定为 D
 - 仿真为理想模型，不含轮胎侧偏、执行器延迟、RTK 延迟和地面打滑
-- 协议中车速与 BMS 分辨率存在文档歧义，实车联调时需用抓包确认
+- 协议中车速原始值的单位表述仍有歧义（`Value=0.001X` 与 mm/s），实车联调时需用抓包确认；
+  BMS 电流已按第二版修实现为 signed、0.1A 分辨率、偏移 1000A
 
 ## 来源与许可证
 

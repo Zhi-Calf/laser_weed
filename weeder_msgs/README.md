@@ -7,7 +7,7 @@
 | Message | Description |
 |---------|-------------|
 | `ChassisCmd` | 完整底盘指令：档位、转向模式、抱闸、急停、驾驶模式、速度与前轮转角 |
-| `ChassisState` | 激光除草机底盘完整状态：State_01~11 四轮底盘/电机数据与 State_21/22 BMS |
+| `ChassisState` | 激光除草机底盘完整状态：State_01~11 四轮底盘/电机数据与 State_21/22 BMS（电流放电为正、充电为负） |
 | `GnssStatus` | GNSS/RTK fix quality and solution status (`/gnss_driver/status`) |
 | `Path` | 全覆盖路径：`x[]`、`y[]` 与 `waypoint_types[]` 按索引一一对应；当前 `lqr_control` 只读 `x/y`，类型字段预留给机具分段控制 |
 | `WorkMode` | Whole-vehicle work mode (`0`=manual / `1`=unmanned / `2`=calibration), latched so late joiners see the current mode |

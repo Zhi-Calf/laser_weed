@@ -85,12 +85,11 @@ MegaTrak 的 `lqr_R_w` 是**角速度代价**，本包的 `lqr_R_steer` 是**转
 ### 2.4 符号约定（已追踪源码核对）
 
 CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左正右负**
-（`weeder_base/protocol/can_protocol.hpp` 第二版 Byte3~4）。本控制器输出弧度、左正——
+（`weeder_base/protocol/can_protocol.hpp` 第二版修 Byte3~4）。本控制器输出弧度、左正——
 **符号同向，不需要取反**，只做 `弧度 → 度 → ×10` 换算。
 
 字段名已确认：`weeder_base::protocol::AdcuCommand01` 的字段为
 `gear`/`steer_mode`/`estop`/`speed_raw`/`steer_angle`/`alive_counter`。
-工作区里另有一份 `gear_cmd`/`veh_speed_cmd` 命名的旧头文件，**没被引用、不参与编译**，别照它改。
 
 ---
 

@@ -1,8 +1,9 @@
 # weeder_base
 
 激光除草机底盘 CAN 通讯节点。协议定义在
-`weeder_base/include/weeder_base/protocol/can_protocol.hpp`，本包负责 SocketCAN
-收发、ROS2 话题和周期调度。
+`weeder_base/include/weeder_base/protocol/can_protocol.hpp`（依据
+`docs/激光除草机无人驾驶通讯协议--第二版修.xlsx`），本包负责 SocketCAN 收发、
+ROS2 话题和周期调度。
 
 ## 通讯链路
 
