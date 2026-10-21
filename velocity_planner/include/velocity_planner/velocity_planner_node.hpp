@@ -27,6 +27,7 @@ private:
 
   std::string input_cloud_topic_;     // 输入点云话题
   std::string output_status_topic_;   // 输出的避停状态话题
+  double point_cloud_timeout_s_{0.5};   // 点云心跳超时 (s)
   double stop_hold_s_{0.3};           // 障碍消失后的停车保持时间
   RoiConfig roi_config_;              // ROI 参数
 
@@ -49,7 +50,7 @@ private:
   bool cached_stop_required_{true};          // 最近点云是否要求停车
   std::size_t cached_obstacle_points_{0};    // 最近 ROI 障碍点数
   float cached_nearest_distance_m_{-1.0F};   // 最近障碍距离
-  std::string cloud_frame_id_{"rslidar"};    // 最近点云坐标系
+  std::string cloud_frame_id_{"lidar"};   // 输出状态固定坐标系
   std::chrono::steady_clock::time_point
       last_cloud_receive_time_{};   // 最近一次收到点云的时刻
 };

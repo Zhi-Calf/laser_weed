@@ -25,7 +25,6 @@ namespace {
 
 constexpr const char* kNodeName = "velocity_planner";          // 节点名
 constexpr double kPublishHz     = 10.0;                        // 状态固定发布频率
-constexpr std::chrono::milliseconds kPointCloudTimeout{500};   // 点云心跳超时
 
 // 扩展日志路径中的 ~ 与环境变量。
 std::string ExpandPath(std::string path) {
@@ -153,6 +152,7 @@ void VelocityPlannerNode::LoadLogParameters() {
 void VelocityPlannerNode::LoadParameters() {
   declare_parameter("input_cloud_topic", "/rslidar_points");
   declare_parameter("output_status_topic", "/velocity_planner/status");
+  declare_parameter("point_cloud_timeout_s", 0.5);
   declare_parameter("stop_hold_s", 0.3);
   declare_parameter("roi_forward_min_m", 0.0);
   declare_parameter("roi_forward_max_m", 2.0);
@@ -163,6 +163,7 @@ void VelocityPlannerNode::LoadParameters() {
 
   input_cloud_topic_           = get_parameter("input_cloud_topic").as_string();
   output_status_topic_         = get_parameter("output_status_topic").as_string();
+  point_cloud_timeout_s_       = get_parameter("point_cloud_timeout_s").as_double();
   stop_hold_s_                 = get_parameter("stop_hold_s").as_double();
   roi_config_.forward_min_m    = get_parameter("roi_forward_min_m").as_double();
   roi_config_.forward_max_m    = get_parameter("roi_forward_max_m").as_double();
@@ -176,6 +177,12 @@ void VelocityPlannerNode::LoadParameters() {
   }
   if (output_status_topic_.empty()) {
     output_status_topic_ = "/velocity_planner/status";
+  }
+  if (!std::isfinite(point_cloud_timeout_s_) || point_cloud_timeout_s_ <= 0.0) {
+    SPDLOG_WARN(
+      "point_cloud_timeout_s={} 非法，回退为 0.5s",
+      point_cloud_timeout_s_);
+    point_cloud_timeout_s_ = 0.5;
   }
   stop_hold_s_             = std::max(stop_hold_s_, 0.0);
   roi_config_.half_width_m = std::max(roi_config_.half_width_m, 0.01);
@@ -199,6 +206,7 @@ void VelocityPlannerNode::LoadParameters() {
   SPDLOG_INFO("点云话题: {}", input_cloud_topic_);
   SPDLOG_INFO("状态话题: {}", output_status_topic_);
   SPDLOG_INFO("状态发布频率: {:.1f} Hz (固定)", kPublishHz);
+  SPDLOG_INFO("点云心跳超时: {:.2f}s", point_cloud_timeout_s_);
   SPDLOG_INFO("障碍消失后停车保持: {:.2f}s", stop_hold_s_);
   SPDLOG_INFO("ROI 前向: [{:.2f}, {:.2f}] m, 左右半宽: {:.2f} m", roi_config_.forward_min_m, roi_config_.forward_max_m, roi_config_.half_width_m);
   SPDLOG_INFO("ROI 高度: [{:.2f}, {:.2f}] m, 最少障碍点数: {}", roi_config_.min_height_m, roi_config_.max_height_m, roi_config_.min_obstacle_points);
@@ -234,9 +242,6 @@ void VelocityPlannerNode::PublishStatus() {
   weeder_msgs::msg::ObstacleStatus status;
   const auto now = this->now();
   if (has_pending_cloud_ && pending_cloud_) {
-    if (!pending_cloud_->header.frame_id.empty()) {
-      cloud_frame_id_ = pending_cloud_->header.frame_id;
-    }
     const RoiResult result     = roi_filter_->Evaluate(*pending_cloud_);
     const bool hold_stop       = stop_hold_->Update(result.stop_required, now.seconds());
     cached_sensor_valid_       = result.cloud_valid;
@@ -258,20 +263,23 @@ void VelocityPlannerNode::PublishStatus() {
     has_pending_cloud_ = false;
   }
 
-  bool sensor_valid           = cached_sensor_valid_;
-  bool stop_required          = cached_stop_required_;
-  std::size_t obstacle_points = cached_obstacle_points_;
-  float nearest_distance_m    = cached_nearest_distance_m_;
-
+  bool sensor_valid              = cached_sensor_valid_;
+  bool stop_required             = cached_stop_required_;
+  std::size_t obstacle_points    = cached_obstacle_points_;
+  float nearest_distance_m       = cached_nearest_distance_m_;
   const auto point_cloud_age     = std::chrono::steady_clock::now() - last_cloud_receive_time_;
-  const bool point_cloud_timeout = has_cloud_result_ && point_cloud_age >= kPointCloudTimeout;
+  const bool point_cloud_timeout =
+    has_cloud_result_ &&
+    point_cloud_age >= std::chrono::duration<double>(point_cloud_timeout_s_);
   if (!has_cloud_result_ || point_cloud_timeout) {
     sensor_valid       = false;
     stop_required      = true;
     obstacle_points    = 0;
     nearest_distance_m = -1.0F;
     if (point_cloud_timeout) {
-      SPDLOG_WARN("点云超过 0.5s 未更新，输出停车请求");
+      SPDLOG_WARN(
+        "点云超过 {:.2f}s 未更新，输出停车请求",
+        point_cloud_timeout_s_);
     } else {
       SPDLOG_WARN("尚未收到有效点云，输出停车请求");
     }

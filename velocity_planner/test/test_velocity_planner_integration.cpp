@@ -79,6 +79,7 @@ TEST(VelocityPlannerIntegration, PublishesStopThenClearAfterHold)
 {
   rclcpp::NodeOptions planner_options;
   planner_options.parameter_overrides({
+    rclcpp::Parameter("point_cloud_timeout_s", 0.1),
     rclcpp::Parameter("stop_hold_s", 0.2),
     rclcpp::Parameter("min_obstacle_points", static_cast<int64_t>(2)),
   });
@@ -117,7 +118,7 @@ TEST(VelocityPlannerIntegration, PublishesStopThenClearAfterHold)
   EXPECT_TRUE(last_status.sensor_valid);
   EXPECT_TRUE(last_status.stop_required);
   EXPECT_EQ(last_status.obstacle_points, 2U);
-  EXPECT_EQ(last_status.header.frame_id, "rslidar");
+  EXPECT_EQ(last_status.header.frame_id, "lidar");
 
   const bool observed_clear = SpinUntil(
     executor, cloud_publisher,
@@ -132,12 +133,12 @@ TEST(VelocityPlannerIntegration, PublishesStopThenClearAfterHold)
   EXPECT_TRUE(last_status.sensor_valid);
   EXPECT_FALSE(last_status.stop_required);
   EXPECT_EQ(last_status.obstacle_points, 0U);
-  EXPECT_EQ(last_status.header.frame_id, "rslidar");
+  EXPECT_EQ(last_status.header.frame_id, "lidar");
 
   // 点云超过固定心跳超时后，应失效并输出安全停车。
   has_status = false;
   const auto quiet_deadline = std::chrono::steady_clock::now() +
-    std::chrono::milliseconds(700);
+    std::chrono::milliseconds(350);
   while (std::chrono::steady_clock::now() < quiet_deadline) {
     executor.spin_some();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));

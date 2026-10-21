@@ -20,8 +20,8 @@ path_tracker ──/chassis/cmd──► weeder_base
 ```
 
 节点固定以 10 Hz 发布状态。`sensor_valid=false` 表示启动后尚未收到点云、点云超过
-0.5 秒未更新，或最新点云为空/字段无效/没有有限坐标，此时 `stop_required=true`。
-ROI 内有效点达到阈值时同样输出停车请求。
+`point_cloud_timeout_s` 未更新，或最新点云为空/字段无效/没有有限坐标，此时
+`stop_required=true`。ROI 内有效点达到阈值时同样输出停车请求。
 
 ## ROI 与参数
 
@@ -36,6 +36,7 @@ ROI 内有效点达到阈值时同样输出停车请求。
 | `roi_min_height_m` | `0.1` | 雷达坐标系下最低点高度 |
 | `roi_max_height_m` | `1.5` | 雷达坐标系下最高点高度 |
 | `min_obstacle_points` | `3` | 触发停车的最少点数 |
+| `point_cloud_timeout_s` | `0.5` | 超过该时间未收到点云则安全停车 |
 | `stop_hold_s` | `0.3` | 障碍消失后的最短停车时间 |
 
 默认 ROI 只是安全起点。实车必须根据车辆包络、雷达安装位置和实际刹停距离调整。
@@ -50,9 +51,9 @@ ROI 内有效点达到阈值时同样输出停车请求。
 
 ## 坐标要求
 
-节点直接使用点云消息中的 `header.frame_id`，不查询 TF。E1R 驱动默认输出
-`rslidar` 坐标系，因此 ROI 参数直接按雷达安装后的视角配置。状态消息的
-`header.frame_id` 也继承最近一帧点云的坐标系。
+节点直接使用点云坐标，不查询 TF，因此 ROI 参数应按雷达安装后的视角配置。
+无论输入点云消息的 `header.frame_id` 是什么，输出状态消息的
+`header.frame_id` 都固定为 `lidar`。
 
 ## 构建与运行
 
