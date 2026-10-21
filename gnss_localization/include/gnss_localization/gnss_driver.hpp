@@ -18,7 +18,7 @@
 
 #include "gnss_localization/giavp_parser.hpp"
 #include "gnss_localization/serial_port.hpp"
-#include "weeder_msgs/msg/gnss_status.hpp"
+#include "weeder_msgs/msg/pose.hpp"
 namespace gnss_localization {
 
 // GIAVP 解算状态常量 (与 giavp_parser.hpp 中 GiavpData::status 语义一致)。
@@ -30,15 +30,14 @@ constexpr int kStatusRtkFixed = 4;   // RTK 固定解
 /// 从串口读取 $GIAVP 语句, 发布以下话题 (均为节点相对名, 完整名为
 /// /gnss_driver/<topic>):
 ///   ~/fix            原始经纬度 (设备 INS 解算, NavSatFix)
-///   ~/odom           修正 ENU 里程计 (已减杆臂 calib_offset_* + 航向偏角修正)
+///   ~/pose           修正 ENU 位姿 (weeder_msgs/Pose, 含姿态/卫星数/有效性/速度)
 ///   ~/odom_raw       原始里程计 (设备中心 gnss_link + 原始测向航向, 无任何修正), **仅供标定**
 ///   ~/imu            IMU 姿态 (含 ENU yaw), sensor_msgs/Imu
 ///   ~/vel            车体系速度 (TwistWithCovarianceStamped, x 前 y 左 z 上)
-///   ~/status         GNSS 状态 (含原始航向、解算状态, GnssStatus)
 ///   ~/origin     ENU 起点经纬度 (优先取 YAML origin_*, 否则取上电后首次固定解), transient_local +
 ///                    1 Hz 低频重发, 供 global_path_planner / local_path_planner
 ///                    作规划原点 (保证全链路同原点; path_controller 直接订阅
-///                    ~/odom, 已含同原点的修正 ENU 位姿)。
+///                    ~/pose, 已含同原点的修正 ENU 位姿)。
 class GnssDriver : public rclcpp::Node {
 public:
   explicit GnssDriver(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
@@ -56,7 +55,6 @@ private:
   void timerCallback();
   void processLine(const std::string& line);
   void handleGiavp(const GiavpData& d);
-  bool tryOpenSerial();
   void updateHealth();
   void updateHealthState(HealthState state, const std::string& message);
   bool positionUsable(const GiavpData& d) const;
@@ -67,8 +65,7 @@ private:
   void publishFix(const GiavpData& d);
   void publishImu(const GiavpData& d);
   void publishVelocity(const GiavpData& d);
-  void publishStatus(const GiavpData& d);
-  void publishOdom(const GiavpData& d);
+  void publishPose(const GiavpData& d);
   void publishOriginLlh();
   rcl_interfaces::msg::SetParametersResult onSetParameters(const std::vector<rclcpp::Parameter>& parameters);
 
@@ -84,11 +81,10 @@ private:
 
 private:
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr fix_pub_;
-  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
+  rclcpp::Publisher<weeder_msgs::msg::Pose>::SharedPtr pose_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_raw_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   rclcpp::Publisher<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr vel_pub_;
-  rclcpp::Publisher<weeder_msgs::msg::GnssStatus>::SharedPtr status_pub_;
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr origin_llh_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::TimerBase::SharedPtr timer_;
@@ -117,10 +113,9 @@ private:
   double calib_offset_max_heading_{0.6};   // calib_offset_heading 范围上限 (rad, ≈34°)
   mutable std::mutex calib_mutex_;         // 保护 calib_offset_* (参数回调 vs 定时器线程)
   bool debug_giavp_{false};                // 是否打印 giavp 数据到日志
-  int status_log_interval_{500};           // 状态日志条数间隔 (10Hz 下 500 条 = 50s)
-  int odom_log_interval_{10};              // 里程计日志条数间隔 (10Hz 下 10 条 = 1s)
+  int gnss_log_interval_{500};             // GNSS 状态日志条数间隔
+  int pose_log_interval_{10};              // 位姿日志条数间隔
   double giavp_timeout_sec_{1.0};           // 无有效 GIAVP 数据超时
-  double serial_retry_interval_sec_{1.0};   // 串口重开间隔
   bool use_gps_timestamp_{true};            // 是否使用 GIAVP GPS 时间戳
   int gps_utc_leap_seconds_{18};            // GPS 与 UTC 当前闰秒差
 
@@ -132,8 +127,8 @@ private:
   std::string log_level_   = "info";             // 日志级别
 
 private:
-  int status_log_counter_{0};                                   // 状态日志计数 (阈值见 status_log_interval_)
-  int odom_log_counter_{0};                                     // 里程计日志计数 (阈值见 odom_log_interval_)
+  int gnss_log_counter_{0};                                     // GNSS 日志计数
+  int pose_log_counter_{0};                                     // 位姿日志计数
   rclcpp::Time last_origin_publish_time_{0, 0, RCL_ROS_TIME};   // 10Hz 节流
   double datum_lat_deg_{0.0};                                   // datum 纬度
   double datum_lon_deg_{0.0};                                   // datum 经度
@@ -141,11 +136,9 @@ private:
   bool datum_from_config_{false};                               // ENU 原点是否来自 YAML
   bool first_heading_logged_{false};                            // 是否已打印过首个航向日志
   bool has_giavp_{false};                                       // 本次串口连接是否收到过有效帧
-  bool serial_failure_reported_{false};                         // 是否已记录本次连续串口失败
   int last_status_{0};                                          // 最近一帧解算状态
   HealthState last_health_state_{HealthState::kWaiting};        // 最近健康状态
   std::chrono::steady_clock::time_point last_giavp_time_{};     // 最近有效帧时刻
-  std::chrono::steady_clock::time_point last_serial_retry_time_{};  // 上次串口重开时刻
 };
 
 }   // namespace gnss_localization

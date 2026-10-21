@@ -5,7 +5,7 @@
   <version>0.1.0</version>
   <description>
     Simulation vehicle node for laser-weeder integration testing without hardware.
-    Replaces gnss_localization (publishes /gnss_driver/odom, /gnss_driver/origin, TF
+    Replaces gnss_localization (publishes /gnss_driver/pose, /gnss_driver/origin, TF
     odom->base_link) and the chassis (consumes /chassis/cmd, integrates
     a single-Ackermann bicycle model), and publishes /work_mode so that
     global_path_planner and path_tracker can be exercised end to end.

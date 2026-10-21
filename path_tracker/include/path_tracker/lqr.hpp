@@ -85,7 +85,7 @@ public:
   /// are filled in by computePathProfile() before this call.
   void setTrajectory(const std::vector<TrajectoryPoint> & points);
 
-  /// Feed the latest localization (RTK odometry).
+  /// Feed the latest localization pose.
   void setRobotState(const RobotState & state);
 
   /// Advance the tracked goal point by the measured distance, then snap forward

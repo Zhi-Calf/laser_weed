@@ -17,8 +17,7 @@ namespace fault
 /// /work_mode missing, stale, or not MODE_UNMANNED -> not armed, motion withheld.
 inline constexpr uint32_t kNoWorkMode = 10101;
 
-/// No usable RTK pose: odometry missing, timed out, or solution degraded below
-/// the rtk_max_sigma gate.
+/// No usable RTK pose: Pose missing, timed out, or Pose.valid is false.
 inline constexpr uint32_t kNoRtkPose = 10102;
 
 /// No path to track: never received, or the last one went stale.
@@ -45,7 +44,7 @@ inline constexpr uint32_t kTrackErrorLost = 10106;
 /// ROI 内检测到有效障碍点，避停门控主动要求停车。
 inline constexpr uint32_t kObstacleInRoi = 10107;
 
-/// 点云、TF、避停节点或避停状态消息不可用；按失效停车处理。
+/// 点云、速度规划节点或避停状态消息不可用；按失效停车处理。
 inline constexpr uint32_t kVelocityPlannerUnavailable = 10108;
 
 /// Upstream node names retained for fault attribution in future reporting.

@@ -8,10 +8,8 @@
 #include <vector>
 
 #include <gtest/gtest.h>
-#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
-#include <tf2_ros/static_transform_broadcaster.h>
 #include <weeder_msgs/msg/obstacle_status.hpp>
 
 namespace
@@ -81,8 +79,6 @@ TEST(VelocityPlannerIntegration, PublishesStopThenClearAfterHold)
 {
   rclcpp::NodeOptions planner_options;
   planner_options.parameter_overrides({
-    rclcpp::Parameter("publish_hz", 20.0),
-    rclcpp::Parameter("cloud_timeout_s", 0.5),
     rclcpp::Parameter("stop_hold_s", 0.2),
     rclcpp::Parameter("min_obstacle_points", static_cast<int64_t>(2)),
   });
@@ -105,15 +101,6 @@ TEST(VelocityPlannerIntegration, PublishesStopThenClearAfterHold)
       has_status = true;
     });
 
-  auto transform_broadcaster =
-    std::make_shared<tf2_ros::StaticTransformBroadcaster>(tester);
-  geometry_msgs::msg::TransformStamped transform;
-  transform.header.stamp = tester->now();
-  transform.header.frame_id = "base_link";
-  transform.child_frame_id = "rslidar";
-  transform.transform.rotation.w = 1.0;
-  transform_broadcaster->sendTransform(transform);
-
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(tester);
   executor.add_node(planner_node);
@@ -130,6 +117,7 @@ TEST(VelocityPlannerIntegration, PublishesStopThenClearAfterHold)
   EXPECT_TRUE(last_status.sensor_valid);
   EXPECT_TRUE(last_status.stop_required);
   EXPECT_EQ(last_status.obstacle_points, 2U);
+  EXPECT_EQ(last_status.header.frame_id, "rslidar");
 
   const bool observed_clear = SpinUntil(
     executor, cloud_publisher,
@@ -143,6 +131,20 @@ TEST(VelocityPlannerIntegration, PublishesStopThenClearAfterHold)
   ASSERT_TRUE(observed_clear);
   EXPECT_TRUE(last_status.sensor_valid);
   EXPECT_FALSE(last_status.stop_required);
+  EXPECT_EQ(last_status.obstacle_points, 0U);
+  EXPECT_EQ(last_status.header.frame_id, "rslidar");
+
+  // 点云超过固定心跳超时后，应失效并输出安全停车。
+  has_status = false;
+  const auto quiet_deadline = std::chrono::steady_clock::now() +
+    std::chrono::milliseconds(700);
+  while (std::chrono::steady_clock::now() < quiet_deadline) {
+    executor.spin_some();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  ASSERT_TRUE(has_status);
+  EXPECT_FALSE(last_status.sensor_valid);
+  EXPECT_TRUE(last_status.stop_required);
   EXPECT_EQ(last_status.obstacle_points, 0U);
 
   executor.remove_node(planner_node);

@@ -44,7 +44,7 @@
 | `log_dir` | `/opt/agri/logs` | 除草机日志目录（如 `~/logs`） | 🟡 |
 | `frame_id` | `gnss_link` | 保持 `gnss_link` 即可（除非除草机 TF 树另有约定） | 🟢 |
 
-**为什么杆臂 🔴 必须重标**：`calib_offset_*` 是天线安装位置的物理量，履带车 x=0.5m 是它的天线装在前部 0.5m 处。除草机天线装在别的位置，这个值就不一样。GNSS 用它做杆臂补偿把天线坐标换算到 base_link（`gnss_driver.cpp:651`）——**填错会让 `/gnss_driver/odom` 整体偏移**，下游规划和控制全跟着错，激光打偏。必须按除草机实际安装测量填入，或用 `tractor_calibration` 标定后写回。
+**为什么杆臂 🔴 必须重标**：`calib_offset_*` 是天线安装位置的物理量，履带车 x=0.5m 是它的天线装在前部 0.5m 处。除草机天线装在别的位置，这个值就不一样。GNSS 用它做杆臂补偿把天线坐标换算到 base_link（`gnss_driver.cpp:651`）——**填错会让 `/gnss_driver/pose` 整体偏移**，下游规划和控制全跟着错，激光打偏。必须按除草机实际安装测量填入，或用 `tractor_calibration` 标定后写回。
 
 文件：`~/ros2_ws/src/gnss_localization/config/ntrip_client.yaml`（方案 A）
 
@@ -201,9 +201,8 @@ colcon test-result --verbose
 ros2 launch gnss_localization localization.launch.py
 ros2 launch gnss_localization ntrip_client.launch.py
 
-# 看定位对不对（有 fix、odom 不跳）
-ros2 topic echo /gnss_driver/status --once
-ros2 topic echo /gnss_driver/odom --once
+# 看定位对不对（有 fix、pose 不跳）
+ros2 topic echo /gnss_driver/pose --once
 
 # 起规划器
 ros2 launch global_path_planner planner.launch.py

@@ -2,11 +2,11 @@
 
 双天线 MEMS 惯性-卫星组合导航系统作为 GNSS 定位备选方案。
 驱动节点 `gnss_driver` 解析 `$GIAVP` 语句，发布话题
-（`/gnss_driver/fix`、`/gnss_driver/odom`、`/gnss_driver/odom_raw`、
-`/gnss_driver/imu`、`/gnss_driver/vel`、`/gnss_driver/status`、
-`/gnss_driver/origin`）。修正里程计
-`/gnss_driver/odom` 已是 ENU
-且含杆臂/标定/航向修正，path_controller 直接订阅它并发布 `/odometry/global`。
+（`/gnss_driver/fix`、`/gnss_driver/pose`、`/gnss_driver/odom_raw`、
+`/gnss_driver/imu`、`/gnss_driver/vel`、
+`/gnss_driver/origin`）。修正位姿
+`/gnss_driver/pose` 已是 ENU
+且含杆臂/标定/航向修正，`path_tracker` 直接订阅它。
 `/gnss_driver/odom_raw` 是**原始**数据（设备中心位置 + 原始测向航向，无任何修正），
 只给 tractor_calibration 标定用：标定要测物理真值，用修正后的位姿会被当前生效的
 标定值污染。标定结果（`calib_offset_x/y` = 绝对杆臂、`calib_offset_heading` = 绝对偏角）
@@ -24,7 +24,8 @@ ros2 launch tractor_bringup bringup.launch.py
 
 **ENU 原点（datum）优先取 `gnss_driver.yaml` 的 `origin_lat/origin_lon/origin_alt`**。
 这三个值必须与 `global_path_planner.yaml` 中 `poly` 的第一个顶点完全一致：
-规划器用该顶点做 ENU 投影，`gnss_driver` 用同一坐标把 RTK 位置投影成 `/gnss_driver/odom`。
+规划器用该顶点做 ENU 投影，`gnss_driver` 用同一坐标把 RTK 位置投影成
+`/gnss_driver/pose`。
 原点通过 `/gnss_driver/origin` 以 `transient_local` 发布，之后按 1 Hz 重发。
 若 `origin_*` 未配置或非法，才回退为上电后首次 RTK 固定解。
 `gnss:=false` 可跳过整个 GNSS 分支做台架测试。
@@ -82,7 +83,7 @@ ros2 launch tractor_bringup bringup.launch.py
 - `calib_offset_y`：横向 (Y 向左为正；主机不在纵向中轴线上时非零)
 - 两者是**绝对杆臂**，由 `tractor_calibration` 的原地旋转标定测出后写回
   `config/gnss_driver.yaml` 并立即生效 —— 不需要现场手工填数，也不再有"名义杆臂"这一层。
-- 垂向高度不参与杆臂换算（标定只有 x/y/heading 三个量）：`odom` 的 z 即设备中心高程，
+- 垂向高度不参与杆臂换算（标定只有 x/y/heading 三个量）：`pose` 的 z 即设备中心高程，
   `base_link -> gnss_link` 静态 TF 也不再发布。
 
 ## 4. 设备端一次性配置（UartAssist，波特率 460800）
@@ -117,24 +118,25 @@ $cmd,saveconf,1*ff                   # 保存配置
 
 1. 上电后 work 灯闪烁（工作正常）、定位灯闪烁（定位成功）；首次定位 < 35 s，定向 < 1 min。
 2. 串口收到 `$GIAVP` 语句，频率 ≈ 10 Hz。
-3. `ros2 topic echo /gnss_driver/status`：
-   - `fix_type = 4`（RTK 固定解）后才可跑作业；4G Module 差分正常时通常 1~2 分钟内收敛。
-   - 如长时间停在 5（浮点）/1（单点），检查 4G Module 供电、天线、千寻账号。
+3. `ros2 topic echo /gnss_driver/pose`：
+   - `valid = true`（RTK 固定解）后才可跑作业；4G Module 差分正常时通常 1~2 分钟内收敛。
+   - `valid` 长时间为 false 时，结合节点日志和 GIAVP 解算状态检查 4G Module
+     供电、天线、千寻账号。
 4. 检查节点日志：GIAVP 断流、未达到 RTK 固定解、串口掉线都会输出告警；
    串口会按配置周期自动重开。
 5. GIAVP 的 Baseline ≈ 实测基线（3.2），偏差 > 10 cm 需排查天线是否接反。
 6. 航向验证：车头朝北时 `heading_deg ≈ 0`，朝东 ≈ 90。若差 90° 的整数倍，
    说明 `dualant` 未配置或配置错误（回到第 4 步）。
-7. 位置验证：`ros2 topic echo /odometry/global`，前后推车确认 x/y 变化方向与车体运动一致。
+7. 位置验证：`ros2 topic echo /gnss_driver/pose`，前后推车确认 x/y 变化方向与车体运动一致。
 
 ## 7. 常用排查
 
 | 现象 | 排查 |
 |------|------|
 | 串口无数据 | TX/RX 是否交叉；波特率是否与设备一致（推荐 115200）；设备是否已 `saveconf` 为 GIAVP |
-| status 一直 0 | 天线馈线连接；到开阔地带；等待首次定位 |
-| status 停在 1/2 | 4G Module 差分未通：查 4G 天线、物联网卡流量、千寻账号 |
-| status 停在 5 浮点 | 天线遮挡/多路径；基线过短；等待收敛 |
+| Pose.valid 一直 false | 天线馈线连接；到开阔地带；等待首次固定解 |
+| GIAVP status 停在 1/2 | 4G Module 差分未通：查 4G 天线、物联网卡流量、千寻账号 |
+| GIAVP status 停在 5 浮点 | 天线遮挡/多路径；基线过短；等待收敛 |
 | 航向差 90° | `dualant` 未配置为 1 |
 | 航向差 180° | 主从天线接反（主天线应在右侧接 ANT1） |
-| odom/TF 不发布 | 当前帧 `fix_type=0` 或经纬度无效；检查节点日志，非固定解仍发布但协方差为 1e6 |
+| pose/TF 不发布 | 当前帧 `status=0` 或经纬度无效；检查节点日志 |

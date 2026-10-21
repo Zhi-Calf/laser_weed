@@ -143,51 +143,6 @@ Visualization Manager:
         Value: /path_tracker/target_point
       Value: true
 
-    # ---- RTK 里程计轨迹。
-    # ⚠️ Reliability 必须是 Best Effort：gnss_driver / sim_vehicle 都用
-    # SensorDataQoS 发布 odom，而 DDS 规则下 BEST_EFFORT 发布 + RELIABLE 订阅
-    # 是不兼容组合，用默认的 Reliable 会一条都收不到（这也是很多人以为
-    # "RViz 里 odom 显示不出来是话题名写错"的真实原因）。
-    - Angle Tolerance: 0.1
-      Class: rviz_default_plugins/Odometry
-      Covariance:
-        Orientation:
-          Alpha: 0.5
-          Color: 255; 255; 127
-          Color Style: Unique
-          Frame: Local
-          Offset: 1
-          Scale: 1
-          Value: false
-        Position:
-          Alpha: 0.3
-          Color: 204; 51; 204
-          Scale: 1
-          Value: true
-        Value: false
-      Enabled: false
-      Keep: 200
-      Name: RTK轨迹
-      Position Tolerance: 0.2
-      Shape:
-        Alpha: 1
-        Axes Length: 1
-        Axes Radius: 0.1
-        Color: 255; 25; 0
-        Head Length: 0.2
-        Head Radius: 0.1
-        Shaft Length: 0.5
-        Shaft Radius: 0.05
-        Value: Arrow
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /gnss_driver/odom
-      Value: false
-
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

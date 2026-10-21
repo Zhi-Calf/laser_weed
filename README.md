@@ -12,7 +12,7 @@ E1R）激光雷达 ROS 2 驱动，以及无需实车和 RTK 硬件的全链路�
 GNSS 接收机
     │ 串口
     ▼
-gnss_localization ──/gnss_driver/odom──► path_tracker
+gnss_localization ──/gnss_driver/pose──► path_tracker
 global_path_planner ──/global_path_planner/path──► path_tracker
     (weeder_msgs/msg/Path；YAML poly 首个顶点 = ENU 原点)
 
@@ -36,13 +36,14 @@ rslidar_sdk ──/rslidar_points──► velocity_planner ──/velocity_plan
                                                      path_tracker 避停安全门控
 ```
 
-`velocity_planner` 只负责 TF 变换、ROI 判定和故障状态，不发布 `/chassis/cmd`；
+`velocity_planner` 只负责雷达坐标系下的 ROI 判定和故障状态，不发布
+`/chassis/cmd`；
 `path_tracker` 仍是底盘指令的唯一发布者。
 
 仿真时，`sim_vehicle` 同时替代 `gnss_localization` 和真实底盘，形成闭环：
 
 ```text
-sim_vehicle ──/gnss_driver/odom──► path_tracker
+sim_vehicle ──/gnss_driver/pose──► path_tracker
      ▲                                  │
      └──────/chassis/cmd─────────┘
 ```
@@ -51,12 +52,12 @@ sim_vehicle ──/gnss_driver/odom──► path_tracker
 
 | 包 | 职责 |
 |---|---|
-| `gnss_localization` | 读取 RTK 接收机 GIAVP 数据，投影到 ENU，发布 odom、origin、status 和 `odom→base_link` TF；提供 NTRIP 与千寻 SDK 两种差分客户端 |
+| `gnss_localization` | 读取 RTK GIAVP 数据，投影到 ENU，发布 `Pose`、origin 和 `odom→base_link` TF；提供 NTRIP 与千寻 SDK 两种差分客户端 |
 | `global_path_planner` | 根据 YAML 中的田块边界生成弓字形全覆盖路径 |
 | `path_tracker` | 四轮转向 LQR 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
 | `weeder_base` | CAN 协议编解码、SocketCAN 驱动、50Hz 指令发送、10Hz 状态发布、全部底盘/BMS 状态接收 |
 | `weeder_msgs` | 车辆、BMS、GNSS、工作模式、全覆盖路径、点云避停状态等 ROS2 消息 |
-| `velocity_planner` | 将 E1R 点云转换到 `base_link`，执行前向矩形 ROI 判定并发布避停状态 |
+| `velocity_planner` | 直接在 E1R 点云坐标系中执行前向矩形 ROI 判定并发布避停状态 |
 | `rslidar_sdk` | 速腾 E1R 激光雷达 ROS 2 驱动；解析 UDP 数据包并发布 `PointCloud2` |
 | `rslidar_msg` | 速腾激光雷达原始 `RslidarPacket` 消息，供驱动录制/回放 packet 使用 |
 | `sim_vehicle` | 无硬件仿真：模拟 RTK、车辆运动学、工作模式，并可一键启动完整链路 |
@@ -163,26 +164,19 @@ ros2 topic hz /rslidar_points
 
 ### 坐标与时间
 
-驱动不发布外参 TF，点云直接位于 `ros_frame_id`（默认 `rslidar`）坐标系中。
-接入避停前必须按实车安装位置配置 `base_link→rslidar` 静态变换，例如：
+`velocity_planner` 直接使用点云 `header.frame_id` 对应的坐标系，不进行 TF
+变换。E1R 驱动默认输出 `rslidar` 坐标系，因此所有 ROI 参数都直接表示
+`rslidar` 下的前向、左右和高度范围，不依赖 `base_link→rslidar` 外参。
 
-```bash
-ros2 run tf2_ros static_transform_publisher \
-  --x <x> --y <y> --z <z> \
-  --roll <roll> --pitch <pitch> --yaw <yaw> \
-  --frame-id base_link --child-frame-id rslidar
-```
-
-示例中的平移单位为 m，旋转单位为 rad，必须替换为实测值。点云默认使用雷达时钟；
-如果雷达和主机尚未完成 NTP/PTP 或其他时间同步，应设置
-`use_lidar_clock: false`，避免点云时间戳与 `/gnss_driver/odom` 不在同一时间基准。
+点云默认使用雷达时钟；如果雷达和主机尚未完成 NTP/PTP 或其他时间同步，应设置
+`use_lidar_clock: false`，避免点云时间戳与 `/gnss_driver/pose` 不在同一时间基准。
 
 ### 点云避停
 
-`velocity_planner` 将 `/rslidar_points` 转换到 `base_link`，在可配置的前向矩形
-ROI 内统计有效点。默认 ROI 为前向 `0~2m`、左右半宽 `0.9m`、高度
-`0.1~1.5m`，至少 `3` 个点触发停车。这些数值只是安全起点，必须按车辆包络、
-雷达安装位置和实际刹停距离现场标定。
+`velocity_planner` 直接在 `/rslidar_points` 的雷达坐标系中统计可配置前向矩形
+ROI 内的有效点，不进行 TF 变换。默认 ROI 为前向 `0~2m`、左右半宽 `0.9m`、
+高度 `0.1~1.5m`，至少 `3` 个点触发停车。这些数值只是安全起点，必须按车辆
+包络、雷达安装位置和实际刹停距离现场标定。
 
 ```bash
 ros2 launch velocity_planner velocity_planner.launch.py
@@ -192,7 +186,7 @@ ros2 topic echo /velocity_planner/status
 判定规则：
 
 - ROI 内点数达到 `min_obstacle_points`：`stop_required=true`
-- 点云、TF 不可用或点云结果超过 `cloud_timeout_s`：
+- 点云不可用或点云结果超过 `cloud_timeout_s`：
   `sensor_valid=false`、`stop_required=true`
 - 障碍消失后继续保持停车 `stop_hold_s`（默认 `0.3s`）
 - `path_tracker` 在 `require_velocity_planner=true` 时检查状态新鲜度；默认
@@ -249,7 +243,7 @@ bool ctrl_mode
 sudo apt update
 sudo apt install -y libeigen3-dev libgeographic-dev libboost-dev \
                     libyaml-cpp-dev libpcap-dev ros-humble-spdlog-vendor \
-                    ros-humble-rviz2 ros-humble-tf2-sensor-msgs
+                    ros-humble-rviz2
 ```
 
 也可以在包含本仓库的工作区执行：
@@ -328,11 +322,6 @@ sudo ip link set can0 up type can bitrate 500000
 ros2 run rslidar_sdk rslidar_sdk_node --ros-args \
   -p config_path:=$PWD/src/laser_weed/rslidar_sdk/config/config.yaml
 
-# 配置 base_link -> rslidar 实车外参后启动点云避停
-ros2 run tf2_ros static_transform_publisher \
-  --x <x> --y <y> --z <z> \
-  --roll <roll> --pitch <pitch> --yaw <yaw> \
-  --frame-id base_link --child-frame-id rslidar
 ros2 launch velocity_planner velocity_planner.launch.py
 
 ros2 launch gnss_localization localization.launch.py
@@ -354,8 +343,8 @@ ros2 launch weeder_base can.launch.py interface:=can0
    确认 RTK 固定且路径已生成后，再发布 UNMANNED 让控制器接管：
 
 ```bash
-# 确认 fix_type=4（RTK 固定解）
-ros2 topic echo /gnss_driver/status --once
+# 确认 valid=true（RTK 固定解）
+ros2 topic echo /gnss_driver/pose --once
 
 # 确认规划器已发布非空路径（只显示前 5 个 x 坐标）
 ros2 topic echo /global_path_planner/path --once \
@@ -384,7 +373,7 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 | 雷达型号 | `rslidar_sdk/config/config.yaml` | E1R 必须使用 `lidar_type: RSE1`，不能保留 `RSM1` |
 | 雷达端口 | 同上 | 默认接收 UDP `6699`（MSOP）和 `7788`（DIFOP） |
 | 雷达时钟 | 同上 | `use_lidar_clock: true` 时需先完成雷达与主机时间同步 |
-| 雷达外参 | TF | 驱动不发布 TF；避停节点依赖 `base_link→rslidar` 静态变换 |
+| ROI 坐标系 | `velocity_planner/config/velocity_planner.yaml` | 直接使用点云自身坐标系，无需 `base_link↔rslidar` TF |
 | 避停 ROI | `velocity_planner/config/velocity_planner.yaml` | 前向范围、半宽、高度和最少点数 |
 | 避停超时 | 同上 / `path_tracker` | 点云超时默认 `0.5s`，避停状态超时默认 `0.5s` |
 
@@ -397,7 +386,7 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 | 门控 | 参数 | 故障码 |
 |---|---|---|
 | 工作模式必须是 UNMANNED | `work_mode_timeout_s` | 10101 |
-| RTK 位姿存在、新鲜且为固定解 | `odom_timeout_s` / `rtk_max_sigma` | 10102 |
+| RTK 位姿存在、新鲜且 `Pose.valid=true` | `pose_timeout_s` | 10102 |
 | 路径存在且新鲜 | `path_timeout_s` | 10103 |
 | 转向模式兼容阿克曼模型 | `steer_mode` | 10104 |
 | 路径未走完 | — | 10105 |
@@ -410,8 +399,8 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 - 未收到指令或 `/chassis/cmd` 超过 `0.3s` 未更新：N 档、遥控模式、不释放抱闸、车速和转角清零
 - 协议层最终限幅：车速 `0~1400 mm/s`、转角 `±90.0°`
 
-实车默认启用点云避停门控。雷达断流、TF 缺失、避停节点退出、点云异常或 ROI
-命中障碍都会触发失效停车。该门控仍不能替代独立硬件急停。
+实车默认启用点云避停门控。雷达断流、避停节点退出、点云异常或 ROI 命中障碍
+都会触发失效停车。该门控仍不能替代独立硬件急停。
 
 ## 测试
 
@@ -435,16 +424,16 @@ colcon test-result --verbose
 - `global_path_planner` 的 `poly` 必须按边界顺序给出且不能自相交；只允许逆序/旋转起点，
   顶点乱序会被拒绝（`is_simple` 校验，状态码 `self_intersecting`）
 - ENU 原点同时配置在 `poly` 第一个顶点和 `gnss_driver.yaml` 的 `origin_*` 中，
-  两处不一致时路径与 odom 会产生固定偏移，当前没有运行时一致性校验
+  两处不一致时路径与 GNSS 位姿会产生固定偏移，当前没有运行时一致性校验
 - `sdk_client` 随包的千寻 SDK 1.29.5 release 库仅支持 aarch64；x86 开发机默认只编译源码做 API 检查，不生成可执行文件
 - 千寻 SDK 1.29 默认服务器域名已关闭，`sdk_client.yaml` 中的 OpenAPI/OSS 域名和端口必须显式配置
 - `path_tracker` 仅适用于 `steer_mode=0`（单阿克曼）和 `1`（双阿克曼）
 - 点云避停只做前向矩形几何判定，不进行聚类、障碍分类或路径走廊跟踪；
   默认 ROI 必须按实车重新标定
 - 无雷达仿真通过 `require_velocity_planner=false` 关闭避停门控，不能用于验证避停
-- `rslidar_sdk` 不发布雷达外参 TF，且驱动安装包未单独安装配置文件；
-  部署到其他目录时应通过 `config_path` 显式传入配置
-- 雷达默认使用自身时钟；接入 E1R 前必须完成时间同步和外参检查
+- `rslidar_sdk` 的驱动安装包未单独安装配置文件；部署到其他目录时应通过
+  `config_path` 显式传入配置
+- 雷达默认使用自身时钟；接入 E1R 前必须完成时间同步检查
 - 当前不支持倒车，底盘档位固定为 D
 - 仿真为理想模型，不含轮胎侧偏、执行器延迟、RTK 延迟和地面打滑
 - 协议中车速原始值的单位表述仍有歧义（`Value=0.001X` 与 mm/s），实车联调时需用抓包确认；

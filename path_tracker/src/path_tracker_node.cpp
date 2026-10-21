@@ -1,9 +1,6 @@
 // Copyright 2026. ROS 2 node implementation for the four-wheel-steering LQR.
 #include "path_tracker/path_tracker_node.hpp"
 
-#include <tf2/LinearMath/Matrix3x3.h>
-#include <tf2/LinearMath/Quaternion.h>
-
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -39,8 +36,8 @@ PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions & options)
     "LQR 控制器已启动: 轴距=%.3fm 等效轴距=%.3fm 最大转角=%.1fdeg 最大速度=%.2fm/s 频率=%.1fHz",
     wheelbase_, effective_wheelbase_, max_steer_deg_, max_speed_, control_hz_);
   RCLCPP_INFO(get_logger(),
-    "订阅 里程计=%s 路径=%s 工作模式=%s 避停状态=%s | 发布 %s | 避停门控=%s",
-    odom_topic_.c_str(), path_topic_.c_str(), work_mode_topic_.c_str(),
+    "订阅 位姿=%s 路径=%s 工作模式=%s 避停状态=%s | 发布 %s | 避停门控=%s",
+    pose_topic_.c_str(), path_topic_.c_str(), work_mode_topic_.c_str(),
     velocity_planner_status_topic_.c_str(),
     cmd_topic_.c_str(),
     require_velocity_planner_ ? "enabled" : "disabled");
@@ -58,7 +55,6 @@ void PathTrackerNode::loadParameters()
   max_steer_deg_ = declare_parameter<double>("max_steer_deg", 90.0);
   max_speed_ = declare_parameter<double>("max_speed_m_s", 1.4);
   target_v_ = declare_parameter<double>("lqr_target_v", 0.5);
-  rtk_max_sigma_ = declare_parameter<double>("rtk_max_sigma", 0.05);
   max_track_error_m_ = declare_parameter<double>("max_track_error_m", 3.0);
   // rclcpp stores every integer parameter as int64_t, so declare_parameter<int>
   // actually yields int64_t. Passing that to std::max(0, ...) mixes int with
@@ -73,7 +69,7 @@ void PathTrackerNode::loadParameters()
     snap_window_raw = 1000;
   }
   snap_window_ = static_cast<size_t>(snap_window_raw);
-  odom_timeout_s_ = declare_parameter<double>("odom_timeout_s", 1.0);
+  pose_timeout_s_ = declare_parameter<double>("pose_timeout_s", 1.0);
   path_timeout_s_ = declare_parameter<double>("path_timeout_s", 5.0);
   work_mode_timeout_s_ = declare_parameter<double>("work_mode_timeout_s", 3.0);
   work_mode_startup_grace_s_ = declare_parameter<double>("work_mode_startup_grace_s", 20.0);
@@ -83,7 +79,8 @@ void PathTrackerNode::loadParameters()
   require_velocity_planner_ =
     declare_parameter<bool>("require_velocity_planner", true);
   frame_id_ = declare_parameter<std::string>("frame_id", "odom");
-  odom_topic_ = declare_parameter<std::string>("odom_topic", "/gnss_driver/odom");
+  pose_topic_ = declare_parameter<std::string>(
+    "pose_topic", "/gnss_driver/pose");
   path_topic_ = declare_parameter<std::string>("path_topic", "/global_path_planner/path");
   work_mode_topic_ = declare_parameter<std::string>("work_mode_topic", "/work_mode");
   velocity_planner_status_topic_ = declare_parameter<std::string>(
@@ -157,11 +154,13 @@ void PathTrackerNode::loadParameters()
 
 void PathTrackerNode::setupInterfaces()
 {
-  // gnss_driver publishes odom with SensorDataQoS (best effort, keep last 5);
+  // gnss_driver publishes pose with SensorDataQoS (best effort, keep last 5);
   // a reliable subscriber would never match that publisher, so mirror its QoS.
-  odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-    odom_topic_, rclcpp::SensorDataQoS(),
-    [this](const nav_msgs::msg::Odometry::SharedPtr msg) {odomCallback(msg);});
+  pose_sub_ = create_subscription<weeder_msgs::msg::Pose>(
+    pose_topic_, rclcpp::SensorDataQoS(),
+    [this](const weeder_msgs::msg::Pose::SharedPtr msg) {
+      poseCallback(msg);
+    });
 
   // global_path_planner publishes ~/path transient_local (latched), so a late
   // subscriber must use matching durability to receive the last path.
@@ -194,37 +193,22 @@ void PathTrackerNode::setupInterfaces()
 
   const auto t = now();
   boot_time_ = t;
-  last_odom_time_ = t;
+  last_pose_time_ = t;
   last_path_time_ = t;
   last_work_mode_time_ = t;
   last_obstacle_status_time_ = t;
 }
 
-void PathTrackerNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
+void PathTrackerNode::poseCallback(const weeder_msgs::msg::Pose::SharedPtr msg)
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  last_odom_time_ = now();
-  has_odom_ = true;
-
-  robot_state_.x = msg->pose.pose.position.x;
-  robot_state_.y = msg->pose.pose.position.y;
-  robot_state_.linear_v = msg->twist.twist.linear.x;
-
-  // Quaternion -> yaw. gnss_driver publishes odom->base_link with the corrected
-  // ENU heading, so this yaw is already in the same frame as the planner path.
-  const auto & q = msg->pose.pose.orientation;
-  const tf2::Quaternion quat(q.x, q.y, q.z, q.w);
-  double roll = 0.0, pitch = 0.0, yaw = 0.0;
-  tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
-  robot_state_.heading = yaw;
-
-  // RTK quality gate. gnss_driver fills the pose covariance from fix_type:
-  // acc_rtk_fixed (0.02 m) for a fixed solution, 1e3 m otherwise, so a degraded
-  // solution shows up as a hugely inflated sigma. Take the worse horizontal one.
-  const double cov_xx = msg->pose.covariance[0];
-  const double cov_yy = msg->pose.covariance[7];
-  const double worst_var = std::max(std::max(cov_xx, cov_yy), 0.0);
-  odom_sigma_ = std::sqrt(worst_var);
+  last_pose_time_ = now();
+  has_pose_ = true;
+  pose_valid_ = msg->valid;
+  robot_state_.x = msg->x;
+  robot_state_.y = msg->y;
+  robot_state_.heading = msg->yaw;
+  robot_state_.linear_v = msg->speed_m_s;
 }
 
 void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg)
@@ -322,14 +306,6 @@ void PathTrackerNode::ObstacleStatusCallback(
   obstacle_points_ = msg->obstacle_points;
 }
 
-bool PathTrackerNode::rtkQualityOk(double & worst_sigma) const
-{
-  worst_sigma = odom_sigma_;
-  // A sigma of exactly 0 means the driver never filled the covariance; treat
-  // that as "unknown quality" rather than "perfect", and reject it.
-  return odom_sigma_ > 0.0 && odom_sigma_ <= rtk_max_sigma_;
-}
-
 void PathTrackerNode::publishStop()
 {
   weeder_msgs::msg::ChassisCmd zero;
@@ -373,26 +349,25 @@ void PathTrackerNode::controlTick()
   }
 
   // ---- Gate 2: RTK pose present, fresh, and of fixed-solution quality ----
-  if (!has_odom_) {
+  if (!has_pose_) {
     if (!in_grace) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
-        "等待定位数据 (%s)，输出停车", odom_topic_.c_str());
+        "等待定位数据 (%s)，输出停车", pose_topic_.c_str());
     }
     publishStop();
     return;
   }
-  if ((t - last_odom_time_).seconds() > odom_timeout_s_) {
+  if ((t - last_pose_time_).seconds() > pose_timeout_s_) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
       "定位数据超时 (%.2fs > %.2fs)，输出停车",
-      (t - last_odom_time_).seconds(), odom_timeout_s_);
+      (t - last_pose_time_).seconds(), pose_timeout_s_);
     publishStop();
     return;
   }
 
-  double sigma = 0.0;
-  if (!rtkQualityOk(sigma)) {
+  if (!pose_valid_) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
-      "定位精度不足 (sigma=%.3f > %.3f，可能非固定解)，输出停车", sigma, rtk_max_sigma_);
+      "定位位姿无效（非 RTK 固定解），输出停车");
     publishStop();
     return;
   }

@@ -88,7 +88,26 @@ TEST(RoiFilter, IgnoresPointsOutsideEveryRoiBoundary)
   EXPECT_LT(result.nearest_distance_m, 0.0F);
 }
 
-TEST(RoiFilter, IgnoresNanAndInfinity)
+TEST(RoiFilter, IgnoresIndividualNanAndInfinity)
+{
+  velocity_planner::RoiFilter filter(MakeConfig());
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float infinity = std::numeric_limits<float>::infinity();
+  const auto cloud = MakeCloud({
+    {nan, 0.0F, 0.5F},
+    {1.0F, infinity, 0.5F},
+    {0.5F, 0.0F, 0.5F},
+  });
+
+  const auto result = filter.Evaluate(cloud);
+
+  EXPECT_TRUE(result.cloud_valid);
+  EXPECT_TRUE(result.stop_required);
+  EXPECT_EQ(result.obstacle_points, 1U);
+  EXPECT_NEAR(result.nearest_distance_m, 0.5F, 1e-6F);
+}
+
+TEST(RoiFilter, RejectsCloudWithoutFinitePoints)
 {
   velocity_planner::RoiFilter filter(MakeConfig());
   const float nan = std::numeric_limits<float>::quiet_NaN();
@@ -101,7 +120,19 @@ TEST(RoiFilter, IgnoresNanAndInfinity)
 
   const auto result = filter.Evaluate(cloud);
 
-  EXPECT_TRUE(result.cloud_valid);
+  EXPECT_FALSE(result.cloud_valid);
+  EXPECT_FALSE(result.stop_required);
+  EXPECT_EQ(result.obstacle_points, 0U);
+}
+
+TEST(RoiFilter, RejectsEmptyCloudWithXyzFields)
+{
+  velocity_planner::RoiFilter filter(MakeConfig());
+  const auto cloud = MakeCloud({});
+
+  const auto result = filter.Evaluate(cloud);
+
+  EXPECT_FALSE(result.cloud_valid);
   EXPECT_FALSE(result.stop_required);
   EXPECT_EQ(result.obstacle_points, 0U);
 }

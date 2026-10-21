@@ -11,8 +11,7 @@
     │ sensor_msgs/msg/PointCloud2
     ▼
 velocity_planner_node
-    │ TF：rslidar -> base_link
-    │ ROI：base_link 下前向矩形
+    │ ROI：点云自身坐标系下前向矩形
     ▼
 /velocity_planner/status
     │ weeder_msgs/msg/ObstacleStatus
@@ -20,8 +19,9 @@ velocity_planner_node
 path_tracker ──/chassis/cmd──► weeder_base
 ```
 
-节点以 10Hz 发布状态。`sensor_valid=false` 表示点云缺失、超时、字段无效或
-TF 转换失败，此时 `stop_required=true`。ROI 内有效点达到阈值时同样输出停车请求。
+节点固定以 10 Hz 发布状态。`sensor_valid=false` 表示启动后尚未收到点云、点云超过
+0.5 秒未更新，或最新点云为空/字段无效/没有有限坐标，此时 `stop_required=true`。
+ROI 内有效点达到阈值时同样输出停车请求。
 
 ## ROI 与参数
 
@@ -30,31 +30,29 @@ TF 转换失败，此时 `stop_required=true`。ROI 内有效点达到阈值时�
 | 参数 | 默认值 | 说明 |
 |---|---:|---|
 | `input_cloud_topic` | `/rslidar_points` | 驱动输出的点云话题 |
-| `target_frame` | `base_link` | ROI 所在坐标系 |
-| `roi_forward_min_m` | `0.0` | ROI 前向起点 |
-| `roi_forward_max_m` | `2.0` | ROI 前向终点 |
-| `roi_half_width_m` | `0.9` | ROI 左右半宽 |
-| `roi_min_height_m` | `0.1` | 最低点高度，用于过滤地面 |
-| `roi_max_height_m` | `1.5` | 最高点高度 |
+| `roi_forward_min_m` | `0.0` | 雷达坐标系下 ROI 前向起点 |
+| `roi_forward_max_m` | `2.0` | 雷达坐标系下 ROI 前向终点 |
+| `roi_half_width_m` | `0.9` | 雷达坐标系下 ROI 左右半宽 |
+| `roi_min_height_m` | `0.1` | 雷达坐标系下最低点高度 |
+| `roi_max_height_m` | `1.5` | 雷达坐标系下最高点高度 |
 | `min_obstacle_points` | `3` | 触发停车的最少点数 |
-| `cloud_timeout_s` | `0.5` | 点云结果有效期 |
 | `stop_hold_s` | `0.3` | 障碍消失后的最短停车时间 |
 
 默认 ROI 只是安全起点。实车必须根据车辆包络、雷达安装位置和实际刹停距离调整。
 
+## 日志
+
+节点使用 spdlog 同时输出控制台和滚动文件，日志文件为
+`<log_dir>/velocity_planner.log`。`log_dir` 支持 `~` 与 `$VAR` 展开；
+目录不可写时会回退到 `$ROS_HOME/logs` 或 `~/.ros/logs`。滚动文件大小、
+保留数量、控制台输出和日志级别可分别通过 `log_file_size_mb`、
+`log_file_count`、`log_enable_console` 和 `log_level` 配置。
+
 ## 坐标要求
 
-点云默认位于 `rslidar` 坐标系，节点要求 TF 树中存在
-`base_link -> rslidar`。例如：
-
-```bash
-ros2 run tf2_ros static_transform_publisher \
-  --x 0.0 --y 0.0 --z 1.0 \
-  --roll 0.0 --pitch 0.0 --yaw 0.0 \
-  --frame-id base_link --child-frame-id rslidar
-```
-
-示例数值不是实车标定值，必须替换。
+节点直接使用点云消息中的 `header.frame_id`，不查询 TF。E1R 驱动默认输出
+`rslidar` 坐标系，因此 ROI 参数直接按雷达安装后的视角配置。状态消息的
+`header.frame_id` 也继承最近一帧点云的坐标系。
 
 ## 构建与运行
 

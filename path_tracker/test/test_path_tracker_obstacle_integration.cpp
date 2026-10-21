@@ -6,11 +6,11 @@
 #include <thread>
 
 #include <gtest/gtest.h>
-#include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <weeder_msgs/msg/chassis_cmd.hpp>
 #include <weeder_msgs/msg/obstacle_status.hpp>
 #include <weeder_msgs/msg/path.hpp>
+#include <weeder_msgs/msg/pose.hpp>
 #include <weeder_msgs/msg/work_mode.hpp>
 
 namespace
@@ -19,25 +19,24 @@ namespace
 using weeder_msgs::msg::ChassisCmd;
 using weeder_msgs::msg::ObstacleStatus;
 using weeder_msgs::msg::Path;
+using weeder_msgs::msg::Pose;
 using weeder_msgs::msg::WorkMode;
 
 struct TestPublishers
 {
-  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom;  // 里程计
-  rclcpp::Publisher<Path>::SharedPtr path;                     // 路径
-  rclcpp::Publisher<WorkMode>::SharedPtr mode;                 // 工作模式
-  rclcpp::Publisher<ObstacleStatus>::SharedPtr obstacle;       // 避停状态
+  rclcpp::Publisher<Pose>::SharedPtr pose;              // 定位位姿
+  rclcpp::Publisher<Path>::SharedPtr path;              // 路径
+  rclcpp::Publisher<WorkMode>::SharedPtr mode;          // 工作模式
+  rclcpp::Publisher<ObstacleStatus>::SharedPtr obstacle;  // 避停状态
 };
 
-nav_msgs::msg::Odometry MakeOdom()
+Pose MakePose(bool valid = true)
 {
-  nav_msgs::msg::Odometry odom;
-  odom.header.frame_id = "odom";
-  odom.child_frame_id = "base_link";
-  odom.pose.pose.orientation.w = 1.0;
-  odom.pose.covariance[0] = 0.0004;
-  odom.pose.covariance[7] = 0.0004;
-  return odom;
+  Pose pose;
+  pose.header.frame_id = "odom";
+  pose.valid = valid;
+  pose.satellites = 30;
+  return pose;
 }
 
 Path MakePath()
@@ -73,7 +72,7 @@ ObstacleStatus MakeObstacleStatus(bool stop_required)
 void SpinFor(
   rclcpp::executors::SingleThreadedExecutor & executor,
   const TestPublishers & publishers,
-  const nav_msgs::msg::Odometry & odom,
+  const Pose & pose,
   const Path & path,
   const WorkMode & mode,
   const ObstacleStatus * obstacle,
@@ -82,7 +81,7 @@ void SpinFor(
   const auto deadline = std::chrono::steady_clock::now() +
     std::chrono::duration<double>(duration_s);
   while (std::chrono::steady_clock::now() < deadline) {
-    publishers.odom->publish(odom);
+    publishers.pose->publish(pose);
     publishers.path->publish(path);
     publishers.mode->publish(mode);
     if (obstacle != nullptr) {
@@ -119,9 +118,9 @@ TEST(PathTrackerObstacleIntegration, GatesChassisCommandFromStatus)
     });
 
   TestPublishers publishers;
-  publishers.odom =
-    tester->create_publisher<nav_msgs::msg::Odometry>(
-    "/gnss_driver/odom", rclcpp::SensorDataQoS());
+  publishers.pose =
+    tester->create_publisher<Pose>(
+    "/gnss_driver/pose", rclcpp::SensorDataQoS());
   const auto latched_qos =
     rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   publishers.path = tester->create_publisher<Path>(
@@ -132,7 +131,7 @@ TEST(PathTrackerObstacleIntegration, GatesChassisCommandFromStatus)
     "/velocity_planner/status",
     rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
 
-  const auto odom = MakeOdom();
+  const auto pose = MakePose();
   const auto path = MakePath();
   const auto mode = MakeUnmannedMode();
 
@@ -140,21 +139,28 @@ TEST(PathTrackerObstacleIntegration, GatesChassisCommandFromStatus)
   executor.add_node(tester);
   executor.add_node(tracker);
 
-  SpinFor(executor, publishers, odom, path, mode, nullptr, 0.8);
+  SpinFor(executor, publishers, pose, path, mode, nullptr, 0.8);
   ASSERT_TRUE(has_command);
   EXPECT_TRUE(last_command.estop);
   EXPECT_DOUBLE_EQ(last_command.speed_m_s, 0.0);
 
   const auto clear_status = MakeObstacleStatus(false);
   SpinFor(
-    executor, publishers, odom, path, mode, &clear_status, 0.5);
+    executor, publishers, pose, path, mode, &clear_status, 0.5);
   ASSERT_TRUE(has_command);
   EXPECT_FALSE(last_command.estop);
   EXPECT_GT(last_command.speed_m_s, 0.0);
 
   const auto stop_status = MakeObstacleStatus(true);
   SpinFor(
-    executor, publishers, odom, path, mode, &stop_status, 0.3);
+    executor, publishers, pose, path, mode, &stop_status, 0.3);
+  ASSERT_TRUE(has_command);
+  EXPECT_TRUE(last_command.estop);
+  EXPECT_DOUBLE_EQ(last_command.speed_m_s, 0.0);
+
+  const auto invalid_pose = MakePose(false);
+  SpinFor(
+    executor, publishers, invalid_pose, path, mode, &clear_status, 0.4);
   ASSERT_TRUE(has_command);
   EXPECT_TRUE(last_command.estop);
   EXPECT_DOUBLE_EQ(last_command.speed_m_s, 0.0);

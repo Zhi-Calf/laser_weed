@@ -1,6 +1,6 @@
 # 点云避停状态
 #
-# sensor_valid=false 表示点云、TF 或避停节点当前不可用。
+# sensor_valid=false 表示点云或避停节点当前不可用。
 # stop_required=true 表示 path_tracker 必须输出停车指令。
 
 std_msgs/Header header

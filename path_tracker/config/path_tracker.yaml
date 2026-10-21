@@ -26,7 +26,7 @@ path_tracker:
     # ============================================================
     # 话题名（与 gnss_localization / global_path_planner 对齐）
     # ============================================================
-    odom_topic: /gnss_driver/odom
+    pose_topic: /gnss_driver/pose
     path_topic: /global_path_planner/path
     work_mode_topic: /work_mode
     velocity_planner_status_topic: /velocity_planner/status
@@ -62,11 +62,8 @@ path_tracker:
     # ============================================================
     # 安全门控
     # ============================================================
-    # RTK 精度门限：取里程计位姿协方差对角项的最大值开方。
-    # gnss_driver 按 fix_type 填协方差（RTK固定/浮动/RTD/单点解），
-    # 0.05 m 大致对应固定解。非固定解时输出停车，避免用低质量定位除草
-    # （激光打偏的代价比停车高得多）。
-    rtk_max_sigma: 0.05
+    # Pose.valid 由 gnss_driver 给出：只有 RTK 固定解为 true。
+    # path_tracker 不读取协方差，无效位姿直接输出停车。
 
     # 偏离距离门限 (m)：车与当前跟踪目标点的欧氏距离超过此值即停车，上报 10106。
     #
@@ -91,7 +88,7 @@ path_tracker:
     # 25 点 × path_resolution 0.2m = 5m。设 0 则完全禁用吸附，退回纯弧长累积。
     snap_window: 25
 
-    odom_timeout_s: 1.0        # 定位超时 → 停车
+    pose_timeout_s: 1.0        # 定位位姿超时 → 停车
     path_timeout_s: 5.0        # 路径超时 → 停车
 
     # 工作模式门控：与 global_path_planner、gnss_driver 共用同一条系统级

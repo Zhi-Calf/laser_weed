@@ -8,10 +8,8 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
-find_package(tf2 REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(weeder_msgs REQUIRED)
 
@@ -20,10 +18,8 @@ include_directories(include ${EIGEN3_INCLUDE_DIRS})
 set(DEPS
   rclcpp
   geometry_msgs
-  nav_msgs
   std_msgs
   visualization_msgs
-  tf2
   weeder_msgs
 )
 
@@ -70,7 +66,6 @@ if(BUILD_TESTING)
   )
   ament_target_dependencies(test_path_tracker_obstacle_integration
     geometry_msgs
-    nav_msgs
     rclcpp
     weeder_msgs
   )
@@ -82,6 +77,7 @@ if(BUILD_TESTING)
             --gtest_output=xml:${path_tracker_integration_result_file}
     RESULT_FILE ${path_tracker_integration_result_file}
     APPEND_LIBRARY_DIRS ${CMAKE_CURRENT_BINARY_DIR}
+    ENV ROS_DOMAIN_ID=42
     TIMEOUT 30
   )
 endif()

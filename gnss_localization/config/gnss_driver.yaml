@@ -12,10 +12,9 @@ gnss_driver:
     origin_alt: 100.0
 
     debug_giavp: false
-    status_log_interval: 500    # 状态日志条数间隔 (10Hz 下 500 条 = 50s 打印一次)
-    odom_log_interval: 10       # 里程计日志条数间隔 (10Hz 下 10 条 = 1s 打印一次)
+    gnss_log_interval: 500      # GNSS 状态日志条数间隔 (10Hz 下 500 条 = 50s)
+    pose_log_interval: 10       # 位姿日志条数间隔 (10Hz 下 10 条 = 1s)
     giavp_timeout_sec: 1.0      # 超过该时长无有效 GIAVP 帧即记录超时告警
-    serial_retry_interval_sec: 1.0  # 串口掉线后重开间隔
     use_gps_timestamp: true     # 使用 GPSWeek/GPSTime 作为传感器消息时间
     gps_utc_leap_seconds: 18    # 2026 年 GPS 与 UTC 的闰秒差
 
@@ -36,7 +35,7 @@ gnss_driver:
     # ⚠ 运行期**只有这三个 calib_offset_*** 会生效 (参数服务: 立即生效 + 写回 gnss_config_path);
     #   本节点其它键运行期 set 是"接受但不生效" (参数服务器记新值, 节点仍用启动值 —— 改 yaml 后重启)。
     #   calib_offset_* 的值必须是**有限数值**且在 ±上限 内: nan/inf 一律拒绝 —— 范围判断对 NaN 恒为假,
-    #   必须单独拦, 否则 NaN 杆臂会让 /gnss_driver/odom 的位置与航向整体变成 NaN (还会被写回 yaml)。
+    #   必须单独拦, 否则 NaN 杆臂会让 /gnss_driver/pose 的位置与航向整体变成 NaN (还会被写回 yaml)。
 
     # 参数持久化写回目标: 动态更新标定/杆臂参数后, 逐行写回该 yaml。
     # 空字符串则跳过写回 (仅内存更新)。建议指向 install 下运行时实际加载的

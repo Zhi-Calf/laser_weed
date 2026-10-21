@@ -1,74 +1,175 @@
 // Copyright 2026. 点云前向矩形避停状态节点实现。
 #include "velocity_planner/velocity_planner_node.hpp"
 
+#include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
+#include <unistd.h>
+
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <stdexcept>
+#include <string>
+#include <system_error>
 #include <utility>
+#include <vector>
 
-#include <tf2/exceptions.h>
-#include <tf2/time.h>
-#include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
+namespace velocity_planner {
 
-namespace velocity_planner
-{
+namespace {
 
-namespace
-{
+constexpr const char* kNodeName = "velocity_planner";          // 节点名
+constexpr double kPublishHz     = 10.0;                        // 状态固定发布频率
+constexpr std::chrono::milliseconds kPointCloudTimeout{500};   // 点云心跳超时
 
-constexpr const char * kNodeName = "velocity_planner";  // 节点名
-constexpr int kWarnIntervalMs = 3000;                  // 告警限流周期
+// 扩展日志路径中的 ~ 与环境变量。
+std::string ExpandPath(std::string path) {
+  if (path.rfind("~/", 0) == 0) {
+    const char* home = std::getenv("HOME");
+    if (home != nullptr) {
+      path = std::string(home) + path.substr(1);
+    }
+  }
 
-}  // namespace
+  std::string expanded;
+  for (size_t i = 0; i < path.size(); ++i) {
+    if (path[i] != '$') {
+      expanded += path[i];
+      continue;
+    }
 
-// 初始化 TF、参数、话题和定时器。
-VelocityPlannerNode::VelocityPlannerNode(const rclcpp::NodeOptions & options)
-: Node(kNodeName, options),
-  tf_buffer_(get_clock()),
-  tf_listener_(tf_buffer_)
-{
+    size_t end = i + 1;
+    while (end < path.size() && (std::isalnum(static_cast<unsigned char>(path[end])) || path[end] == '_')) {
+      ++end;
+    }
+    const std::string name = path.substr(i + 1, end - i - 1);
+    const char* value      = name.empty() ? nullptr : std::getenv(name.c_str());
+    if (value != nullptr) {
+      expanded += value;
+    }
+    i = end - 1;
+  }
+  return expanded;
+}
+
+// 优先使用配置目录，不可写时回退到 ROS 日志目录。
+std::string ResolveLogDir(const std::string& configured) {
+  std::error_code error;
+  const std::string preferred = ExpandPath(configured);
+  if (!preferred.empty()) {
+    std::filesystem::create_directories(preferred, error);
+    if (!error && access(preferred.c_str(), W_OK) == 0) {
+      return preferred;
+    }
+  }
+
+  const char* ros_home = std::getenv("ROS_HOME");
+  const char* home     = std::getenv("HOME");
+  std::string fallback;
+  if (ros_home != nullptr && *ros_home != '\0') {
+    fallback = std::string(ros_home) + "/logs";
+  } else if (home != nullptr && *home != '\0') {
+    fallback = std::string(home) + "/.ros/logs";
+  } else {
+    return "";
+  }
+
+  std::filesystem::create_directories(fallback, error);
+  if (error || access(fallback.c_str(), W_OK) != 0) {
+    return "";
+  }
+  return fallback;
+}
+
+// 配置 spdlog 滚动文件与控制台双输出。
+void ConfigureLogger(const std::string& log_dir, size_t max_file_size_bytes, size_t max_file_count, bool enable_console, const std::string& log_level) {
+  constexpr const char* kLogPattern = "[%Y-%m-%d %H:%M:%S.%e] [%l] [%s:%#] %v";
+  const std::string directory       = ResolveLogDir(log_dir);
+  if (directory.empty()) {
+    throw std::runtime_error("没有可写的日志目录 (已尝试 \"" + log_dir + "\")");
+  }
+
+  std::vector<spdlog::sink_ptr> sinks;
+  sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>((std::filesystem::path(directory) / "velocity_planner.log").string(), max_file_size_bytes, max_file_count));
+  if (enable_console) {
+    sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+  }
+
+  auto logger = std::make_shared<spdlog::logger>(kNodeName, sinks.begin(), sinks.end());
+  logger->set_pattern(kLogPattern);
+  const spdlog::level::level_enum level = spdlog::level::from_str(log_level);
+  if (level == spdlog::level::off && log_level != "off") {
+    logger->set_level(spdlog::level::info);
+    SPDLOG_WARN("无法识别的日志级别 \"{}\", 已回退到 info", log_level);
+  } else {
+    logger->set_level(level);
+  }
+  spdlog::set_default_logger(logger);
+  if (directory != ExpandPath(log_dir)) {
+    SPDLOG_WARN("日志目录 \"{}\" 不可写，已回退到 \"{}\"", log_dir, directory);
+  }
+  spdlog::flush_on(spdlog::level::warn);
+  spdlog::flush_every(std::chrono::seconds(3));
+}
+
+}   // namespace
+
+// 初始化参数、话题和定时器。
+VelocityPlannerNode::VelocityPlannerNode(const rclcpp::NodeOptions& options) : Node(kNodeName, options) {
+  LoadLogParameters();
+
+  try {
+    ConfigureLogger(log_dir_, static_cast<size_t>(log_file_size_mb_) * 1024U * 1024U, static_cast<size_t>(log_file_count_), log_enable_console_, log_level_);
+    SPDLOG_INFO("日志配置成功");
+  } catch (const std::exception& error) {
+    SPDLOG_WARN("文件日志配置失败，使用默认日志器: {}", error.what());
+  }
+
   LoadParameters();
   SetupInterfaces();
+}
 
-  RCLCPP_INFO(
-    get_logger(),
-    "点云避停节点已启动: 点云=%s 目标坐标系=%s 状态=%s "
-    "ROI前向=[%.2f,%.2f]m 半宽=%.2f m 高度=[%.2f,%.2f]m",
-    input_cloud_topic_.c_str(),
-    target_frame_.c_str(),
-    output_status_topic_.c_str(),
-    roi_config_.forward_min_m,
-    roi_config_.forward_max_m,
-    roi_config_.half_width_m,
-    roi_config_.min_height_m,
-    roi_config_.max_height_m);
+// 声明并读取 spdlog 滚动日志参数。
+void VelocityPlannerNode::LoadLogParameters() {
+  declare_parameter("log_dir", "~/.ros/logs");
+  declare_parameter("log_file_size_mb", 50);
+  declare_parameter("log_file_count", 10);
+  declare_parameter("log_enable_console", true);
+  declare_parameter("log_level", "info");
+
+  log_dir_            = get_parameter("log_dir").as_string();
+  log_file_size_mb_   = static_cast<int>(std::max<int64_t>(1, get_parameter("log_file_size_mb").as_int()));
+  log_file_count_     = static_cast<int>(std::max<int64_t>(1, get_parameter("log_file_count").as_int()));
+  log_enable_console_ = get_parameter("log_enable_console").as_bool();
+  log_level_          = get_parameter("log_level").as_string();
 }
 
 // 声明并校验点云避停参数。
-void VelocityPlannerNode::LoadParameters()
-{
-  input_cloud_topic_ = declare_parameter<std::string>(
-    "input_cloud_topic", "/rslidar_points");
-  output_status_topic_ = declare_parameter<std::string>(
-    "output_status_topic", "/velocity_planner/status");
-  target_frame_ = declare_parameter<std::string>("target_frame", "base_link");
-  publish_hz_ = declare_parameter<double>("publish_hz", 10.0);
-  cloud_timeout_s_ = declare_parameter<double>("cloud_timeout_s", 0.5);
-  tf_timeout_s_ = declare_parameter<double>("tf_timeout_s", 0.1);
-  stop_hold_s_ = declare_parameter<double>("stop_hold_s", 0.3);
+void VelocityPlannerNode::LoadParameters() {
+  declare_parameter("input_cloud_topic", "/rslidar_points");
+  declare_parameter("output_status_topic", "/velocity_planner/status");
+  declare_parameter("stop_hold_s", 0.3);
+  declare_parameter("roi_forward_min_m", 0.0);
+  declare_parameter("roi_forward_max_m", 2.0);
+  declare_parameter("roi_half_width_m", 0.9);
+  declare_parameter("roi_min_height_m", 0.1);
+  declare_parameter("roi_max_height_m", 1.5);
+  declare_parameter("min_obstacle_points", 3);
 
-  roi_config_.forward_min_m =
-    declare_parameter<double>("roi_forward_min_m", 0.0);
-  roi_config_.forward_max_m =
-    declare_parameter<double>("roi_forward_max_m", 2.0);
-  roi_config_.half_width_m =
-    declare_parameter<double>("roi_half_width_m", 0.9);
-  roi_config_.min_height_m =
-    declare_parameter<double>("roi_min_height_m", 0.1);
-  roi_config_.max_height_m =
-    declare_parameter<double>("roi_max_height_m", 1.5);
-  const int64_t min_points_raw =
-    declare_parameter<int64_t>("min_obstacle_points", 3);
+  input_cloud_topic_           = get_parameter("input_cloud_topic").as_string();
+  output_status_topic_         = get_parameter("output_status_topic").as_string();
+  stop_hold_s_                 = get_parameter("stop_hold_s").as_double();
+  roi_config_.forward_min_m    = get_parameter("roi_forward_min_m").as_double();
+  roi_config_.forward_max_m    = get_parameter("roi_forward_max_m").as_double();
+  roi_config_.half_width_m     = get_parameter("roi_half_width_m").as_double();
+  roi_config_.min_height_m     = get_parameter("roi_min_height_m").as_double();
+  roi_config_.max_height_m     = get_parameter("roi_max_height_m").as_double();
+  const int64_t min_points_raw = get_parameter("min_obstacle_points").as_int();
 
   if (input_cloud_topic_.empty()) {
     input_cloud_topic_ = "/rslidar_points";
@@ -76,155 +177,114 @@ void VelocityPlannerNode::LoadParameters()
   if (output_status_topic_.empty()) {
     output_status_topic_ = "/velocity_planner/status";
   }
-  if (target_frame_.empty()) {
-    target_frame_ = "base_link";
-  }
-
-  publish_hz_ = std::clamp(publish_hz_, 1.0, 50.0);
-  cloud_timeout_s_ = std::max(cloud_timeout_s_, 0.1);
-  tf_timeout_s_ = std::max(tf_timeout_s_, 0.01);
-  stop_hold_s_ = std::max(stop_hold_s_, 0.0);
+  stop_hold_s_             = std::max(stop_hold_s_, 0.0);
   roi_config_.half_width_m = std::max(roi_config_.half_width_m, 0.01);
   if (roi_config_.forward_max_m <= roi_config_.forward_min_m) {
-    RCLCPP_WARN(
-      get_logger(),
-      "ROI 前向范围无效，"
-      "已将 forward_max_m 调整为 forward_min_m + 0.1");
+    SPDLOG_WARN(
+      "ROI 前向范围无效，已将 forward_max_m 调整为"
+      " forward_min_m + 0.1");
     roi_config_.forward_max_m = roi_config_.forward_min_m + 0.1;
   }
   if (roi_config_.max_height_m <= roi_config_.min_height_m) {
-    RCLCPP_WARN(
-      get_logger(),
-      "ROI 高度范围无效，"
-      "已将 max_height_m 调整为 min_height_m + 0.1");
+    SPDLOG_WARN(
+      "ROI 高度范围无效，已将 max_height_m 调整为"
+      " min_height_m + 0.1");
     roi_config_.max_height_m = roi_config_.min_height_m + 0.1;
   }
-  roi_config_.min_obstacle_points =
-    static_cast<std::size_t>(std::max<int64_t>(min_points_raw, 1));
+  roi_config_.min_obstacle_points = static_cast<std::size_t>(std::max<int64_t>(min_points_raw, 1));
+
+  // ---- 打印生效值 ----
+  SPDLOG_INFO("========== 点云避停参数加载 ==========");
+  SPDLOG_INFO("日志目录: {}, 文件上限: {} MB, 文件数量: {}, 控制台: {}, 级别: {}", log_dir_, log_file_size_mb_, log_file_count_, log_enable_console_ ? "开启" : "关闭", log_level_);
+  SPDLOG_INFO("点云话题: {}", input_cloud_topic_);
+  SPDLOG_INFO("状态话题: {}", output_status_topic_);
+  SPDLOG_INFO("状态发布频率: {:.1f} Hz (固定)", kPublishHz);
+  SPDLOG_INFO("障碍消失后停车保持: {:.2f}s", stop_hold_s_);
+  SPDLOG_INFO("ROI 前向: [{:.2f}, {:.2f}] m, 左右半宽: {:.2f} m", roi_config_.forward_min_m, roi_config_.forward_max_m, roi_config_.half_width_m);
+  SPDLOG_INFO("ROI 高度: [{:.2f}, {:.2f}] m, 最少障碍点数: {}", roi_config_.min_height_m, roi_config_.max_height_m, roi_config_.min_obstacle_points);
+  SPDLOG_INFO("=======================================");
 
   roi_filter_ = std::make_unique<RoiFilter>(roi_config_);
-  stop_hold_ = std::make_unique<StopHoldFilter>(stop_hold_s_);
+  stop_hold_  = std::make_unique<StopHoldFilter>(stop_hold_s_);
 }
 
 // 创建点云订阅、状态发布和固定频率定时器。
-void VelocityPlannerNode::SetupInterfaces()
-{
-  cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-    input_cloud_topic_,
-    rclcpp::SensorDataQoS(),
-    [this](const sensor_msgs::msg::PointCloud2::SharedPtr cloud) {
-      CloudCallback(cloud);
-    });
+void VelocityPlannerNode::SetupInterfaces() {
+  cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(input_cloud_topic_, rclcpp::SensorDataQoS(), [this](const sensor_msgs::msg::PointCloud2::SharedPtr cloud) {
+    CloudCallback(cloud);
+  });
 
-  status_pub_ = create_publisher<weeder_msgs::msg::ObstacleStatus>(
-    output_status_topic_,
-    rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  status_pub_ = create_publisher<weeder_msgs::msg::ObstacleStatus>(output_status_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
 
-  const auto period = std::chrono::duration_cast<std::chrono::nanoseconds>(
-    std::chrono::duration<double>(1.0 / publish_hz_));
-  timer_ = create_wall_timer(period, [this]() {PublishStatus();});
+  const auto period = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(1.0 / kPublishHz));
+  timer_            = create_wall_timer(period, [this]() {
+    PublishStatus();
+  });
 }
 
 // 保存最新点云，实际处理在固定频率定时器中进行。
-void VelocityPlannerNode::CloudCallback(
-  const sensor_msgs::msg::PointCloud2::SharedPtr cloud)
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  pending_cloud_ = cloud;
-  has_pending_cloud_ = true;
-}
-
-// 将点云转换到目标坐标系并执行 ROI 判定。
-void VelocityPlannerNode::ProcessCloud(
-  const sensor_msgs::msg::PointCloud2 & cloud,
-  const rclcpp::Time & now)
-{
-  sensor_msgs::msg::PointCloud2 transformed_cloud;
-  try {
-    tf_buffer_.transform(
-      cloud,
-      transformed_cloud,
-      target_frame_,
-      tf2::durationFromSec(tf_timeout_s_));
-  } catch (const tf2::TransformException & exception) {
-    cached_sensor_valid_ = false;
-    cached_stop_required_ = true;
-    cached_obstacle_points_ = 0;
-    cached_nearest_distance_m_ = -1.0F;
-    RCLCPP_WARN_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      kWarnIntervalMs,
-      "点云 TF 转换失败 (%s -> %s): %s，避停按失效停车",
-      cloud.header.frame_id.c_str(),
-      target_frame_.c_str(),
-      exception.what());
-    return;
-  }
-
-  const RoiResult result = roi_filter_->Evaluate(transformed_cloud);
-  const bool hold_stop = stop_hold_->Update(
-    result.stop_required, now.seconds());
-  cached_sensor_valid_ = result.cloud_valid;
-  cached_stop_required_ =
-    !result.cloud_valid || result.stop_required || hold_stop;
-  cached_obstacle_points_ = result.obstacle_points;
-  cached_nearest_distance_m_ = result.nearest_distance_m;
-  has_cloud_result_ = true;
-  last_cloud_result_time_ = now;
-
-  if (!result.cloud_valid) {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      kWarnIntervalMs,
-      "点云缺少 x/y/z FLOAT32 字段，避停按失效停车");
-  }
+void VelocityPlannerNode::CloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr cloud) {
+  pending_cloud_           = cloud;
+  has_pending_cloud_       = true;
+  last_cloud_receive_time_ = std::chrono::steady_clock::now();
 }
 
 // 发布固定频率的避停状态，
-// 并在点云失效时输出停车请求。
-void VelocityPlannerNode::PublishStatus()
-{
+void VelocityPlannerNode::PublishStatus() {
   weeder_msgs::msg::ObstacleStatus status;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    const auto now = this->now();
-    if (has_pending_cloud_ && pending_cloud_) {
-      ProcessCloud(*pending_cloud_, now);
-      pending_cloud_.reset();
-      has_pending_cloud_ = false;
+  const auto now = this->now();
+  if (has_pending_cloud_ && pending_cloud_) {
+    if (!pending_cloud_->header.frame_id.empty()) {
+      cloud_frame_id_ = pending_cloud_->header.frame_id;
     }
+    const RoiResult result     = roi_filter_->Evaluate(*pending_cloud_);
+    const bool hold_stop       = stop_hold_->Update(result.stop_required, now.seconds());
+    cached_sensor_valid_       = result.cloud_valid;
+    cached_stop_required_      = !result.cloud_valid || result.stop_required || hold_stop;
+    cached_obstacle_points_    = result.obstacle_points;
+    cached_nearest_distance_m_ = result.nearest_distance_m;
+    has_cloud_result_          = true;
 
-    bool sensor_valid = cached_sensor_valid_;
-    bool stop_required = cached_stop_required_;
-    std::size_t obstacle_points = cached_obstacle_points_;
-    float nearest_distance_m = cached_nearest_distance_m_;
+    SPDLOG_INFO(
+      "ROI 结果: cloud_valid={}, stop_required={}, obstacle_points={}, "
+      "nearest_distance_m={:.3f}, hold_stop={}",
+      result.cloud_valid,
+      result.stop_required,
+      result.obstacle_points,
+      result.nearest_distance_m,
+      hold_stop);
 
-    if (!has_cloud_result_ ||
-      (now - last_cloud_result_time_).seconds() > cloud_timeout_s_)
-    {
-      sensor_valid = false;
-      stop_required = true;
-      obstacle_points = 0;
-      nearest_distance_m = -1.0F;
-      RCLCPP_WARN_THROTTLE(
-        get_logger(),
-        *get_clock(),
-        kWarnIntervalMs,
-        "点云超过 %.2fs 未产生有效避停结果，输出停车请求",
-        cloud_timeout_s_);
-    }
-
-    status.header.stamp = now;
-    status.header.frame_id = target_frame_;
-    status.sensor_valid = sensor_valid;
-    status.stop_required = stop_required;
-    status.obstacle_points = static_cast<uint32_t>(obstacle_points);
-    status.nearest_distance_m = nearest_distance_m;
+    pending_cloud_.reset();
+    has_pending_cloud_ = false;
   }
+
+  bool sensor_valid           = cached_sensor_valid_;
+  bool stop_required          = cached_stop_required_;
+  std::size_t obstacle_points = cached_obstacle_points_;
+  float nearest_distance_m    = cached_nearest_distance_m_;
+
+  const auto point_cloud_age     = std::chrono::steady_clock::now() - last_cloud_receive_time_;
+  const bool point_cloud_timeout = has_cloud_result_ && point_cloud_age >= kPointCloudTimeout;
+  if (!has_cloud_result_ || point_cloud_timeout) {
+    sensor_valid       = false;
+    stop_required      = true;
+    obstacle_points    = 0;
+    nearest_distance_m = -1.0F;
+    if (point_cloud_timeout) {
+      SPDLOG_WARN("点云超过 0.5s 未更新，输出停车请求");
+    } else {
+      SPDLOG_WARN("尚未收到有效点云，输出停车请求");
+    }
+  }
+
+  status.header.stamp       = now;
+  status.header.frame_id    = cloud_frame_id_;
+  status.sensor_valid       = sensor_valid;
+  status.stop_required      = stop_required;
+  status.obstacle_points    = static_cast<uint32_t>(obstacle_points);
+  status.nearest_distance_m = nearest_distance_m;
 
   status_pub_->publish(status);
 }
 
-}  // namespace velocity_planner
+}   // namespace velocity_planner

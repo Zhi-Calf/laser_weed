@@ -3,7 +3,7 @@
 在没有实车、RTK 接收机和 CAN 硬件的条件下，把整条控制链跑通：
 
 ```text
-sim_vehicle ──/gnss_driver/odom──► path_tracker ──/chassis/cmd──► sim_vehicle
+sim_vehicle ──/gnss_driver/pose──► path_tracker ──/chassis/cmd──► sim_vehicle
      └──/work_mode──────────────────► path_tracker
 
 global_path_planner（YAML poly 首个顶点为原点）──/path──► path_tracker
@@ -26,7 +26,7 @@ ros2 launch sim_vehicle weeder_sim.launch.py
 
 | 节点 | 作用 |
 |---|---|
-| `sim_vehicle` | 发布 RTK odom/origin、车辆运动学、`/work_mode` |
+| `sim_vehicle` | 发布 RTK pose/origin、车辆运动学、`/work_mode` |
 | `global_path_planner` | 读取 YAML 田块，使用 `poly` 首个顶点作为原点并立即规划 |
 | `path_tracker` | 跟踪 `/global_path_planner/path` |
 | `sim_orchestrator` | 确认路径生成后切 UNMANNED |
@@ -140,7 +140,7 @@ ros2 topic pub --once /sim/unmanned std_msgs/msg/Bool "{data: true}"
 | 仿真车 | `/sim_vehicle/marker` |
 | 跟踪目标点 | `/path_tracker/target_point` |
 
-`/gnss_driver/odom` 使用 SensorDataQoS（Best Effort）。手动添加显示时
+`/gnss_driver/pose` 使用 SensorDataQoS（Best Effort）。手动添加显示时
 必须把 RViz 的 Reliability 改成 **Best Effort**。
 
 ## 六、判断成功
@@ -168,7 +168,7 @@ ros2 topic echo /work_mode --once
 
 **path_tracker 一直“定位精度不足”**
 
-`sim_vehicle` 未运行，或 `rtk_sigma` 被设成 0。默认 0.02 是正确的。
+`sim_vehicle` 未运行，或 `/gnss_driver/pose` 中 `valid=false`。
 
 **车不动但无报错**
 

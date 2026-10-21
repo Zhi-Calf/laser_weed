@@ -1,6 +1,6 @@
 // Copyright 2026. ROS 2 node wrapping the four-wheel-steering LQR controller.
 //
-// Replaces the earlier Python Stanley controller. Subscribes to the RTK odometry from
+// Replaces the earlier Python Stanley controller. Subscribes to the RTK pose from
 // gnss_localization and the coverage path from global_path_planner, and emits a
 // speed + front-wheel steering angle pair for the CAN bridge (weeder_base
 // chassis_node).
@@ -15,11 +15,11 @@
 #include "path_tracker/obstacle_gate.hpp"
 #include "path_tracker/path_profile.hpp"
 
-#include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <weeder_msgs/msg/chassis_cmd.hpp>
 #include <weeder_msgs/msg/obstacle_status.hpp>
 #include <weeder_msgs/msg/path.hpp>
+#include <weeder_msgs/msg/pose.hpp>
 #include <weeder_msgs/msg/work_mode.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
@@ -43,7 +43,7 @@ private:
   void setupInterfaces();
   void controlTick();
 
-  void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+  void poseCallback(const weeder_msgs::msg::Pose::SharedPtr msg);
   void pathCallback(const weeder_msgs::msg::Path::SharedPtr msg);
   void workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg);
   void ObstacleStatusCallback(
@@ -51,10 +51,6 @@ private:
 
   /// Publish the tracked goal point as an RViz marker.
   void publishViz(const TrajectoryPoint & target);
-
-  /// RTK solution quality gate, derived from the odometry pose covariance that
-  /// gnss_driver fills from fix_type (fixed / float / RTD / SPP).
-  bool rtkQualityOk(double & worst_sigma) const;
 
   /// Command zero speed and zero steering. The CAN bridge also stops on its own
   /// cmd timeout, so this is belt-and-braces.
@@ -68,7 +64,6 @@ private:
   double max_steer_deg_{90.0};
   double max_speed_{1.4};
   double target_v_{0.5};
-  double rtk_max_sigma_{0.05};
   /// Safety gate: max distance from the robot to its tracked goal before motion
   /// is inhibited. Required because the LQR error state [e_lateral, e_heading]
   /// has NO along-track component, so a robot running straight past the goal
@@ -79,7 +74,7 @@ private:
   /// Forward-snap window for goal re-anchoring, in path points. At the planner's
   /// default 0.2 m resolution this is 25 points = 5 m of path.
   size_t snap_window_{25};
-  double odom_timeout_s_{1.0};
+  double pose_timeout_s_{1.0};
   double path_timeout_s_{5.0};
   double work_mode_timeout_s_{3.0};
   double work_mode_startup_grace_s_{20.0};
@@ -87,7 +82,7 @@ private:
   bool require_unmanned_{true};
   bool require_velocity_planner_{true};
   std::string frame_id_{"odom"};
-  std::string odom_topic_{"/gnss_driver/odom"};
+  std::string pose_topic_{"/gnss_driver/pose"};
   std::string path_topic_{"/global_path_planner/path"};
   std::string work_mode_topic_{"/work_mode"};
   std::string velocity_planner_status_topic_{"/velocity_planner/status"};
@@ -97,7 +92,7 @@ private:
   // Core
   std::unique_ptr<LQR> lqr_;
   // Subscriptions / publications
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<weeder_msgs::msg::Pose>::SharedPtr pose_sub_;
   rclcpp::Subscription<weeder_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<weeder_msgs::msg::WorkMode>::SharedPtr work_mode_sub_;
   rclcpp::Subscription<weeder_msgs::msg::ObstacleStatus>::SharedPtr
@@ -109,9 +104,10 @@ private:
   // State
   mutable std::mutex mutex_;
   RobotState robot_state_;
-  bool has_odom_{false};
+  bool has_pose_{false};
+  bool pose_valid_{false};
   rclcpp::Time boot_time_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time last_odom_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_pose_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_path_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_work_mode_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_obstacle_status_time_{0, 0, RCL_ROS_TIME};
@@ -136,7 +132,6 @@ private:
   double last_x_{0.0};
   double last_y_{0.0};
   bool first_tick_{true};
-  double odom_sigma_{0.0};   // worst of the two horizontal pose sigmas
 };
 
 }  // namespace path_tracker

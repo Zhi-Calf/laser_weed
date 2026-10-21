@@ -12,10 +12,9 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
-find_package(tf2 REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(tf2_sensor_msgs REQUIRED)
 find_package(weeder_msgs REQUIRED)
+find_package(spdlog_vendor REQUIRED)
+find_package(spdlog REQUIRED)
 
 include_directories(include)
 
@@ -30,14 +29,17 @@ add_library(velocity_planner_node_lib SHARED
   src/velocity_planner_node.cpp
 )
 target_link_libraries(velocity_planner_node_lib obstacle_filter)
+target_link_libraries(velocity_planner_node_lib spdlog::spdlog)
 ament_target_dependencies(velocity_planner_node_lib
   rclcpp
   sensor_msgs
   std_msgs
-  tf2
-  tf2_ros
-  tf2_sensor_msgs
   weeder_msgs
+)
+
+# 让 SPDLOG_* 宏携带源码文件名与行号，并允许运行期切换到 debug/trace。
+target_compile_definitions(velocity_planner_node_lib PRIVATE
+  SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
 )
 
 add_executable(velocity_planner_node
@@ -64,10 +66,8 @@ if(BUILD_TESTING)
     velocity_planner_node_lib
   )
   ament_target_dependencies(test_velocity_planner_integration
-    geometry_msgs
     rclcpp
     sensor_msgs
-    tf2_ros
     weeder_msgs
   )
   set(integration_result_file
@@ -78,6 +78,7 @@ if(BUILD_TESTING)
             --gtest_output=xml:${integration_result_file}
     RESULT_FILE ${integration_result_file}
     APPEND_LIBRARY_DIRS ${CMAKE_CURRENT_BINARY_DIR}
+    ENV ROS_DOMAIN_ID=41
     TIMEOUT 30
   )
 endif()

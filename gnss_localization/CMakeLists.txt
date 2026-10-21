@@ -68,7 +68,10 @@ else()
   if(QXWZ_SDK_LIB)
     message(WARNING "千寻 SDK 库不存在: ${QXWZ_SDK_LIB}; sdk_client_node 不会构建")
   else()
-    message(WARNING "千寻 SDK 1.29.5 随包 release 库仅支持 aarch64 (RK3588); 当前 ${CMAKE_SYSTEM_PROCESSOR} 不构建 sdk_client_node。可通过 -DQXWZ_SDK_LIB=<path> 指定匹配的库。")
+    message(WARNING
+      "千寻 SDK 1.29.5 随包 release 库仅支持 aarch64 (RK3588); "
+      "当前 ${CMAKE_SYSTEM_PROCESSOR} 不构建 sdk_client_node。"
+      "可通过 -DQXWZ_SDK_LIB=<path> 指定匹配的库。")
   endif()
   set(QXWZ_SDK_AVAILABLE FALSE)
 endif()
@@ -201,11 +204,13 @@ if(BUILD_TESTING)
   find_package(ament_cmake_test REQUIRED)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   ament_add_test(params_in_yaml
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/check_params.py
-            --src ${CMAKE_CURRENT_SOURCE_DIR}/src
-            --yaml ${CMAKE_CURRENT_SOURCE_DIR}/config/gnss_driver.yaml
-                   ${CMAKE_CURRENT_SOURCE_DIR}/config/ntrip_client.yaml
-                   ${CMAKE_CURRENT_SOURCE_DIR}/config/sdk_client.yaml
+    COMMAND
+      ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/check_params.py
+      --src ${CMAKE_CURRENT_SOURCE_DIR}/src
+      --yaml ${CMAKE_CURRENT_SOURCE_DIR}/config/gnss_driver.yaml
+      ${CMAKE_CURRENT_SOURCE_DIR}/config/ntrip_client.yaml
+      ${CMAKE_CURRENT_SOURCE_DIR}/config/sdk_client.yaml
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO)
 
   ament_add_test(config_node_names
@@ -223,7 +228,8 @@ if(BUILD_TESTING)
     Threads::Threads
   )
 
-  # $GIAVP 解析器的有效性校验: 数值字段出现 nan/inf -> 整句判无效 (不给下游发带 NaN 的 fix/odom/imu/vel)。
+  # $GIAVP 解析器的有效性校验: 数值字段出现 nan/inf -> 整句判无效
+  # (不给下游发带 NaN 的 fix/pose/imu/vel)。
   # 无接收机的台架上唯一能钉住这条的地方 (报文喂不进节点), 见 tmp/verify_gnss_param_nan.sh 的说明。
   ament_add_gtest(test_giavp_parser test/test_giavp_parser.cpp src/giavp_parser.cpp)
   target_include_directories(test_giavp_parser PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src)

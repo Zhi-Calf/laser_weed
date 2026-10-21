@@ -88,9 +88,6 @@ def generate_launch_description():
                 'wheelbase': wheelbase,
                 'align_to_path_start': True,
                 'align_lateral_offset': align_offset,
-                # 必须非零且 <= path_tracker 的 rtk_max_sigma(0.05)，否则控制器判定
-                # "定位质量未知"而一直停车。0.02 对应 gnss_driver 的 acc_rtk_fixed。
-                'rtk_sigma': 0.02,
                 'use_sim_time': use_sim_time,
             }],
         ),

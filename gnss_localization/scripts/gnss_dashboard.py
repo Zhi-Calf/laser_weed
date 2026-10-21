@@ -5,7 +5,7 @@
   /gnss_driver/fix        sensor_msgs/NavSatFix
   /gnss_driver/imu        sensor_msgs/Imu                        (ENU yaw)
   /gnss_driver/vel        geometry_msgs/TwistWithCovarianceStamped
-  /gnss_driver/status     weeder_msgs/GnssStatus
+  /gnss_driver/pose       weeder_msgs/Pose
   /odometry/global nav_msgs/Odometry
 
 用法:
@@ -30,9 +30,9 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Imu, NavSatFix
 
 try:
-    from weeder_msgs.msg import GnssStatus
+    from weeder_msgs.msg import Pose
 except ImportError:  # 未 source weeder_msgs 时降级运行
-    GnssStatus = None
+    Pose = None
 
 # ---------------------------------------------------------------- ANSI
 CSI = "\033["
@@ -64,14 +64,6 @@ def term_width():
         w = WIDTH_MAX
     return max(WIDTH_MIN, min(WIDTH_MAX, w - 1))
 
-FIX_NAMES = {
-    0: ("NO FIX", RED),
-    1: ("SPP (单点)", YELLOW),
-    2: ("DGPS (差分)", YELLOW),
-    4: ("RTK FIXED (固定解)", GREEN),
-    5: ("RTK FLOAT (浮点解)", YELLOW),
-    6: ("INS (组合导航)", CYAN),
-}
 
 # NavSatStatus.status -> 说明（/gnss_driver/fix 的粗粒度状态）
 NAVSAT_NAMES = {-1: "NO_FIX", 0: "FIX", 1: "SBAS", 2: "GBAS"}
@@ -215,13 +207,13 @@ class GnssDashboard(Node):
         self.fix = None
         self.imu = None
         self.vel = None
-        self.status = None
+        self.pose = None
         self.odom = None
         self.odom_topic = odom_topic
 
         self.rates = {
             k: RateTracker()
-            for k in ("fix", "imu", "vel", "status", "odom")
+            for k in ("fix", "imu", "vel", "pose", "odom")
         }
         self.t_start = time.monotonic()
         self.w = term_width()
@@ -230,8 +222,8 @@ class GnssDashboard(Node):
         self.create_subscription(Imu, "/gnss_driver/imu", self._on_imu, qos)
         self.create_subscription(TwistWithCovarianceStamped, "/gnss_driver/vel", self._on_vel, qos)
         self.create_subscription(Odometry, odom_topic, self._on_odom, qos)
-        if GnssStatus is not None:
-            self.create_subscription(GnssStatus, "/gnss_driver/status", self._on_status, qos)
+        if Pose is not None:
+            self.create_subscription(Pose, "/gnss_driver/pose", self._on_pose, qos)
 
         self.create_timer(1.0 / max(self.refresh_hz, 0.5), self._render)
 
@@ -250,9 +242,9 @@ class GnssDashboard(Node):
         self.vel = msg
         self.rates["vel"].tick()
 
-    def _on_status(self, msg):
-        self.status = msg
-        self.rates["status"].tick()
+    def _on_pose(self, msg):
+        self.pose = msg
+        self.rates["pose"].tick()
 
     def _on_odom(self, msg):
         self.odom = msg
@@ -288,25 +280,20 @@ class GnssDashboard(Node):
 
     def _sec_fix(self):
         L = [BOLD + "▍解算状态" + RESET]
-        st = self.status
-        if st is None:
-            hint = "未收到 /gnss_driver/status" if GnssStatus else "weeder_msgs 未 source"
+        pose = self.pose
+        if pose is None:
+            hint = "未收到 /gnss_driver/pose" if Pose else "weeder_msgs 未 source"
             L.append(f"  {GREY}{hint}{RESET}")
         else:
-            name, color = FIX_NAMES.get(st.fix_type, (f"UNKNOWN({st.fix_type})", RED))
-            flag = "" if not self.rates["status"].stale else f" {RED}[STALE]{RESET}"
-            L.append(f"  定位质量  {color}{BOLD}{name}{RESET}{flag}")
+            name = "RTK FIXED" if pose.valid else "INVALID / NOT RTK FIXED"
+            color = GREEN if pose.valid else RED
+            flag = "" if not self.rates["pose"].stale else f" {RED}[STALE]{RESET}"
+            L.append(f"  定位有效  {color}{BOLD}{name}{RESET}{flag}")
 
-            sats = st.num_satellites
+            sats = pose.satellites
             sc = GREEN if sats >= 20 else (YELLOW if sats >= 10 else RED)
-            hc = GREEN if st.hdop <= 1.0 else (YELLOW if st.hdop <= 2.0 else RED)
             L.append(
                 f"  卫星数    {sc}{sats:>3d}{RESET}"
-                f"     差分龄期 {st.diff_age:5.1f} s"
-            )
-            L.append(
-                f"  HDOP {hc}{st.hdop:5.2f}{RESET}"
-                f"   PDOP {st.pdop:5.2f}   VDOP {st.vdop:5.2f}"
             )
         if self.fix is not None:
             cov = self.fix.position_covariance
@@ -351,9 +338,11 @@ class GnssDashboard(Node):
                 )
             have = True
 
-        if self.status is not None:
+        if self.pose is not None:
             L.append(
-                f"  {GREY}原始 heading (NMEA) {self.status.heading_deg:7.2f}°{RESET}"
+                f"  Pose roll {math.degrees(self.pose.roll):7.2f}°"
+                f"  pitch {math.degrees(self.pose.pitch):7.2f}°"
+                f"  yaw {math.degrees(self.pose.yaw):7.2f}°"
             )
             have = True
 
@@ -383,8 +372,12 @@ class GnssDashboard(Node):
             )
             have = True
 
-        if self.status is not None:
-            L.append(f"  {GREY}GNSS 报文速度 {self.status.speed_kmh:6.2f} km/h{RESET}")
+        if self.pose is not None:
+            sp = self.pose.speed_m_s
+            L.append(
+                f"  {GREY}Pose 前向速度 {sp:+6.3f} m/s"
+                f"  ({sp * 3.6:+5.2f} km/h){RESET}"
+            )
             have = True
 
         if self.odom is not None:
@@ -408,12 +401,12 @@ class GnssDashboard(Node):
                 f"  经度 {BOLD}{self.fix.longitude:14.8f}{RESET}°{flag}"
             )
             L.append(f"  高程 {self.fix.altitude:9.3f} m")
-        elif self.status is not None:
+        elif self.pose is not None:
             L.append(
-                f"  纬度 {self.status.latitude_deg:13.8f}°"
-                f"  经度 {self.status.longitude_deg:14.8f}°"
+                f"  ENU x {self.pose.x:10.3f} m"
+                f"  y {self.pose.y:10.3f} m"
             )
-            L.append(f"  高程 {self.status.altitude_m:9.3f} m")
+            L.append(f"  ENU z {self.pose.z:10.3f} m")
         else:
             L.append(f"  {GREY}无 /gnss_driver/fix{RESET}")
 
@@ -435,7 +428,7 @@ class GnssDashboard(Node):
             ("fix", "/gnss_driver/fix"),
             ("imu", "/gnss_driver/imu"),
             ("vel", "/gnss_driver/vel"),
-            ("status", "/gnss_driver/status"),
+            ("pose", "/gnss_driver/pose"),
             ("odom", self.odom_topic),
         ]
         for key, name in labels:

@@ -97,7 +97,7 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 
 | 方向 | 话题 | 类型 | 上游 |
 |---|---|---|---|
-| 订阅 | `/gnss_driver/odom` | `nav_msgs/Odometry` | `gnss_localization`（SensorDataQoS） |
+| 订阅 | `/gnss_driver/pose` | `weeder_msgs/Pose` | `gnss_localization`（SensorDataQoS） |
 | 订阅 | `/global_path_planner/path` | `weeder_msgs/Path` | `global_path_planner`（transient_local） |
 | 订阅 | `/work_mode` | `weeder_msgs/WorkMode` | 模式管理方/APP（transient_local） |
 | 订阅 | `/velocity_planner/status` | `weeder_msgs/ObstacleStatus` | `velocity_planner`（reliable） |
@@ -107,7 +107,7 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 当前路径回调**只读取** `Path.x/y`；`waypoint_types`（作业/掉头）暂不参与控制，
 字段保留给后续机具或激光分段控制。
 
-**QoS 匹配是硬要求**：`gnss_driver` 用 `SensorDataQoS`（best effort）发 odom，订阅端必须是 best effort，否则一条都收不到；规划器的 path 和 `/work_mode` 都是 `transient_local`（latched），订阅端必须匹配 durability 才能让晚加入的订阅者立刻收到最后一条。本节点已按此配置。
+**QoS 匹配是硬要求**：`gnss_driver` 用 `SensorDataQoS`（best effort）发 pose，订阅端必须是 best effort，否则一条都收不到；规划器的 path 和 `/work_mode` 都是 `transient_local`（latched），订阅端必须匹配 durability 才能让晚加入的订阅者立刻收到最后一条。本节点已按此配置。
 
 ### 工作模式门控（/work_mode）
 
@@ -132,8 +132,8 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: un
 | 门控 | 参数 | 默认 | 失败故障码 |
 |---|---|---|---|
 | 工作模式 | `work_mode_timeout_s` | 3.0 | 10101 |
-| 定位超时 | `odom_timeout_s` | 1.0 | 10102 |
-| **RTK 精度** | `rtk_max_sigma` | 0.05 | 10102 |
+| 定位超时 | `pose_timeout_s` | 1.0 | 10102 |
+| **RTK 位姿有效** | `Pose.valid` | true | 10102 |
 | 路径超时 | `path_timeout_s` | 5.0 | 10103 |
 | 转向模式兼容 | `steer_mode` | 0 | 10104 |
 | **偏离目标距离** | `max_track_error_m` | 3.0 | 10106 |
@@ -141,7 +141,7 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: un
 | **避停状态不可用/超时/感知无效** | `require_velocity_planner` / `velocity_planner_status_timeout_s` | true / 0.5 | 10108 |
 | 启动宽限 | `work_mode_startup_grace_s` | 20.0 | — |
 
-门控按顺序判定：工作模式 → RTK 位姿（存在/新鲜/固定解）→ 路径（存在/新鲜）→ 转向模式兼容 → **点云避停** → **偏离目标距离**。RTK 门控取里程计位姿协方差对角项的最大值开方。`gnss_driver` 按 fix_type 填协方差：固定解 `acc_rtk_fixed`（默认 0.02 m），非固定解直接置 `1e3`（`gnss_driver.cpp:661`），所以 `rtk_max_sigma=0.05` 正好卡在两者之间——**除草场景下激光打偏的代价远高于停车**，默认严格卡在固定解。协方差恰好为 0 时视为"质量未知"并拒绝，而不是当作完美。
+门控按顺序判定：工作模式 → RTK 位姿（存在/新鲜/`valid=true`）→ 路径（存在/新鲜）→ 转向模式兼容 → **点云避停** → **偏离目标距离**。`gnss_driver` 仅在 RTK 固定解时把 `Pose.valid` 置为 true，浮点/RTD/单点解都会输出停车。
 
 ### 点云避停门控
 
@@ -154,8 +154,8 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: un
 - `stop_required=true`
 
 无雷达仿真必须显式设置 `require_velocity_planner=false` 或同时启动
-`velocity_planner` 和有效 TF。实车启动顺序应先启动雷达驱动、外参 TF 和
-`velocity_planner`，再启动 `path_tracker`。
+`velocity_planner`。实车启动顺序应先启动雷达驱动和 `velocity_planner`，
+再启动 `path_tracker`。
 
 ### ⚠️ 偏离距离门为什么是必需的（2026-10-15 仿真实测发现）
 
@@ -238,7 +238,7 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 **GNSS 必改配置**（`gnss_driver.yaml` / `ntrip_client.yaml` / `sdk_client.yaml`）：
 
 - `serial_port`：履带车是 `/dev/ttyUSB0`(driver)、`/dev/ttyUSB1`(差分)，按除草机实际接线改
-- `calib_offset_x/y/heading`：**杆臂是履带车的物理安装参数（出厂 x=0.5m），除草机天线位置不同，必须重新标定**——填错会让 `/gnss_driver/odom` 整体偏移，下游全部跟错
+- `calib_offset_x/y/heading`：**杆臂是履带车的物理安装参数（出厂 x=0.5m），除草机天线位置不同，必须重新标定**——填错会让 `/gnss_driver/pose` 整体偏移，下游全部跟错
 - `log_dir`：`/opt/agri/logs` 按除草机部署路径改
 - NTRIP/千寻账号：`ntrip_user/password` 或 `sdk_key/secret/dev_id` **绑定设备，履带车的不能共用**，需为除草机重新申请；千寻 SDK 1.29 还需按服务端要求配置 `sdk_openapi_*` / `sdk_oss_*` 和 NOSR 坐标框架/历元
 - 差分方案二选一：ntrip_client（走 NTRIP caster，需账号）或 sdk_client（走千寻 SDK，需为设备申请 key）。用户暂未定，两个都保留，实车确认硬件后再决定跑哪个
@@ -255,7 +255,7 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 
 **已知限制**：`global_path_planner` 只接受**凸多边形**田块、不支持田块内障碍物挖空（`bow.cpp:61-66` 非凸直接拒）。除草场景若田块内有不可作业的障碍物（树、石头），这个规划器处理不了，需要额外做地块切分。
 
-**坐标系必须对齐**：GNSS 广播的 TF 是 `odom → base_link`（语义 ENU，`gnss_driver.cpp:693`），`path_tracker` 的 `frame_id` 默认已是 `odom`、订阅 `/gnss_driver/odom`，三者一致。若除草机的 `base_link` 定义（后轴中心 vs 几何中心）与履带车不同，杆臂标定那步要一并考虑。
+**坐标系必须对齐**：GNSS 广播的 TF 是 `odom → base_link`（语义 ENU），`Pose` 的 `x/y/yaw` 也位于同一 `odom` 坐标系，`path_tracker` 直接订阅 `/gnss_driver/pose`。若除草机的 `base_link` 定义（后轴中心 vs 几何中心）与履带车不同，杆臂标定那步要一并考虑。
 
 ---
 

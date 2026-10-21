@@ -10,7 +10,7 @@
 #   ┌────────────────────┬──────────────────┐
 #   │                    │ echo /gnss_driver/imu    │
 #   │   gnss_dashboard   ├──────────────────┤
-#   │   (汇总仪表盘)      │ echo /gnss_driver/status │
+#   │   (汇总仪表盘)      │ echo /gnss_driver/pose   │
 #   │                    ├──────────────────┤
 #   │                    │ echo odom pose    │
 #   │                    ├──────────────────┤
@@ -97,30 +97,24 @@ else
 fi
 
 tmux split-window -v $(SZ 66) -t "${SESSION}:gnss.1" \
-  "$(retry "ros2 topic echo ${NOD} ${BE} /gnss_driver/status")"
+  "$(retry "ros2 topic echo ${NOD} ${BE} /gnss_driver/pose")"
 
 tmux split-window -v $(SZ 50) -t "${SESSION}:gnss.2" \
   "$(retry "ros2 topic echo ${NOD} ${BE} ${ODOM_TOPIC} --field pose.pose")"
 
-# GNSS 解码状态。gnss_driver 发布的话题和 D300 完全一样（/gnss_driver/fix、
-# /gnss_driver/imu、/gnss_driver/status、/odometry/global），所以上面几个 pane
-# 本来就通用；GNSS 特有的信息全在 GnssStatus.fix_type 里，而 `topic echo`
-# 只会打印一个裸数字。这个 pane 把 GIAVP 的 status 码翻译成人能读的状态。
-# 注: nsv2（第二天线星数）和 baseline 在 giavp_parser 里解析了但没有发布，
-# 所以这里显示不了；要看它们得先在 gnss_driver 里发出来。
+# GNSS 位姿摘要：有效性、卫星数、航向和速度。
 GIAVP_AWK='
-/^fix_type:/       {ft=$2}
-/^num_satellites:/ {ns=$2}
-/^heading_deg:/    {hd=$2}
-/^speed_kmh:/      {sp=$2}
+/^valid:/       {valid=$2}
+/^satellites:/  {ns=$2}
+/^yaw:/         {yaw=$2}
+/^speed_m_s:/   {sp=$2}
 /^---/ {
-  n = (ft==0) ? "NO FIX"    : (ft==1) ? "SPP"       : (ft==2) ? "RTD/DGPS" :
-      (ft==4) ? "RTK FIXED" : (ft==5) ? "RTK FLOAT" : (ft==6) ? "INS" : "?("ft")";
-  printf "GIAVP %-10s sats=%-3s hdg=%8s deg  v=%6s km/h\n", n, ns, hd, sp;
+  n = (valid == "true") ? "RTK FIXED" : "INVALID";
+  printf "POSE %-10s sats=%-3s yaw=%8s rad  v=%7s m/s\n", n, ns, yaw, sp;
   fflush();
 }'
 tmux split-window -v $(SZ 50) -t "${SESSION}:gnss.3" \
-  "$(retry "stdbuf -oL ros2 topic echo ${NOD} ${BE} /gnss_driver/status | awk '${GIAVP_AWK}'")"
+  "$(retry "stdbuf -oL ros2 topic echo ${NOD} ${BE} /gnss_driver/pose | awk '${GIAVP_AWK}'")"
 
 tmux select-pane -t "${SESSION}:gnss.0"
 tmux set-option -t "$SESSION" mouse on

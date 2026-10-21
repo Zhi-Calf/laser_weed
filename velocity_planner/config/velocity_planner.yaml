@@ -1,15 +1,18 @@
 velocity_planner:
   ros__parameters:
+    # spdlog 滚动日志: 支持 ~ 与 $VAR 展开，目录不可写时回退到 ROS 日志目录。
+    log_dir: "~/.ros/logs"
+    log_file_size_mb: 50
+    log_file_count: 10
+    log_enable_console: true
+    log_level: "info"
+
     input_cloud_topic: /rslidar_points
     output_status_topic: /velocity_planner/status
-    target_frame: base_link
 
-    publish_hz: 10.0
-    cloud_timeout_s: 0.5
-    tf_timeout_s: 0.1
     stop_hold_s: 0.3
 
-    # base_link 坐标系下前向矩形 ROI；平移单位为 m。
+    # 激光雷达坐标系下前向矩形 ROI；平移单位为 m。
     # 默认值只是安全起点，必须按车辆包络和实际刹停距离重新标定。
     roi_forward_min_m: 0.0
     roi_forward_max_m: 2.0

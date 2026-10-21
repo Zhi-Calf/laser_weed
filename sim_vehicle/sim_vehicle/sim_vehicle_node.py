@@ -3,7 +3,7 @@
 
 替代真实的 gnss_localization + 底盘，构成一个闭环：
 
-    path_tracker ──/chassis/cmd──► sim_vehicle ──/gnss_driver/odom──► path_tracker
+    path_tracker ──/chassis/cmd──► sim_vehicle ──/gnss_driver/pose──► path_tracker
                                       └─TF odom->base_link─►
 
 同时模拟 gnss_driver 的两个前置输出，让 global_path_planner 能工作：
@@ -24,14 +24,13 @@ import math
 
 import rclpy
 from geometry_msgs.msg import TransformStamped
-from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy,
                        qos_profile_sensor_data)
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool
 from tf2_msgs.msg import TFMessage
-from weeder_msgs.msg import ChassisCmd, Path, WorkMode
+from weeder_msgs.msg import ChassisCmd, Path, Pose, WorkMode
 from visualization_msgs.msg import Marker
 
 TWO_PI = 2.0 * math.pi
@@ -69,11 +68,6 @@ class SimVehicleNode(Node):
         self.declare_parameter("origin_lon", 112.4497271)
         self.declare_parameter("origin_alt", 100.0)
 
-        # ---- 模拟 RTK 精度。path_tracker 的门控是 sigma <= rtk_max_sigma(0.05)
-        #      且 sigma > 0，所以这里必须给一个非零的小值，否则控制器一直停车。
-        #      0.02 对应 gnss_driver 的 acc_rtk_fixed（固定解）。
-        self.declare_parameter("rtk_sigma", 0.02)
-
         # ---- 工作模式：false = MANUAL（规划器自动规划），
         #      true = UNMANNED（允许 path_tracker 驱动底盘）。
         #      发 /sim/unmanned 切换。见 RUN_SIM.md 的时序说明。
@@ -96,8 +90,6 @@ class SimVehicleNode(Node):
             max(self.get_parameter("max_plant_steer_deg").value, 1.0))
         self.cmd_timeout_s = self.get_parameter("cmd_timeout_s").value
         self.cmd_topic = self.get_parameter("cmd_topic").value
-        self.rtk_sigma = self.get_parameter("rtk_sigma").value
-
         # ---- 车辆状态
         self.x = self.get_parameter("init_x").value
         self.y = self.get_parameter("init_y").value
@@ -114,7 +106,7 @@ class SimVehicleNode(Node):
         self.last_cmd_time = self.get_clock().now()
 
         # ---- QoS：必须与下游订阅端匹配，否则一条都收不到 ----
-        # path_tracker 用 SensorDataQoS 订阅 odom
+        # path_tracker 用 SensorDataQoS 订阅 pose
         self.qos_sensor = qos_profile_sensor_data
         # planner 与 path_tracker 都用 transient_local + reliable 订阅这两个话题
         self.qos_latched = QoSProfile(
@@ -134,8 +126,8 @@ class SimVehicleNode(Node):
             Path, "/global_path_planner/path", self.on_path, self.qos_latched)
 
         # ---- 发布（模拟 gnss_driver 的输出）----
-        self.odom_pub = self.create_publisher(
-            Odometry, "/gnss_driver/odom", self.qos_sensor)
+        self.pose_pub = self.create_publisher(
+            Pose, "/gnss_driver/pose", self.qos_sensor)
         self.origin_pub = self.create_publisher(
             NavSatFix, "/gnss_driver/origin", self.qos_latched)
         self.work_mode_pub = self.create_publisher(
@@ -144,7 +136,7 @@ class SimVehicleNode(Node):
         self.marker_pub = self.create_publisher(
             Marker, "/sim_vehicle/marker", 10)
 
-        # ---- 定时器：物理积分 + odom 发布（同频）----
+        # ---- 定时器：物理积分 + pose 发布（同频）----
         self.create_timer(self.dt, self.tick)
         # ---- 定时器：latched 话题 1Hz 重发（模拟 gnss_driver 与 APP 行为，
         #      也让 planner/lqr 的超时判定不会误触发）----
@@ -154,13 +146,13 @@ class SimVehicleNode(Node):
 
         self.get_logger().info(
             "仿真车辆已启动: 轴距=%.3fm dt=%.3fs 初始位姿=(%.2f, %.2f, %.1f°) "
-            "RTK_sigma=%.3fm 模式=%s"
+            "模式=%s"
             % (self.wheelbase, self.dt, self.x, self.y,
-               math.degrees(self.yaw), self.rtk_sigma,
+               math.degrees(self.yaw),
                "UNMANNED" if self.unmanned else "MANUAL"))
         self.get_logger().info(
             "订阅 /chassis/cmd + /sim/unmanned | "
-            "发布 /gnss_driver/odom + /gnss_driver/origin + /work_mode + /tf")
+            "发布 /gnss_driver/pose + /gnss_driver/origin + /work_mode + /tf")
 
     # ============================================================
     # 回调
@@ -185,9 +177,11 @@ class SimVehicleNode(Node):
     def on_unmanned(self, msg):
         if msg.data != self.unmanned:
             self.unmanned = msg.data
+            mode_text = (
+                "UNMANNED（允许 path_tracker 驱动）"
+                if self.unmanned else "MANUAL（规划器自动规划）")
             self.get_logger().info(
-                "工作模式切换 -> %s" % ("UNMANNED（允许 path_tracker 驱动）"
-                                       if self.unmanned else "MANUAL（规划器自动规划）"))
+                "工作模式切换 -> %s" % mode_text)
 
     def on_path(self, msg):
         """收到规划路径后，把车对齐到起点附近（只做一次）。
@@ -235,41 +229,25 @@ class SimVehicleNode(Node):
             self.yaw = wrap_angle(
                 self.yaw + (self.v / self.wheelbase) * math.tan(self.delta_cmd) * self.dt)
 
-        self.publish_odom()
+        self.publish_pose()
         self.publish_tf()
         self.publish_marker()
 
-    def publish_odom(self):
-        """模拟 gnss_driver 的 ~/odom：ENU 位姿 + RTK 精度协方差。
-
-        协方差是 path_tracker RTK 门控的判据（sqrt(max(cov[0], cov[7])) <= 0.05），
-        必须填非零小值，否则控制器判定"定位质量未知"而一直停车。
-        """
-        m = Odometry()
+    def publish_pose(self):
+        """模拟 gnss_driver 的 ~/pose：ENU 位姿、三角姿态、卫星数和速度。"""
+        m = Pose()
         m.header.stamp = self.get_clock().now().to_msg()
         m.header.frame_id = "odom"
-        m.child_frame_id = "base_link"
-
-        m.pose.pose.position.x = self.x
-        m.pose.pose.position.y = self.y
-        m.pose.pose.position.z = 0.0
-
-        # yaw -> 四元数（绕 z 轴）
-        half = self.yaw * 0.5
-        m.pose.pose.orientation.z = math.sin(half)
-        m.pose.pose.orientation.w = math.cos(half)
-
-        var = self.rtk_sigma * self.rtk_sigma
-        m.pose.covariance[0] = var    # x
-        m.pose.covariance[7] = var    # y
-        m.pose.covariance[14] = var   # z
-        m.pose.covariance[35] = math.radians(0.2) ** 2   # yaw
-
-        # 车体系前进速度，path_tracker 读这个填 robot_state_.linear_v
-        m.twist.twist.linear.x = self.v
-        m.twist.covariance[0] = 0.01
-
-        self.odom_pub.publish(m)
+        m.x = self.x
+        m.y = self.y
+        m.z = 0.0
+        m.roll = 0.0
+        m.pitch = 0.0
+        m.yaw = self.yaw
+        m.satellites = 30
+        m.valid = True
+        m.speed_m_s = self.v
+        self.pose_pub.publish(m)
 
     def publish_tf(self):
         """odom -> base_link，与 gnss_driver 广播的同一条 TF。"""

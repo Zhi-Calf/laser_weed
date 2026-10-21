@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - 新增 `ObstacleStatus.msg`，用于点云避停节点向 `path_tracker` 报告感知有效性、
   停车请求、ROI 障碍点数和最近障碍距离。
+- 新增 `Pose.msg`，直接提供 ENU 位姿、roll/pitch/yaw、卫星数、有效性和
+  车体前向速度。
+
+### Changed
+
+- **BREAKING:** 删除 `GnssStatus.msg`。GNSS 驱动的 `/gnss_driver/status`
+  由 `weeder_msgs/msg/Pose` 的 `/gnss_driver/pose` 取代。
 
 ### Removed
 
