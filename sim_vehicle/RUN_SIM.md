@@ -32,6 +32,9 @@ ros2 launch sim_vehicle weeder_sim.launch.py
 | `sim_orchestrator` | 确认路径生成后切 UNMANNED |
 | `rviz2` | 预置田块、路径、车辆和目标点可视化 |
 
+仿真不启动激光雷达和 `velocity_planner`；`weeder_sim.launch.py` 会显式设置
+`require_velocity_planner=false`。实车默认启用避停，不能直接沿用仿真的关闭配置。
+
 常用参数：
 
 ```bash

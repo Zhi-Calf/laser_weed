@@ -100,6 +100,7 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 | 订阅 | `/gnss_driver/odom` | `nav_msgs/Odometry` | `gnss_localization`（SensorDataQoS） |
 | 订阅 | `/global_path_planner/path` | `weeder_msgs/Path` | `global_path_planner`（transient_local） |
 | 订阅 | `/work_mode` | `weeder_msgs/WorkMode` | 模式管理方/APP（transient_local） |
+| 订阅 | `/velocity_planner/status` | `weeder_msgs/ObstacleStatus` | `velocity_planner`（reliable） |
 | 发布 | `/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
 | 发布 | `/path_tracker/target_point` | `visualization_msgs/Marker` | RViz |
 
@@ -136,9 +137,25 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: un
 | 路径超时 | `path_timeout_s` | 5.0 | 10103 |
 | 转向模式兼容 | `steer_mode` | 0 | 10104 |
 | **偏离目标距离** | `max_track_error_m` | 3.0 | 10106 |
+| ROI 内检测到障碍 | `min_obstacle_points` | 3 | 10107 |
+| **避停状态不可用/超时/感知无效** | `require_velocity_planner` / `velocity_planner_status_timeout_s` | true / 0.5 | 10108 |
 | 启动宽限 | `work_mode_startup_grace_s` | 20.0 | — |
 
-门控按顺序判定：工作模式 → RTK 位姿（存在/新鲜/固定解）→ 路径（存在/新鲜）→ 转向模式兼容 → **偏离目标距离**。RTK 门控取里程计位姿协方差对角项的最大值开方。`gnss_driver` 按 fix_type 填协方差：固定解 `acc_rtk_fixed`（默认 0.02 m），非固定解直接置 `1e3`（`gnss_driver.cpp:661`），所以 `rtk_max_sigma=0.05` 正好卡在两者之间——**除草场景下激光打偏的代价远高于停车**，默认严格卡在固定解。协方差恰好为 0 时视为"质量未知"并拒绝，而不是当作完美。
+门控按顺序判定：工作模式 → RTK 位姿（存在/新鲜/固定解）→ 路径（存在/新鲜）→ 转向模式兼容 → **点云避停** → **偏离目标距离**。RTK 门控取里程计位姿协方差对角项的最大值开方。`gnss_driver` 按 fix_type 填协方差：固定解 `acc_rtk_fixed`（默认 0.02 m），非固定解直接置 `1e3`（`gnss_driver.cpp:661`），所以 `rtk_max_sigma=0.05` 正好卡在两者之间——**除草场景下激光打偏的代价远高于停车**，默认严格卡在固定解。协方差恰好为 0 时视为"质量未知"并拒绝，而不是当作完美。
+
+### 点云避停门控
+
+`require_velocity_planner` 默认 `true`。启用后，以下任一情况都输出零速、零转角和
+`estop=true`：
+
+- 从未收到 `/velocity_planner/status`
+- 最近状态超过 `velocity_planner_status_timeout_s`（默认 0.5s）
+- `sensor_valid=false`
+- `stop_required=true`
+
+无雷达仿真必须显式设置 `require_velocity_planner=false` 或同时启动
+`velocity_planner` 和有效 TF。实车启动顺序应先启动雷达驱动、外参 TF 和
+`velocity_planner`，再启动 `path_tracker`。
 
 ### ⚠️ 偏离距离门为什么是必需的（2026-10-15 仿真实测发现）
 
@@ -154,7 +171,8 @@ LQR 的状态量只有 `[横向误差, 航向误差]`，**没有沿路径方向�
 
 ## 5. 构建与运行
 
-**依赖前置**：本包依赖 `weeder_msgs`（WorkMode/ChassisCmd）。
+**依赖前置**：本包依赖 `weeder_msgs`（WorkMode、ChassisCmd、Path、
+ObstacleStatus）。
 
 > ⚠️ **前提：`MegaTrak-main` 整棵树不能放在 `~/ros2_ws/src/` 里面。**
 > colcon 会递归扫描 `src/` 下所有 `package.xml`；如果 MegaTrak 树在 `src/` 内，
@@ -207,7 +225,7 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 
 ## 7. 整包移植进度（gnss_localization / global_path_planner）
 
-`weeder_msgs` 已作为本项目自有接口包放入工作区（当前保留 4 个实际使用的 msg，
+`weeder_msgs` 已作为本项目自有接口包放入工作区（当前保留 6 个实际使用的 msg，
 只依赖标准消息库）。按"整包原样移植"方案，接下来把这几个包整体拷进除草机工作区，只做配置适配、不改源码：
 
 | 包 | 位置 | 移植动作 |
@@ -247,6 +265,7 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 |---|---|
 | `test_lqr_kinematics.cpp` | 前馈 = L·κ、前馈与速度无关、左右偏差的转向符号、直线零误差零转角、**闭环收敛仿真**、转角限幅 ±90°、速度限幅、曲率降速、空/单点轨迹停车、零轴距不产生 inf/nan、终点不越界、负位移不回退、**沿路径盲区（3 条）**、**前向吸附（3 条）** |
 | `test_path_profile.cpp` | 少于两点拒绝、空指针拒绝、直线零曲率、弧长累加、左/右转弯曲率符号、端点继承内点曲率、重复点不产生 NaN、四分之一圆曲率量级 |
+| `test_obstacle_gate.cpp` | 避停关闭、状态缺失、状态超时、感知无效、停车请求和正常放行 |
 
 闭环收敛测试（`LqrConvergence.LateralErrorShrinksOverTime`）用自行车模型积分 200 拍，从 0.8 m 横向偏差验证收敛到 5 cm 内——这条能抓住单拍测试抓不到的符号错误（符号写反时单拍看起来合理，但会随时间发散）。
 

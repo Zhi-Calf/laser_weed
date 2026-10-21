@@ -21,8 +21,8 @@ constexpr double kRad2Deg = 57.29577951308232;
 constexpr const char * kNodeName = "path_tracker";
 }  // namespace
 
-PathTrackerNode::PathTrackerNode()
-: Node(kNodeName)
+PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions & options)
+: Node(kNodeName, options)
 {
   // Order matters: the LQR object must exist before loadParameters() configures
   // it, otherwise loadParameters() dereferences a null pointer.
@@ -39,9 +39,11 @@ PathTrackerNode::PathTrackerNode()
     "LQR 控制器已启动: 轴距=%.3fm 等效轴距=%.3fm 最大转角=%.1fdeg 最大速度=%.2fm/s 频率=%.1fHz",
     wheelbase_, effective_wheelbase_, max_steer_deg_, max_speed_, control_hz_);
   RCLCPP_INFO(get_logger(),
-    "订阅 里程计=%s 路径=%s 工作模式=%s | 发布 %s",
+    "订阅 里程计=%s 路径=%s 工作模式=%s 避停状态=%s | 发布 %s | 避停门控=%s",
     odom_topic_.c_str(), path_topic_.c_str(), work_mode_topic_.c_str(),
-    cmd_topic_.c_str());
+    velocity_planner_status_topic_.c_str(),
+    cmd_topic_.c_str(),
+    require_velocity_planner_ ? "enabled" : "disabled");
 }
 
 void PathTrackerNode::loadParameters()
@@ -75,11 +77,17 @@ void PathTrackerNode::loadParameters()
   path_timeout_s_ = declare_parameter<double>("path_timeout_s", 5.0);
   work_mode_timeout_s_ = declare_parameter<double>("work_mode_timeout_s", 3.0);
   work_mode_startup_grace_s_ = declare_parameter<double>("work_mode_startup_grace_s", 20.0);
+  velocity_planner_status_timeout_s_ =
+    declare_parameter<double>("velocity_planner_status_timeout_s", 0.5);
   require_unmanned_ = declare_parameter<bool>("require_unmanned", true);
+  require_velocity_planner_ =
+    declare_parameter<bool>("require_velocity_planner", true);
   frame_id_ = declare_parameter<std::string>("frame_id", "odom");
   odom_topic_ = declare_parameter<std::string>("odom_topic", "/gnss_driver/odom");
   path_topic_ = declare_parameter<std::string>("path_topic", "/global_path_planner/path");
   work_mode_topic_ = declare_parameter<std::string>("work_mode_topic", "/work_mode");
+  velocity_planner_status_topic_ = declare_parameter<std::string>(
+    "velocity_planner_status_topic", "/velocity_planner/status");
   cmd_topic_ = declare_parameter<std::string>("cmd_topic", "/chassis/cmd");
   viz_ = declare_parameter<bool>("viz", true);
 
@@ -95,6 +103,10 @@ void PathTrackerNode::loadParameters()
   // along-track error term.
   max_track_error_m_ = std::max(max_track_error_m_, 0.1);
   snap_window_ = std::min(snap_window_, static_cast<size_t>(1000));
+  velocity_planner_status_timeout_s_ = std::max(velocity_planner_status_timeout_s_, 0.1);
+  if (velocity_planner_status_topic_.empty()) {
+    velocity_planner_status_topic_ = "/velocity_planner/status";
+  }
 
   // Effective wheelbase depends on the steering mode, because the Ackermann
   // assumption behind B_d = v*dt/L only holds for modes 0 and 1.
@@ -166,6 +178,15 @@ void PathTrackerNode::setupInterfaces()
     work_mode_topic_, mode_qos,
     [this](const weeder_msgs::msg::WorkMode::SharedPtr msg) {workModeCallback(msg);});
 
+  const auto obstacle_qos =
+    rclcpp::QoS(rclcpp::KeepLast(1)).reliable();
+  obstacle_status_sub_ =
+    create_subscription<weeder_msgs::msg::ObstacleStatus>(
+    velocity_planner_status_topic_, obstacle_qos,
+    [this](const weeder_msgs::msg::ObstacleStatus::SharedPtr msg) {
+      ObstacleStatusCallback(msg);
+    });
+
   cmd_pub_ = create_publisher<weeder_msgs::msg::ChassisCmd>(cmd_topic_, 10);
   if (viz_) {
     viz_pub_ = create_publisher<visualization_msgs::msg::Marker>("/path_tracker/target_point", 10);
@@ -176,6 +197,7 @@ void PathTrackerNode::setupInterfaces()
   last_odom_time_ = t;
   last_path_time_ = t;
   last_work_mode_time_ = t;
+  last_obstacle_status_time_ = t;
 }
 
 void PathTrackerNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
@@ -288,6 +310,18 @@ void PathTrackerNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedP
   }
 }
 
+// 保存最近一次避停状态及其新鲜度。
+void PathTrackerNode::ObstacleStatusCallback(
+  const weeder_msgs::msg::ObstacleStatus::SharedPtr msg)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  last_obstacle_status_time_ = now();
+  has_obstacle_status_ = true;
+  obstacle_sensor_valid_ = msg->sensor_valid;
+  obstacle_stop_required_ = msg->stop_required;
+  obstacle_points_ = msg->obstacle_points;
+}
+
 bool PathTrackerNode::rtkQualityOk(double & worst_sigma) const
 {
   worst_sigma = odom_sigma_;
@@ -386,6 +420,52 @@ void PathTrackerNode::controlTick()
     return;
   }
 
+  // ---- Gate 5: point-cloud obstacle safety ----
+  const double obstacle_status_age_s = has_obstacle_status_ ?
+    (t - last_obstacle_status_time_).seconds() : 0.0;
+  const ObstacleGateDecision obstacle_decision = EvaluateObstacleGate(
+    require_velocity_planner_,
+    has_obstacle_status_,
+    obstacle_status_age_s,
+    velocity_planner_status_timeout_s_,
+    obstacle_sensor_valid_,
+    obstacle_stop_required_);
+  if (obstacle_decision != ObstacleGateDecision::kAllow) {
+    switch (obstacle_decision) {
+      case ObstacleGateDecision::kUnavailable:
+        RCLCPP_WARN_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          kWarnIntervalMs,
+          "避停状态不可用或超时 (%.2fs > %.2fs)，故障码 %u，输出停车",
+          obstacle_status_age_s,
+          velocity_planner_status_timeout_s_,
+          fault::kVelocityPlannerUnavailable);
+        break;
+      case ObstacleGateDecision::kSensorInvalid:
+        RCLCPP_WARN_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          kWarnIntervalMs,
+          "避停感知数据无效，故障码 %u，输出停车",
+          fault::kVelocityPlannerUnavailable);
+        break;
+      case ObstacleGateDecision::kStopRequired:
+        RCLCPP_WARN_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          kWarnIntervalMs,
+          "ROI 内检测到 %u 个障碍点，故障码 %u，输出停车",
+          obstacle_points_,
+          fault::kObstacleInRoi);
+        break;
+      case ObstacleGateDecision::kAllow:
+        break;
+    }
+    publishStop();
+    return;
+  }
+
   // ---- All gates passed: run the controller ----
 
   lqr_->setRobotState(robot_state_);
@@ -408,7 +488,7 @@ void PathTrackerNode::controlTick()
     }
   }
 
-  // ---- Gate 5: the robot must still be near its tracked goal ----
+  // ---- Gate 6: the robot must still be near its tracked goal ----
   //
   // This gate exists because the LQR error state [e_lateral, e_heading] has NO
   // along-track component. A robot that runs straight past the goal along the

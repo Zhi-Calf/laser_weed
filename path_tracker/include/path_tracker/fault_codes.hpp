@@ -42,6 +42,12 @@ inline constexpr uint32_t kPathFinished = 10105;
 /// thing that catches that failure mode.
 inline constexpr uint32_t kTrackErrorLost = 10106;
 
+/// ROI 内检测到有效障碍点，避停门控主动要求停车。
+inline constexpr uint32_t kObstacleInRoi = 10107;
+
+/// 点云、TF、避停节点或避停状态消息不可用；按失效停车处理。
+inline constexpr uint32_t kVelocityPlannerUnavailable = 10108;
+
 /// Upstream node names retained for fault attribution in future reporting.
 inline constexpr const char * kSourceGnss = "gnss_driver";
 inline constexpr const char * kSourcePlanner = "global_path_planner";

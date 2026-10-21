@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>weeder_msgs</name>
-  <version>0.3.0</version>
+  <version>0.4.0</version>
   <description>ROS2 interfaces for the laser weeder robot</description>
   <maintainer email="dev@weeder.local">dev</maintainer>
   <license>Apache-2.0</license>

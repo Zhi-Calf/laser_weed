@@ -12,15 +12,18 @@
 
 #include "path_tracker/fault_codes.hpp"
 #include "path_tracker/lqr.hpp"
+#include "path_tracker/obstacle_gate.hpp"
 #include "path_tracker/path_profile.hpp"
 
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <weeder_msgs/msg/chassis_cmd.hpp>
+#include <weeder_msgs/msg/obstacle_status.hpp>
 #include <weeder_msgs/msg/path.hpp>
 #include <weeder_msgs/msg/work_mode.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -32,7 +35,8 @@ namespace path_tracker
 class PathTrackerNode : public rclcpp::Node
 {
 public:
-  PathTrackerNode();
+  explicit PathTrackerNode(
+    const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
 
 private:
   void loadParameters();
@@ -42,6 +46,8 @@ private:
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void pathCallback(const weeder_msgs::msg::Path::SharedPtr msg);
   void workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg);
+  void ObstacleStatusCallback(
+    const weeder_msgs::msg::ObstacleStatus::SharedPtr msg);
 
   /// Publish the tracked goal point as an RViz marker.
   void publishViz(const TrajectoryPoint & target);
@@ -77,11 +83,14 @@ private:
   double path_timeout_s_{5.0};
   double work_mode_timeout_s_{3.0};
   double work_mode_startup_grace_s_{20.0};
+  double velocity_planner_status_timeout_s_{0.5};
   bool require_unmanned_{true};
+  bool require_velocity_planner_{true};
   std::string frame_id_{"odom"};
   std::string odom_topic_{"/gnss_driver/odom"};
   std::string path_topic_{"/global_path_planner/path"};
   std::string work_mode_topic_{"/work_mode"};
+  std::string velocity_planner_status_topic_{"/velocity_planner/status"};
   std::string cmd_topic_{"/chassis/cmd"};
   bool viz_{true};
 
@@ -91,6 +100,8 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<weeder_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<weeder_msgs::msg::WorkMode>::SharedPtr work_mode_sub_;
+  rclcpp::Subscription<weeder_msgs::msg::ObstacleStatus>::SharedPtr
+    obstacle_status_sub_;
   rclcpp::Publisher<weeder_msgs::msg::ChassisCmd>::SharedPtr cmd_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr viz_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
@@ -103,7 +114,12 @@ private:
   rclcpp::Time last_odom_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_path_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_work_mode_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_obstacle_status_time_{0, 0, RCL_ROS_TIME};
   bool ever_got_work_mode_{false};
+  bool has_obstacle_status_{false};
+  bool obstacle_sensor_valid_{false};
+  bool obstacle_stop_required_{true};
+  uint32_t obstacle_points_{0};
   bool unmanned_{false};
   uint8_t last_mode_{0};
   bool has_path_{false};

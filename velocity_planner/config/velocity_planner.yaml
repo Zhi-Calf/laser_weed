@@ -1,0 +1,21 @@
+velocity_planner:
+  ros__parameters:
+    input_cloud_topic: /rslidar_points
+    output_status_topic: /velocity_planner/status
+    target_frame: base_link
+
+    publish_hz: 10.0
+    cloud_timeout_s: 0.5
+    tf_timeout_s: 0.1
+    stop_hold_s: 0.3
+
+    # base_link 坐标系下前向矩形 ROI；平移单位为 m。
+    # 默认值只是安全起点，必须按车辆包络和实际刹停距离重新标定。
+    roi_forward_min_m: 0.0
+    roi_forward_max_m: 2.0
+    roi_half_width_m: 0.9
+    roi_min_height_m: 0.1
+    roi_max_height_m: 1.5
+
+    # ROI 内至少有该数量的有效点才触发停车，用于抑制孤立噪声点。
+    min_obstacle_points: 3

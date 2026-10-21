@@ -29,6 +29,7 @@ path_tracker:
     odom_topic: /gnss_driver/odom
     path_topic: /global_path_planner/path
     work_mode_topic: /work_mode
+    velocity_planner_status_topic: /velocity_planner/status
     # 速度 + 前轮转角合并指令（weeder_msgs/ChassisCmd）
     cmd_topic: /chassis/cmd
 
@@ -106,5 +107,10 @@ path_tracker:
     # 给 APP/链路上电重连留时间。宽限**只抑制告警，不放开运动**。
     # 与 MegaTrak path_controller 的 work_mode_startup_grace_s 同义同量级。
     work_mode_startup_grace_s: 20.0
+
+    # 点云避停门控。实车默认启用：无避停状态、状态超时或 sensor_valid=false
+    # 时均按失效停车。无雷达仿真必须在 launch 中显式关闭。
+    require_velocity_planner: true
+    velocity_planner_status_timeout_s: 0.5
 
     viz: true

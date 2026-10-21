@@ -32,15 +32,22 @@ set(DEPS
 # the same pattern MegaTrak's global_path_planner uses for its bow algorithm.
 add_library(${PROJECT_NAME}_lib SHARED
   src/lqr.cpp
+  src/obstacle_gate.cpp
   src/path_profile.cpp
 )
 target_link_libraries(${PROJECT_NAME}_lib Eigen3::Eigen)
 ament_target_dependencies(${PROJECT_NAME}_lib ${DEPS})
 
-# ---- Node executable ----
-add_executable(path_tracker_node src/path_tracker_node.cpp src/path_tracker_main.cpp)
-target_link_libraries(path_tracker_node ${PROJECT_NAME}_lib)
-ament_target_dependencies(path_tracker_node ${DEPS})
+# ---- Node library / executable ----
+add_library(path_tracker_node_lib SHARED
+  src/path_tracker_node.cpp
+)
+target_link_libraries(path_tracker_node_lib ${PROJECT_NAME}_lib)
+ament_target_dependencies(path_tracker_node_lib ${DEPS})
+
+add_executable(path_tracker_node src/path_tracker_main.cpp)
+target_link_libraries(path_tracker_node path_tracker_node_lib)
+ament_target_dependencies(path_tracker_node rclcpp)
 
 # ---- Tests ----
 if(BUILD_TESTING)
@@ -51,6 +58,32 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_path_profile test/test_path_profile.cpp)
   target_link_libraries(test_path_profile ${PROJECT_NAME}_lib)
+
+  ament_add_gtest(test_obstacle_gate test/test_obstacle_gate.cpp)
+  target_link_libraries(test_obstacle_gate ${PROJECT_NAME}_lib)
+
+  ament_add_gtest_executable(test_path_tracker_obstacle_integration
+    test/test_path_tracker_obstacle_integration.cpp
+  )
+  target_link_libraries(test_path_tracker_obstacle_integration
+    path_tracker_node_lib
+  )
+  ament_target_dependencies(test_path_tracker_obstacle_integration
+    geometry_msgs
+    nav_msgs
+    rclcpp
+    weeder_msgs
+  )
+  set(path_tracker_integration_result_file
+    "${AMENT_TEST_RESULTS_DIR}/${PROJECT_NAME}/test_path_tracker_obstacle_integration.gtest.xml"
+  )
+  ament_add_test(test_path_tracker_obstacle_integration
+    COMMAND $<TARGET_FILE:test_path_tracker_obstacle_integration>
+            --gtest_output=xml:${path_tracker_integration_result_file}
+    RESULT_FILE ${path_tracker_integration_result_file}
+    APPEND_LIBRARY_DIRS ${CMAKE_CURRENT_BINARY_DIR}
+    TIMEOUT 30
+  )
 endif()
 
 # ---- Install ----
@@ -64,6 +97,11 @@ install(TARGETS ${PROJECT_NAME}_lib
 )
 install(TARGETS path_tracker_node
   RUNTIME DESTINATION lib/${PROJECT_NAME}
+)
+install(TARGETS path_tracker_node_lib
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
 )
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})

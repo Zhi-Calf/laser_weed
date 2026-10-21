@@ -120,6 +120,8 @@ def generate_launch_description():
                 # 命令行覆盖 yaml：wheelbase 与仿真车辆严格一致，target_v 可一键调
                 {'wheelbase': wheelbase},
                 {'lqr_target_v': target_v},
+                # 仿真不启动激光雷达，显式关闭实车默认启用的点云避停门控。
+                {'require_velocity_planner': False},
                 {'use_sim_time': use_sim_time},
             ],
         ),

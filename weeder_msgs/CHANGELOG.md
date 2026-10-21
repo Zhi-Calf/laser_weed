@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- 新增 `ObstacleStatus.msg`，用于点云避停节点向 `path_tracker` 报告感知有效性、
+  停车请求、ROI 障碍点数和最近障碍距离。
+
 ### Removed
 
 - 删除仓库内无调用方的 `CalibrationCommand.srv`、`SetImplementMode.srv`
