@@ -140,7 +140,7 @@ int SerialPort::read_lines(const std::function<void(const std::string&)>& line_c
       break;   // 超时 (0s 超时, 即本次无数据)
 
     // 检测串口断开/挂起/异常
-    if (pfd.revents & (POLLHUP | POLLERR)) {
+    if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
       close();   // 物理断开时关闭 fd_，让 is_open() 返回 false
       break;
     }
@@ -154,10 +154,13 @@ int SerialPort::read_lines(const std::function<void(const std::string&)>& line_c
         continue;
       if (errno == EAGAIN || errno == EWOULDBLOCK)
         break;   // 暂无可读数据, 下次 poll 再试
+      close();   // 真正的 IO 错误也关闭，便于上层重新打开
       break;     // 真正的 IO 错误
     }
-    if (n == 0)
+    if (n == 0) {
+      close();
       break;   // 对端关闭 (串口断开)
+    }
 
     for (ssize_t i = 0; i < n; ++i) {
       unsigned char c = static_cast<unsigned char>(read_buf_[i]);

@@ -42,9 +42,10 @@ private:
 private:
   // 内层数据交互结束原因。
   enum class SessionEnd {
-    kGgaTimeout,     // GGA 数据超时 → 重建期间保持 FAULT_GGA_TIMEOUT
-    kRtcmTimeout,    // RTCM 数据超时 → 重建期间保持 FAULT_RTCM_TIMEOUT
-    kDisconnected,   // 连接断开/收发失败/正常退出 → 重建, 不报数据故障
+    kGgaTimeout,     // GGA 数据超时
+    kRtcmTimeout,    // RTCM 数据超时
+    kSerialWriteFail,  // 串口写 RTCM 连续失败
+    kDisconnected,   // 连接断开/收发失败/正常退出
   };
   SessionEnd runSession(int socket_fd, const std::string& first_gga, std::chrono::steady_clock::time_point first_gga_time, std::string pending_data);
 
@@ -64,7 +65,7 @@ private:
   double gga_interval_sec_{1.0};                   // GGA 上传周期 (s)
   double reconnect_delay_sec_{1.0};                // NTRIP 连接失败后的重连延迟 (s); 串口打开/等待 GGA 等本地重试固定 200ms
   double first_rtcm_timeout_sec_{30.0};            // 等待首帧 RTCM 超时 (s)
-  double first_gga_timeout_sec_{30.0};             // 等待首个 GGA 超时 (s): 接收机定位收敛 (<35s)
+  double first_gga_timeout_sec_{40.0};             // 等待首个 GGA 超时 (s): 接收机定位收敛 (<35s)
   double data_timeout_sec_{10.0};                  // 正常后数据超时 (s)
   double connect_timeout_sec_{10.0};               // TCP 连接超时 (s)
   double header_timeout_sec_{15.0};                // 响应头读取累计超时 (s)

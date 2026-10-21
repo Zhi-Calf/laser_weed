@@ -53,8 +53,8 @@ public:
 private:
   static bool verifyChecksum(const std::string& sentence);
   static std::vector<std::string> splitFields(const std::string& body);
-  static double safeStod(const std::string& s, double fallback = 0.0);
-  static int safeStoi(const std::string& s, int fallback = 0);
+  static bool parseDouble(const std::string& text, double* value);
+  static bool parseInt(const std::string& text, int* value);
 
 private:
   GiavpData data_;

@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -21,7 +22,6 @@
 #include <sstream>
 #include <system_error>
 
-#include "gnss_localization/fault_codes.hpp"
 #include "gnss_localization/serial_port.hpp"
 
 namespace gnss_localization {
@@ -116,6 +116,16 @@ void ConfigureLogger(const std::string& log_dir, size_t max_file_size_bytes, siz
   spdlog::flush_every(std::chrono::seconds(3));
 }
 
+// 校验正数参数，非法值回退到安全默认值。
+double PositiveOr(const char* name, double value, double fallback) {
+  if (std::isfinite(value) && value > 0.0) {
+    return value;
+  }
+  SPDLOG_WARN("{} 必须为正数 (收到 {}), 使用默认值 {}", name, value,
+              fallback);
+  return fallback;
+}
+
 // ntip要求base64 编码
 std::string base64Encode(const std::string& input) {
   static const char kTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -152,6 +162,8 @@ std::string base64Encode(const std::string& input) {
       SPDLOG_WARN("发送失败: {}", std::strerror(errno));
       return false;
     }
+    if (n == 0)
+      return false;
     sent += static_cast<size_t>(n);
   }
   return true;
@@ -210,7 +222,7 @@ void NtripClient::loadParameters() {
   declare_parameter("gga_interval_sec", 1.0);
   declare_parameter("reconnect_delay_sec", 1.0);
   declare_parameter("first_rtcm_timeout_sec", 30.0);
-  declare_parameter("first_gga_timeout_sec", 30.0);
+  declare_parameter("first_gga_timeout_sec", 40.0);
   declare_parameter("data_timeout_sec", 10.0);
   declare_parameter("connect_timeout_sec", 10.0);
   declare_parameter("header_timeout_sec", 15.0);
@@ -223,14 +235,33 @@ void NtripClient::loadParameters() {
   ntrip_user_               = get_parameter("ntrip_user").as_string();
   ntrip_password_           = get_parameter("ntrip_password").as_string();
   ntrip_mountpoint_         = get_parameter("ntrip_mountpoint").as_string();
-  gga_interval_sec_         = get_parameter("gga_interval_sec").as_double();
-  reconnect_delay_sec_      = get_parameter("reconnect_delay_sec").as_double();
-  first_rtcm_timeout_sec_   = get_parameter("first_rtcm_timeout_sec").as_double();
-  first_gga_timeout_sec_    = get_parameter("first_gga_timeout_sec").as_double();
-  data_timeout_sec_         = get_parameter("data_timeout_sec").as_double();
-  connect_timeout_sec_      = get_parameter("connect_timeout_sec").as_double();
-  header_timeout_sec_       = get_parameter("header_timeout_sec").as_double();
-  serial_write_fail_count_  = get_parameter("serial_write_fail_count").as_int();
+  gga_interval_sec_ = PositiveOr(
+      "gga_interval_sec", get_parameter("gga_interval_sec").as_double(), 1.0);
+  reconnect_delay_sec_ = PositiveOr(
+      "reconnect_delay_sec",
+      get_parameter("reconnect_delay_sec").as_double(), 1.0);
+  first_rtcm_timeout_sec_ = PositiveOr(
+      "first_rtcm_timeout_sec",
+      get_parameter("first_rtcm_timeout_sec").as_double(), 30.0);
+  first_gga_timeout_sec_ = PositiveOr(
+      "first_gga_timeout_sec",
+      get_parameter("first_gga_timeout_sec").as_double(), 40.0);
+  data_timeout_sec_ = PositiveOr(
+      "data_timeout_sec", get_parameter("data_timeout_sec").as_double(),
+      10.0);
+  connect_timeout_sec_ = PositiveOr(
+      "connect_timeout_sec",
+      get_parameter("connect_timeout_sec").as_double(), 10.0);
+  header_timeout_sec_ = PositiveOr(
+      "header_timeout_sec",
+      get_parameter("header_timeout_sec").as_double(), 15.0);
+  serial_write_fail_count_ =
+      static_cast<int>(std::max<int64_t>(
+          1, get_parameter("serial_write_fail_count").as_int()));
+  if (ntrip_port_ <= 0 || ntrip_port_ > 65535) {
+    SPDLOG_WARN("ntrip_port={} 非法, 使用默认值 8002", ntrip_port_);
+    ntrip_port_ = 8002;
+  }
 
   SPDLOG_INFO("========== NTRIP 客户端参数加载 ==========");
   SPDLOG_INFO("串口: {}@{}", serial_port_, serial_baud_);
@@ -525,8 +556,7 @@ int NtripClient::openNtripSocket(std::string& pending_data) {
 }
 
 // 发送 GPGGA 并写入 RTCM。
-// 返回值区分结束原因: 数据层超时 (链路通但数据停摆) 需在重建期间保持故障码,
-// 连接断开/收发失败则交由重建阶段重新暴露链路故障。
+// 返回值区分结束原因，便于调用方记录数据超时或链路断开。
 NtripClient::SessionEnd NtripClient::runSession(int socket_fd, const std::string& first_gga, std::chrono::steady_clock::time_point first_gga_time, std::string pending_data) {
   // 重置连续失败计数
   consecutive_write_fail_.store(0);
@@ -620,7 +650,7 @@ NtripClient::SessionEnd NtripClient::runSession(int socket_fd, const std::string
     // 串口写 RTCM 连续失败判定: 达到阈值才判故障 (与 RTCM 帧间隔解耦, 避免低频帧率误判)。
     if (consecutive_write_fail_.load() >= serial_write_fail_count_) {
       SPDLOG_ERROR("串口写 RTCM 连续失败 {} 次, 结束会话", serial_write_fail_count_);
-      return SessionEnd::kDisconnected;
+      return SessionEnd::kSerialWriteFail;
     }
   }
   return SessionEnd::kDisconnected;
@@ -644,7 +674,7 @@ void NtripClient::workerLoop() {
     serial_failing = false;
     SPDLOG_INFO("串口打开成功: {}", serial_port_);
 
-    // ---- 2. 等待首个 GGA (接收机定位收敛, 宽限 first_gga_timeout_sec_)。超时上报 GGA 故障。 ----
+    // ---- 2. 等待首个 GGA (接收机定位收敛, 宽限 first_gga_timeout_sec_)。 ----
     SPDLOG_INFO("等待串口 GGA ...");
     const auto first_gga = waitForGga(first_gga_timeout_sec_);
     if (!first_gga) {
@@ -678,7 +708,8 @@ void NtripClient::workerLoop() {
             ::close(fd);
         }
       } guard{socket_fd};
-      runSession(socket_fd, first_gga->first, first_gga->second, pending_data);
+      runSession(socket_fd, first_gga->first, first_gga->second,
+                 pending_data);
       // 会话结束后不立即关闭串口, 由下一轮循环开头统一关闭 (确保干净的重连状态)。
     }
   }

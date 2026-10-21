@@ -4,12 +4,15 @@
 
 #include <GeographicLib/LocalCartesian.hpp>
 #include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
+#include <chrono>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -21,6 +24,7 @@ namespace gnss_localization {
 // GIAVP 解算状态常量 (与 giavp_parser.hpp 中 GiavpData::status 语义一致)。
 //   0=初始化/无解, 1=SPP, 2=RTD, 4=RTK 固定解, 5=RTK 浮点解 (无 3)。
 constexpr int kStatusRtkFixed = 4;   // RTK 固定解
+constexpr int kStatusIns = 6;        // INS 组合导航
 
 /// 双天线 MEMS 组合导航 (INS/GNSS) 驱动节点。
 ///
@@ -42,9 +46,21 @@ public:
   ~GnssDriver() override;
 
 private:
+  enum class HealthState {
+    kWaiting,
+    kOk,
+    kLowStatus,
+    kGiavpTimeout,
+    kSerial,
+  };
+
   void timerCallback();
   void processLine(const std::string& line);
   void handleGiavp(const GiavpData& d);
+  bool tryOpenSerial();
+  void updateHealth();
+  void updateHealthState(HealthState state, const std::string& message);
+  bool positionUsable(const GiavpData& d) const;
   void loadLogParameters();
   void loadParameters();
 
@@ -103,6 +119,8 @@ private:
   bool debug_giavp_{false};                // 是否打印 giavp 数据到日志
   int status_log_interval_{500};           // 状态日志条数间隔 (10Hz 下 500 条 = 50s)
   int odom_log_interval_{10};              // 里程计日志条数间隔 (10Hz 下 10 条 = 1s)
+  double giavp_timeout_sec_{1.0};           // 无有效 GIAVP 数据超时
+  double serial_retry_interval_sec_{1.0};   // 串口重开间隔
 
 private:
   std::string log_dir_     = "/opt/agri/logs";   // 日志目录
@@ -120,6 +138,12 @@ private:
   double datum_alt_m_{0.0};                                     // datum 高程
   bool datum_from_config_{false};                               // ENU 原点是否来自 YAML
   bool first_heading_logged_{false};                            // 是否已打印过首个航向日志
+  bool has_giavp_{false};                                       // 本次串口连接是否收到过有效帧
+  bool serial_failure_reported_{false};                         // 是否已记录本次连续串口失败
+  int last_status_{0};                                          // 最近一帧解算状态
+  HealthState last_health_state_{HealthState::kWaiting};        // 最近健康状态
+  std::chrono::steady_clock::time_point last_giavp_time_{};     // 最近有效帧时刻
+  std::chrono::steady_clock::time_point last_serial_retry_time_{};  // 上次串口重开时刻
 };
 
 }   // namespace gnss_localization

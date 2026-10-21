@@ -4,7 +4,8 @@
 驱动节点 `gnss_driver` 解析 `$GIAVP` 语句，发布话题
 （`/gnss_driver/fix`、`/gnss_driver/odom`、`/gnss_driver/odom_raw`、
 `/gnss_driver/imu`、`/gnss_driver/vel`、`/gnss_driver/status`、
-`/gnss_driver/origin`）。修正里程计 `/gnss_driver/odom` 已是 ENU
+`/gnss_driver/origin`）。修正里程计
+`/gnss_driver/odom` 已是 ENU
 且含杆臂/标定/航向修正，path_controller 直接订阅它并发布 `/odometry/global`。
 `/gnss_driver/odom_raw` 是**原始**数据（设备中心位置 + 原始测向航向，无任何修正），
 只给 tractor_calibration 标定用：标定要测物理真值，用修正后的位姿会被当前生效的
@@ -117,10 +118,12 @@ $cmd,saveconf,1*ff                   # 保存配置
 3. `ros2 topic echo /gnss_driver/status`：
    - `fix_type = 4`（RTK 固定解）后才可跑作业；4G Module 差分正常时通常 1~2 分钟内收敛。
    - 如长时间停在 5（浮点）/1（单点），检查 4G Module 供电、天线、千寻账号。
-4. GIAVP 的 Baseline ≈ 实测基线（3.2），偏差 > 10 cm 需排查天线是否接反。
-5. 航向验证：车头朝北时 `heading_deg ≈ 0`，朝东 ≈ 90。若差 90° 的整数倍，
+4. 检查节点日志：GIAVP 断流、未达到 RTK 固定解、串口掉线都会输出告警；
+   串口会按配置周期自动重开。
+5. GIAVP 的 Baseline ≈ 实测基线（3.2），偏差 > 10 cm 需排查天线是否接反。
+6. 航向验证：车头朝北时 `heading_deg ≈ 0`，朝东 ≈ 90。若差 90° 的整数倍，
    说明 `dualant` 未配置或配置错误（回到第 4 步）。
-6. 位置验证：`ros2 topic echo /odometry/global`，前后推车确认 x/y 变化方向与车体运动一致。
+7. 位置验证：`ros2 topic echo /odometry/global`，前后推车确认 x/y 变化方向与车体运动一致。
 
 ## 7. 常用排查
 
@@ -132,4 +135,4 @@ $cmd,saveconf,1*ff                   # 保存配置
 | status 停在 5 浮点 | 天线遮挡/多路径；基线过短；等待收敛 |
 | 航向差 90° | `dualant` 未配置为 1 |
 | 航向差 180° | 主从天线接反（主天线应在右侧接 ANT1） |
-| odom 不发布 | status 未达 `odom_min_status`（默认 4）；应急可临时放宽为 5 或 1 |
+| odom/TF 不发布 | 当前帧 `fix_type=0` 或经纬度无效；检查节点日志，非固定解仍发布但协方差为 1e6 |

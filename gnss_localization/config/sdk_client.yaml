@@ -29,14 +29,14 @@ sdk_client:
     # 行为
     gga_interval_sec: 1.0             # GGA 上传周期 (s)
     sdk_reconnect_delay_sec: 1.0      # SDK 会话重建延迟 (s); 串口打开/等待 GGA 等本地重试固定 200ms
-    first_gga_timeout_sec: 30.0       # 等待首个 GGA 超时 (s), 接收机无输出超过该时长判异常
+    first_gga_timeout_sec: 40.0       # 等待首个 GGA 超时 (s), 为首次定位收敛保留余量
     first_rtcm_timeout_sec: 30.0      # 等待首帧 RTCM 超时 (s), 差分服务未挂载超过该时长判异常
     sdk_auth_timeout_sec: 10.0        # SDK 认证回调超时 (s), 认证回调迟迟未到则重连
     coordsys_timeout_sec: 1.0         # 设置坐标系回调超时 (s), 回调迟迟未到则按超时处理
     gga_timeout_sec: 30.0             # GGA 停摆超时 (s), 持续无新 GGA 判停摆 (接收机可能因信号差短暂停发, 较宽容)
     rtcm_timeout_sec: 10.0            # RTCM 停摆超时 (s), 差分断流判停摆 (需尽快重连, 较严格)
-    serial_write_fail_count: 10       # 串口写 RTCM 连续失败帧数阈值, 达到才上报 FAULT_SERIAL_WRITE (与帧率解耦)
-    sdk_transient_error_max: 20       # SDK 瞬时错误累计上限, 达到则判差分链路质量持续差, 重建会话并上报 FAULT_SDK_ERROR
+    serial_write_fail_count: 10       # 串口写 RTCM 连续失败帧数阈值
+    sdk_transient_error_max: 20       # 一分钟内瞬时错误上限, 达到后重建会话
 
     # spdlog 滚动日志
     log_dir: "/opt/agri/logs"   # 日志目录

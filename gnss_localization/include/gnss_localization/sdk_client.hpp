@@ -74,6 +74,7 @@ private:
   std::thread worker_thread_;
   std::atomic<bool> running_{false};
   std::mutex serial_mutex_;
+  std::chrono::steady_clock::time_point transient_window_start_{};  // 瞬时错误统计窗口起点
 
 private:
   std::string serial_port_{"/dev/ttysWK0"};   // 串口设备路径
@@ -90,14 +91,14 @@ private:
   std::string sdk_coord_epoch_{"2005.0"};              // NOSR 坐标历元 (年.月)
   double gga_interval_sec_{1.0};              // GGA 上传周期 (s)
   double sdk_reconnect_delay_sec_{1.0};       // SDK 会话重建延迟 (s); 串口打开/等待 GGA 等本地重试固定 200ms
-  double first_gga_timeout_sec_{30.0};        // 等待首个 GGA 超时 (s)
+  double first_gga_timeout_sec_{40.0};        // 等待首个 GGA 超时 (s)
   double first_rtcm_timeout_sec_{30.0};       // 等待首帧 RTCM 超时 (s)
   double sdk_auth_timeout_sec_{10.0};         // SDK 认证回调超时 (s)
   double coordsys_timeout_sec_{1.0};          // 设置坐标系回调超时 (s)
   double gga_timeout_sec_{30.0};              // GGA 停摆超时 (s): 持续无新 GGA 判停摆 (接收机可能因信号差短暂停发, 故较宽容)
   double rtcm_timeout_sec_{10.0};             // RTCM 停摆超时 (s): 差分断流判停摆 (需尽快重连, 故较严格)
-  int serial_write_fail_count_{10};           // 串口写 RTCM 连续失败帧数阈值: 连续失败达到才上报 FAULT_SERIAL_WRITE
-  int sdk_transient_error_max_{20};           // SDK 瞬时错误累计上限: 达到则判差分链路质量持续差, 重建会话
+  int serial_write_fail_count_{10};           // 串口写 RTCM 连续失败帧数阈值
+  int sdk_transient_error_max_{20};           // 一分钟内 SDK 瞬时错误上限
 
 private:
   std::string log_dir_     = "/opt/agri/logs";   // 日志目录

@@ -154,7 +154,9 @@ if(QXWZ_SDK_AVAILABLE)
   )
 else()
   # 没有匹配的 aarch64 库时仍编译一次源码，尽早发现 SDK 头文件/API 漂移。
-  add_library(sdk_client_source_check OBJECT src/sdk_client.cpp)
+  add_library(sdk_client_source_check OBJECT
+    src/sdk_client.cpp
+  )
   target_include_directories(sdk_client_source_check PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${QXWZ_SDK_INCLUDE_DIR}
@@ -200,6 +202,11 @@ if(BUILD_TESTING)
             --yaml ${CMAKE_CURRENT_SOURCE_DIR}/config/gnss_driver.yaml
                    ${CMAKE_CURRENT_SOURCE_DIR}/config/ntrip_client.yaml
                    ${CMAKE_CURRENT_SOURCE_DIR}/config/sdk_client.yaml
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO)
+
+  ament_add_test(config_node_names
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_config_nodes.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/config
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO)
 
   # 参数写回 yaml 的契约 (src/yaml_persist.hpp —— 与 tractor_calibration 的同名文件是镜像实现):

@@ -219,7 +219,10 @@ class GnssDashboard(Node):
         self.odom = None
         self.odom_topic = odom_topic
 
-        self.rates = {k: RateTracker() for k in ("fix", "imu", "vel", "status", "odom")}
+        self.rates = {
+            k: RateTracker()
+            for k in ("fix", "imu", "vel", "status", "odom")
+        }
         self.t_start = time.monotonic()
         self.w = term_width()
 

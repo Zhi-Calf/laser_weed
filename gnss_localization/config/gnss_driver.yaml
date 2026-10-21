@@ -14,6 +14,8 @@ gnss_driver:
     debug_giavp: false
     status_log_interval: 500    # 状态日志条数间隔 (10Hz 下 500 条 = 50s 打印一次)
     odom_log_interval: 10       # 里程计日志条数间隔 (10Hz 下 10 条 = 1s 打印一次)
+    giavp_timeout_sec: 1.0      # 超过该时长无有效 GIAVP 帧即记录超时告警
+    serial_retry_interval_sec: 1.0  # 串口掉线后重开间隔
 
     # 航向: 左右天线安装且设备端配置 dualant=1 时, GIAVP 航向已是车辆真实航向
     heading_std_deg: 0.2       # 人工标定: 1 m 基线下 0.2 deg (1-sigma)
@@ -38,10 +40,6 @@ gnss_driver:
     # 空字符串则跳过写回 (仅内存更新)。建议指向 install 下运行时实际加载的
     # gnss_driver.yaml, 或由 launch 注入。
     gnss_config_path: ""
-
-    # 心跳判定:
-    #                             (上电后定位收敛需要时间, 此期间不出数据属正常)。
-    #                             (GIAVP 10Hz 下约 0.1s 一帧, 0.3s 即丢 3 帧, 应立即告警)。
 
     # spdlog 滚动日志
     log_dir: "/opt/agri/logs"   # 日志目录
