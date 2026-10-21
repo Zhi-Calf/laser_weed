@@ -16,6 +16,8 @@ gnss_driver:
     odom_log_interval: 10       # 里程计日志条数间隔 (10Hz 下 10 条 = 1s 打印一次)
     giavp_timeout_sec: 1.0      # 超过该时长无有效 GIAVP 帧即记录超时告警
     serial_retry_interval_sec: 1.0  # 串口掉线后重开间隔
+    use_gps_timestamp: true     # 使用 GPSWeek/GPSTime 作为传感器消息时间
+    gps_utc_leap_seconds: 18    # 2026 年 GPS 与 UTC 的闰秒差
 
     # 航向: 左右天线安装且设备端配置 dualant=1 时, GIAVP 航向已是车辆真实航向
     heading_std_deg: 0.2       # 人工标定: 1 m 基线下 0.2 deg (1-sigma)

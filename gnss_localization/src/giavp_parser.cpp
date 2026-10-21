@@ -132,7 +132,17 @@ bool GiavpParser::parse(const std::string& line) {
     return false;
   }
   if (data.status != 0 && data.status != 1 && data.status != 2 &&
-      data.status != 4 && data.status != 5 && data.status != 6) {
+      data.status != 4 && data.status != 5) {
+    return false;
+  }
+  if (data.gps_week <= 0 || data.gps_time_sec < 0.0 ||
+      data.gps_time_sec >= 604800.0 || data.heading_deg < 0.0 ||
+      data.heading_deg > 359.99 || data.pitch_deg < -90.0 ||
+      data.pitch_deg > 90.0 || data.roll_deg < -180.0 ||
+      data.roll_deg > 180.0 ||
+      (data.speed_status != 0 && data.speed_status != 1) ||
+      data.nsv1 < 0 || data.nsv1 > 255 || data.nsv2 < 0 ||
+      data.nsv2 > 255) {
     return false;
   }
 

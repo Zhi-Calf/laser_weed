@@ -19,11 +19,11 @@
   <depend>weeder_msgs</depend>
   <depend>geographiclib</depend>
   <depend>spdlog_vendor</depend>
-  <depend>yaml-cpp</depend>
+  <depend>yaml</depend>
   <depend>eigen</depend>
 
   <test_depend>ament_cmake_test</test_depend>
-  <!-- 参数写回 yaml 的契约测试 (test/test_yaml_persist.cpp, 与规划器同套用例) -->
+  <!-- 参数写回 yaml 的契约测试 (test/test_yaml_persist.cpp) -->
   <test_depend>ament_cmake_gtest</test_depend>
 
   <export>

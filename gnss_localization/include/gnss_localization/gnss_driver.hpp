@@ -24,7 +24,6 @@ namespace gnss_localization {
 // GIAVP 解算状态常量 (与 giavp_parser.hpp 中 GiavpData::status 语义一致)。
 //   0=初始化/无解, 1=SPP, 2=RTD, 4=RTK 固定解, 5=RTK 浮点解 (无 3)。
 constexpr int kStatusRtkFixed = 4;   // RTK 固定解
-constexpr int kStatusIns = 6;        // INS 组合导航
 
 /// 双天线 MEMS 组合导航 (INS/GNSS) 驱动节点。
 ///
@@ -76,6 +75,7 @@ private:
 private:
   double headingToEnuYaw(double heading_deg) const;
   double positionAccuracyForStatus(int status) const;
+  rclcpp::Time timestampFor(const GiavpData& data) const;
   static int statusRank(int status);
 
 private:
@@ -121,6 +121,8 @@ private:
   int odom_log_interval_{10};              // 里程计日志条数间隔 (10Hz 下 10 条 = 1s)
   double giavp_timeout_sec_{1.0};           // 无有效 GIAVP 数据超时
   double serial_retry_interval_sec_{1.0};   // 串口重开间隔
+  bool use_gps_timestamp_{true};            // 是否使用 GIAVP GPS 时间戳
+  int gps_utc_leap_seconds_{18};            // GPS 与 UTC 当前闰秒差
 
 private:
   std::string log_dir_     = "/opt/agri/logs";   // 日志目录

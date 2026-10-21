@@ -23,12 +23,29 @@ std::string WithChecksum(const std::string& body) {
 
 std::string Sentence(const std::string& lat = "34.70316078",
                      const std::string& ve = "0.5",
-                     const std::string& gyro_z = "0.1") {
+                     const std::string& gyro_z = "0.1",
+                     const std::string& status = "4") {
   return WithChecksum(
       "GIAVP,2200,123456.0,90.0,0.0,0.0," + lat +
       ",112.39118753,102.0," + ve +
-      ",0.0,0.0,1.5,20,19,4,1,1.8,0.01,0.02,9.81,0.0,0.0," +
+      ",0.0,0.0,1.5,20,19," + status +
+      ",1,1.8,0.01,0.02,9.81,0.0,0.0," +
       gyro_z);
+}
+
+std::string RangeSentence(const std::string& gps_week = "2200",
+                          const std::string& gps_time = "123456.0",
+                          const std::string& heading = "90.0",
+                          const std::string& pitch = "0.0",
+                          const std::string& roll = "0.0",
+                          const std::string& nsv1 = "20",
+                          const std::string& speed_status = "1") {
+  return WithChecksum(
+      "GIAVP," + gps_week + "," + gps_time + "," + heading + "," +
+      pitch + "," + roll +
+      ",34.70316078,112.39118753,102.0,0.5,0.0,0.0,1.5," +
+      nsv1 + ",19,4," + speed_status +
+      ",1.8,0.01,0.02,9.81,0.0,0.0,0.1");
 }
 
 }  // 匿名命名空间
@@ -57,6 +74,34 @@ TEST(GiavpParser, RejectsOutOfRangeLatLon) {
   gnss_localization::GiavpParser parser;
   EXPECT_FALSE(parser.parse(Sentence("91.0")));
   EXPECT_FALSE(parser.parse(Sentence("-90.5")));
+}
+
+TEST(GiavpParser, RejectsUndocumentedStatusSix) {
+  gnss_localization::GiavpParser parser;
+  EXPECT_FALSE(parser.parse(
+      Sentence("34.70316078", "0.5", "0.1", "6")));
+}
+
+TEST(GiavpParser, RejectsOutOfRangeProtocolFields) {
+  gnss_localization::GiavpParser parser;
+  EXPECT_FALSE(parser.parse(RangeSentence("0")));
+  EXPECT_FALSE(parser.parse(RangeSentence("2200", "-1.0")));
+  EXPECT_FALSE(parser.parse(RangeSentence("2200", "604800.0")));
+  EXPECT_FALSE(parser.parse(RangeSentence("2200", "1.0", "-0.1")));
+  EXPECT_FALSE(parser.parse(RangeSentence("2200", "1.0", "360.0")));
+  EXPECT_FALSE(parser.parse(RangeSentence("2200", "1.0", "90.0", "90.1")));
+  EXPECT_FALSE(parser.parse(RangeSentence("2200", "1.0", "90.0", "0.0",
+                                          "180.1")));
+  EXPECT_FALSE(parser.parse(RangeSentence("2200", "1.0", "90.0", "0.0",
+                                          "0.0", "256")));
+  EXPECT_FALSE(parser.parse(RangeSentence("2200", "1.0", "90.0", "0.0",
+                                          "0.0", "20", "2")));
+}
+
+TEST(GiavpParser, AcceptsProtocolFieldBoundaries) {
+  gnss_localization::GiavpParser parser;
+  EXPECT_TRUE(parser.parse(
+      RangeSentence("1", "0.0", "359.99", "90.0", "180.0", "255", "0")));
 }
 
 TEST(GiavpParser, RejectsEmptyOrGarbageFields) {

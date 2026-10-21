@@ -132,6 +132,9 @@ void sdkAuthCallback(qxwz_int32_t status_code, qxwz_sdk_cap_info_t* cap_info) {
   if (status_code == QXWZ_SDK_STAT_AUTH_SUCC || status_code == QXWZ_SDK_STAT_LOCAL_AUTH_SUCC) {
     instance->sdk_auth_ready_.store(true);
     SPDLOG_INFO("千寻 SDK 认证成功, 能力数: {}", cap_info ? cap_info->caps_num : 0);
+  } else if (status_code == QXWZ_SDK_ERR_LOCAL_AUTH_FAIL) {
+    // 未使用 LSSR 时 SDK 每次鉴权都会上报该码，继续等待在线鉴权结果。
+    SPDLOG_DEBUG("忽略未启用 LSSR 时的离线鉴权结果: code={}", status_code);
   } else {
     // 认证失败是致命错误: 写入错误码, 由主循环结束会话并重连。
     SPDLOG_ERROR("千寻 SDK 认证失败, code: {}", status_code);
@@ -147,11 +150,14 @@ void sdkStartCallback(qxwz_int32_t status_code, qxwz_uint32_t cap_id) {
   }
   if (status_code == QXWZ_SDK_STAT_CAP_START_SUCC || status_code == QXWZ_SDK_STAT_CAP_RESTART_SUCC) {
     SPDLOG_INFO("千寻 SDK start 成功: cap_id={}", cap_id);
+    if (cap_id == QXWZ_SDK_CAP_ID_NOSR)
+      instance->sdk_nosr_ready_.store(true);
   } else {
     // 启动能力异步失败会导致永远收不到 RTCM, 属致命错误。
     // 单独用 sdk_nosr_start_failed_ 标志, 与"认证失败/运行中错误"区分, 避免语义混淆。
     SPDLOG_ERROR("千寻 SDK start 失败: code={}, cap_id={}", status_code, cap_id);
-    instance->sdk_nosr_start_failed_.store(true);
+    if (cap_id == QXWZ_SDK_CAP_ID_NOSR)
+      instance->sdk_nosr_start_failed_.store(true);
   }
 }
 
@@ -166,6 +172,10 @@ void sdkCapStatusCallback(qxwz_uint32_t cap_id, qxwz_int32_t status_code) {
       status_code == QXWZ_SDK_ERR_RTCM_DATA_EXCEPTION) {
     const int n = instance->transient_error_count_.fetch_add(1) + 1;
     SPDLOG_WARN("千寻 SDK 能力 {} 一分钟无差分数据 (code={}), 累计 {}", cap_id, status_code, n);
+    return;
+  }
+  if (status_code == QXWZ_SDK_NOSR_UPLOAD_GGA) {
+    instance->sdk_nosr_ready_.store(true);
     return;
   }
   if (status_code < 0) {
@@ -223,6 +233,10 @@ void sdkStatusCallback(qxwz_int32_t status_code) {
   if (instance == nullptr) {
     return;
   }
+  if (status_code == QXWZ_SDK_ERR_LOCAL_AUTH_FAIL) {
+    SPDLOG_DEBUG("忽略未启用 LSSR 时的离线鉴权状态: code={}", status_code);
+    return;
+  }
   if (IsTransientStatus(status_code)) {
     SPDLOG_DEBUG("千寻 SDK status: code={}", status_code);
     return;
@@ -239,6 +253,35 @@ void sdkStatusCallback(qxwz_int32_t status_code) {
   // 这些无法自动恢复, 记录错误并结束会话触发重连。
   SPDLOG_ERROR("千寻 SDK 内部错误: code={}", status_code);
   instance->sdk_error_code_.store(status_code);
+}
+
+// SDK NOSR 坐标框架/历元查询回调
+void sdkGetNosrCoordCallback(
+    qxwz_int32_t status_code, qxwz_nosr_coord_epoch_info_t* info) {
+  SdkClient* instance = g_sdk_instance.load();
+  if (instance == nullptr)
+    return;
+  int32_t server_frame = 0;
+  uint32_t available_count = 0;
+  bool requested_supported = false;
+  std::string server_epoch;
+  if (status_code == QXWZ_SDK_STAT_OK && info != nullptr) {
+    server_frame = info->coord_frame_value;
+    available_count = info->enable_coord_frame_num;
+    server_epoch.assign(info->epoch, strnlen(info->epoch, sizeof(info->epoch)));
+    for (qxwz_uint32_t i = 0;
+         i < info->enable_coord_frame_num &&
+         i < QXWZ_ENABLE_COORD_FRAME_MAX_NUM;
+         ++i) {
+      if (static_cast<int32_t>(info->enable_coord_frame[i].value) ==
+          instance->coordFrame()) {
+        requested_supported = true;
+        break;
+      }
+    }
+  }
+  instance->handleNosrCoordInfo(status_code, server_frame, available_count,
+                                requested_supported, server_epoch);
 }
 
 // SDK NOSR 坐标框架/历元设置回调
@@ -263,17 +306,9 @@ void sdkDataCallback(qxwz_sdk_data_type_e type, const qxwz_void_t* data, qxwz_ui
   const auto* buffer = static_cast<const uint8_t*>(data);
 
   // RTCM 数据直接透传给接收机 (不做 CRC 校验: SDK 已保证数据完整, 接收机自行做帧同步与 CRC)。
-  SPDLOG_DEBUG("收到 RTCM, len={}", len);
   const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
   instance->last_rtcm_ms_.store(now_ms);
-  if (instance->writeRtcm(buffer, len)) {
-    // 写成功: 清零连续失败计数, 供主循环做"收 RTCM 但写不进串口"的故障判定。
-    instance->consecutive_write_fail_.store(0);
-  } else {
-    // 写失败: 累加连续失败计数 (与 RTCM 帧间隔解耦, 避免低频帧率下的误判)。
-    instance->consecutive_write_fail_.fetch_add(1);
-    SPDLOG_WARN("写 RTCM 到串口失败 (len={}, 连续失败 {} 次)", len, instance->consecutive_write_fail_.load());
-  }
+  instance->enqueueRtcm(buffer, len);
 }
 
 }   // namespace
@@ -295,7 +330,8 @@ SdkClient::SdkClient(const rclcpp::NodeOptions& options) : Node("sdk_client", op
 
   serial_ = std::make_unique<SerialPort>();
 
-  running_       = true;
+  running_ = true;
+  rtcm_writer_thread_ = std::thread(&SdkClient::rtcmWriterLoop, this);
   worker_thread_ = std::thread(&SdkClient::workerLoop, this);
 }
 
@@ -306,6 +342,11 @@ SdkClient::~SdkClient() {
   g_sdk_instance.store(nullptr);
   if (worker_thread_.joinable()) {
     worker_thread_.join();
+  }
+  clearRtcmQueue();
+  rtcm_queue_cv_.notify_all();
+  if (rtcm_writer_thread_.joinable()) {
+    rtcm_writer_thread_.join();
   }
 }
 
@@ -336,17 +377,19 @@ void SdkClient::loadParameters() {
   declare_parameter("sdk_oss_host", "oss.qxwz.com");
   declare_parameter("sdk_oss_port", 8008);
   declare_parameter("sdk_coord_frame", static_cast<int>(kQxwzCoordFrameWgs84));
-  declare_parameter("sdk_coord_epoch", "2005.0");
+  declare_parameter("sdk_coord_epoch", "2005.1");
   declare_parameter("gga_interval_sec", 1.0);
   declare_parameter("sdk_reconnect_delay_sec", 1.0);
   declare_parameter("first_gga_timeout_sec", 40.0);
   declare_parameter("first_rtcm_timeout_sec", 30.0);
   declare_parameter("sdk_auth_timeout_sec", 10.0);
-  declare_parameter("coordsys_timeout_sec", 1.0);
+  declare_parameter("nosr_start_timeout_sec", 30.0);
+  declare_parameter("coordsys_timeout_sec", 10.0);
   declare_parameter("gga_timeout_sec", 30.0);
   declare_parameter("rtcm_timeout_sec", 10.0);
   declare_parameter("serial_write_fail_count", 10);
   declare_parameter("sdk_transient_error_max", 20);
+  declare_parameter("rtcm_queue_max_bytes", 262144);
 
   serial_port_               = get_parameter("serial_port").as_string();
   serial_baud_               = get_parameter("serial_baud").as_int();
@@ -374,9 +417,12 @@ void SdkClient::loadParameters() {
   sdk_auth_timeout_sec_ = PositiveOr(
       "sdk_auth_timeout_sec",
       get_parameter("sdk_auth_timeout_sec").as_double(), 10.0);
+  nosr_start_timeout_sec_ = PositiveOr(
+      "nosr_start_timeout_sec",
+      get_parameter("nosr_start_timeout_sec").as_double(), 30.0);
   coordsys_timeout_sec_ = PositiveOr(
       "coordsys_timeout_sec",
-      get_parameter("coordsys_timeout_sec").as_double(), 1.0);
+      get_parameter("coordsys_timeout_sec").as_double(), 10.0);
   gga_timeout_sec_ = PositiveOr(
       "gga_timeout_sec", get_parameter("gga_timeout_sec").as_double(), 30.0);
   rtcm_timeout_sec_ = PositiveOr(
@@ -387,6 +433,8 @@ void SdkClient::loadParameters() {
   sdk_transient_error_max_ =
       static_cast<int>(std::max<int64_t>(
           1, get_parameter("sdk_transient_error_max").as_int()));
+  rtcm_queue_max_bytes_ = static_cast<size_t>(std::max<int64_t>(
+      4096, get_parameter("rtcm_queue_max_bytes").as_int()));
 
   // 1.29 SDK 关闭了默认域名，init 必须拿到完整的 serv_conf；端口非法时回退到官方默认值。
   const auto valid_port = [](int port) { return port > 0 && port <= 65535; };
@@ -399,8 +447,8 @@ void SdkClient::loadParameters() {
     sdk_oss_host_ = "oss.qxwz.com";
   }
   if (sdk_coord_epoch_.empty()) {
-    SPDLOG_WARN("sdk_coord_epoch 为空, 使用默认 2005.0");
-    sdk_coord_epoch_ = "2005.0";
+    SPDLOG_WARN("sdk_coord_epoch 为空, 使用默认 2005.1");
+    sdk_coord_epoch_ = "2005.1";
   }
   if (!valid_port(sdk_openapi_port_)) {
     SPDLOG_WARN("sdk_openapi_port={} 非法, 使用默认 8443", sdk_openapi_port_);
@@ -419,12 +467,15 @@ void SdkClient::loadParameters() {
   SPDLOG_INFO("GGA 上传周期: {:.1f}s, 重连延迟: {:.1f}s, 首 GGA 超时: {:.1f}s, 首 RTCM 超时: {:.1f}s", gga_interval_sec_, sdk_reconnect_delay_sec_, first_gga_timeout_sec_, first_rtcm_timeout_sec_);
   SPDLOG_INFO("GGA 停摆超时: {:.1f}s, RTCM 停摆超时: {:.1f}s", gga_timeout_sec_, rtcm_timeout_sec_);
   SPDLOG_INFO(
-    "SDK 认证超时: {:.1f}s, 设置坐标系超时: {:.1f}s, "
-    "串口写失败容忍帧数: {}, 一分钟瞬时错误上限: {}",
+    "SDK 认证超时: {:.1f}s, NOSR 启动超时: {:.1f}s, "
+    "坐标系超时: {:.1f}s, 串口写失败容忍帧数: {}, "
+    "一分钟瞬时错误上限: {}, RTCM 队列上限: {} 字节",
     sdk_auth_timeout_sec_,
+    nosr_start_timeout_sec_,
     coordsys_timeout_sec_,
     serial_write_fail_count_,
-    sdk_transient_error_max_);
+    sdk_transient_error_max_,
+    rtcm_queue_max_bytes_);
   SPDLOG_INFO("日志级别: {}, 目录: {}, 文件上限: {} MB, 文件数量: {}, 控制台: {}", log_level_, log_dir_, log_file_size_mb_, log_file_count_, log_enable_console_ ? "是" : "否");
   const char* sdk_ver = qxwz_sdk_version();
   const char* sdk_build = qxwz_sdk_get_build_info();
@@ -439,6 +490,85 @@ bool SdkClient::writeRtcm(const uint8_t* data, uint32_t len) {
     return false;
   }
   return serial_->write_raw(reinterpret_cast<const char*>(data), static_cast<size_t>(len));
+}
+
+// 保存坐标查询回调结果，等待主工作线程读取。
+void SdkClient::handleNosrCoordInfo(
+    int32_t status_code, int32_t server_frame, uint32_t available_count,
+    bool requested_supported, const std::string& server_epoch) {
+  sdk_coord_query_code_.store(status_code);
+  sdk_server_coord_frame_.store(server_frame);
+  sdk_available_coord_frames_.store(available_count);
+  sdk_requested_coord_frame_supported_.store(requested_supported);
+  {
+    std::lock_guard<std::mutex> lock(coord_info_mutex_);
+    sdk_server_coord_epoch_ = server_epoch;
+  }
+  sdk_coord_query_done_.store(true);
+}
+
+// 返回配置的目标 NOSR 坐标框架。
+int32_t SdkClient::coordFrame() const { return sdk_coord_frame_; }
+
+// SDK 回调只负责把 RTCM 放入有界队列，不在回调线程执行串口 I/O。
+void SdkClient::enqueueRtcm(const uint8_t* data, uint32_t len) {
+  if (data == nullptr || len == 0)
+    return;
+  if (static_cast<size_t>(len) > rtcm_queue_max_bytes_) {
+    dropped_rtcm_frames_.fetch_add(1);
+    return;
+  }
+
+  std::vector<uint8_t> frame(data, data + len);
+  {
+    std::lock_guard<std::mutex> lock(rtcm_queue_mutex_);
+    while (!rtcm_queue_.empty() &&
+           rtcm_queue_bytes_ + frame.size() > rtcm_queue_max_bytes_) {
+      rtcm_queue_bytes_ -= rtcm_queue_.front().size();
+      rtcm_queue_.pop_front();
+      dropped_rtcm_frames_.fetch_add(1);
+    }
+    rtcm_queue_bytes_ += frame.size();
+    rtcm_queue_.push_back(std::move(frame));
+  }
+  rtcm_queue_cv_.notify_one();
+}
+
+// 独立串口线程异步消费 RTCM，避免阻塞千寻 SDK 数据回调。
+void SdkClient::rtcmWriterLoop() {
+  std::unique_lock<std::mutex> lock(rtcm_queue_mutex_);
+  while (true) {
+    rtcm_queue_cv_.wait(lock, [this]() {
+      return !rtcm_queue_.empty() || !running_;
+    });
+    if (rtcm_queue_.empty()) {
+      if (!running_)
+        break;
+      continue;
+    }
+
+    std::vector<uint8_t> frame = std::move(rtcm_queue_.front());
+    rtcm_queue_bytes_ -= frame.size();
+    rtcm_queue_.pop_front();
+    lock.unlock();
+
+    if (writeRtcm(frame.data(), static_cast<uint32_t>(frame.size()))) {
+      consecutive_write_fail_.store(0);
+    } else {
+      consecutive_write_fail_.fetch_add(1);
+    }
+    lock.lock();
+  }
+}
+
+// 清空旧会话尚未写出的差分数据。
+void SdkClient::clearRtcmQueue() {
+  {
+    std::lock_guard<std::mutex> lock(rtcm_queue_mutex_);
+    rtcm_queue_.clear();
+    rtcm_queue_bytes_ = 0;
+  }
+  dropped_rtcm_frames_.store(0);
 }
 
 // 打开串口 (失败不记日志, 由调用方按节奏记录)。每次都重新打开, 确保干净的重连状态。
@@ -538,10 +668,15 @@ bool SdkClient::initSdk() {
   sdk_auth_ready_.store(false);
   sdk_error_code_.store(0);
   sdk_nosr_start_failed_.store(false);
+  sdk_nosr_ready_.store(false);
+  sdk_coord_query_done_.store(false);
+  sdk_coord_query_code_.store(0);
+  sdk_requested_coord_frame_supported_.store(false);
   last_rtcm_ms_.store(0);
   consecutive_write_fail_.store(0);
   transient_error_count_.store(0);
   transient_window_start_ = std::chrono::steady_clock::now();
+  clearRtcmQueue();
 
   // 配置账号信息
   qxwz_sdk_config_t sdk_config{};
@@ -594,6 +729,7 @@ bool SdkClient::initSdk() {
 // 启动 NOSR 能力
 bool SdkClient::startNosr() {
   // 认证成功后启动 NOSR 能力
+  sdk_nosr_ready_.store(false);
   qxwz_sdk_cap_info_t cap_info{};
   if (qxwz_sdk_get_cap_info(&cap_info) < 0) {
     SPDLOG_ERROR("获取能力信息失败, 无法启动 NOSR");
@@ -601,7 +737,8 @@ bool SdkClient::startNosr() {
   }
   for (qxwz_uint32_t i = 0; i < cap_info.caps_num; ++i) {
     if (cap_info.caps[i].cap_id == QXWZ_SDK_CAP_ID_NOSR && cap_info.caps[i].state == QXWZ_SDK_CAP_STATE_INSERVICE) {
-      const int ret = qxwz_sdk_start(QXWZ_SDK_CAP_ID_NOSR);
+      const int ret =
+          qxwz_sdk_start_with_params(QXWZ_SDK_CAP_ID_NOSR, nullptr);
       if (ret < 0) {
         SPDLOG_ERROR("请求启动 NOSR 失败: {}", ret);
         return false;
@@ -681,7 +818,54 @@ void SdkClient::workerLoop() {
     connect_failing = false;
     SPDLOG_INFO("千寻 SDK 认证成功");
 
-    // ---- 5. 设置 NOSR 坐标框架/历元 ----
+    // ---- 5. 查询并设置 NOSR 坐标框架/历元 ----
+    sdk_coord_query_done_.store(false);
+    sdk_coord_query_code_.store(0);
+    const int query_ret =
+        qxwz_sdk_get_nosr_coord_epoch_config(sdkGetNosrCoordCallback);
+    const bool query_async =
+        query_ret == QXWZ_SDK_STAT_OK ||
+        query_ret == QXWZ_SDK_ERR_GETTING_COORD_SYS;
+    if (!query_async) {
+      SPDLOG_ERROR("查询 NOSR 坐标系失败: code={}", query_ret);
+      qxwz_sdk_cleanup();
+      std::this_thread::sleep_for(
+          std::chrono::duration<double>(sdk_reconnect_delay_sec_));
+      continue;
+    }
+    const auto query_deadline =
+        std::chrono::steady_clock::now() +
+        std::chrono::duration<double>(coordsys_timeout_sec_);
+    while (running_ && !sdk_coord_query_done_.load() &&
+           std::chrono::steady_clock::now() < query_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (!sdk_coord_query_done_.load() ||
+        sdk_coord_query_code_.load() != QXWZ_SDK_STAT_OK) {
+      SPDLOG_ERROR("查询 NOSR 坐标系失败或超时: code={}",
+                   sdk_coord_query_code_.load());
+      qxwz_sdk_cleanup();
+      std::this_thread::sleep_for(
+          std::chrono::duration<double>(sdk_reconnect_delay_sec_));
+      continue;
+    }
+    {
+      std::lock_guard<std::mutex> lock(coord_info_mutex_);
+      SPDLOG_INFO("NOSR 服务端坐标系: frame={}, epoch={}, 可用数量={}",
+                  sdk_server_coord_frame_.load(),
+                  sdk_server_coord_epoch_,
+                  sdk_available_coord_frames_.load());
+    }
+    if (sdk_available_coord_frames_.load() > 0 &&
+        !sdk_requested_coord_frame_supported_.load()) {
+      SPDLOG_ERROR("配置的 NOSR 坐标框架 {} 不在服务端可用列表中",
+                   sdk_coord_frame_);
+      qxwz_sdk_cleanup();
+      std::this_thread::sleep_for(
+          std::chrono::duration<double>(sdk_reconnect_delay_sec_));
+      continue;
+    }
+
     sdk_coordsys_done_.store(false);
     sdk_coordsys_code_.store(0);
     qxwz_nosr_coord_epoch_config_t coord_config{};
@@ -725,11 +909,23 @@ void SdkClient::workerLoop() {
       std::this_thread::sleep_for(std::chrono::duration<double>(sdk_reconnect_delay_sec_));
       continue;
     }
-    // NOSR 启动失败检查 (进入数据交互前的同步快照): start_cb 可能已早于 startNosr()
-    // 返回就被调用, 这里先行捕获, 避免无谓进入 runSession。若 start_cb 延迟到运行期
-    // 才回调, 则由 runSession 内部的持续检查兜底 (见 runSession)。
-    if (sdk_nosr_start_failed_.load()) {
-      SPDLOG_ERROR("NOSR 启动异步失败, {:.0f}s 后重连", sdk_reconnect_delay_sec_);
+    // start 是异步接口，必须等待 start_cb 确认后才允许上传 GGA。
+    const auto start_deadline =
+        std::chrono::steady_clock::now() +
+        std::chrono::duration<double>(nosr_start_timeout_sec_);
+    while (running_ && !sdk_nosr_ready_.load() &&
+           !sdk_nosr_start_failed_.load() &&
+           std::chrono::steady_clock::now() < start_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (!sdk_nosr_ready_.load()) {
+      if (sdk_nosr_start_failed_.load()) {
+        SPDLOG_ERROR("NOSR 启动异步失败, {:.0f}s 后重连",
+                     sdk_reconnect_delay_sec_);
+      } else {
+        SPDLOG_ERROR("等待 NOSR 启动成功回调超时, {:.0f}s 后重连",
+                     sdk_reconnect_delay_sec_);
+      }
       qxwz_sdk_stop(QXWZ_SDK_CAP_ID_NOSR);
       qxwz_sdk_cleanup();
       std::this_thread::sleep_for(std::chrono::duration<double>(sdk_reconnect_delay_sec_));
@@ -765,6 +961,7 @@ SdkClient::SessionEnd SdkClient::runSession(const std::string& first_gga, std::c
   std::optional<std::chrono::steady_clock::time_point> last_gga_sent;
   auto last_gga_time = first_gga_time;   // GGA 停摆判定的计时基准 (以首帧 GGA 到达时刻起算)
   transient_window_start_ = session_begin;
+  uint64_t last_dropped_frames = dropped_rtcm_frames_.load();
 
   while (running_) {
     const auto gga = tryReadGga();
@@ -772,6 +969,13 @@ SdkClient::SessionEnd SdkClient::runSession(const std::string& first_gga, std::c
     if (now - transient_window_start_ >= std::chrono::seconds(60)) {
       transient_error_count_.store(0);
       transient_window_start_ = now;
+    }
+    const uint64_t dropped_frames = dropped_rtcm_frames_.load();
+    if (dropped_frames > last_dropped_frames) {
+      const uint64_t delta = dropped_frames - last_dropped_frames;
+      transient_error_count_.fetch_add(static_cast<int>(delta));
+      SPDLOG_WARN("RTCM 异步队列满, 丢弃 {} 帧", delta);
+      last_dropped_frames = dropped_frames;
     }
 
     if (gga) {
@@ -781,8 +985,8 @@ SdkClient::SessionEnd SdkClient::runSession(const std::string& first_gga, std::c
 
     // 周期上传 GGA (用即时时间戳); 首轮因 last_gga_sent 为 nullopt 而立即上传 first_gga。
     if (!latest_gga.empty() && (!last_gga_sent || std::chrono::duration<double>(now - *last_gga_sent).count() >= gga_interval_sec_)) {
-      const int upload_ret = qxwz_sdk_upload_gga(
-          latest_gga.c_str(),
+      const int upload_ret = qxwz_sdk_upload_gga_by_cap_id(
+          QXWZ_SDK_CAP_ID_NOSR, latest_gga.c_str(),
           static_cast<qxwz_uint32_t>(latest_gga.size()));
       if (upload_ret < 0) {
         transient_error_count_.fetch_add(1);

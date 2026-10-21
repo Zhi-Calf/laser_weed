@@ -66,6 +66,7 @@ private:
   double reconnect_delay_sec_{1.0};                // NTRIP 连接失败后的重连延迟 (s); 串口打开/等待 GGA 等本地重试固定 200ms
   double first_rtcm_timeout_sec_{30.0};            // 等待首帧 RTCM 超时 (s)
   double first_gga_timeout_sec_{40.0};             // 等待首个 GGA 超时 (s): 接收机定位收敛 (<35s)
+  double gga_refresh_timeout_sec_{2.0};            // 连接成功后刷新 GGA 的等待时长
   double data_timeout_sec_{10.0};                  // 正常后数据超时 (s)
   double connect_timeout_sec_{10.0};               // TCP 连接超时 (s)
   double header_timeout_sec_{15.0};                // 响应头读取累计超时 (s)

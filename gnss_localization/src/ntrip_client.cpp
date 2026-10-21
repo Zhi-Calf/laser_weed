@@ -223,6 +223,7 @@ void NtripClient::loadParameters() {
   declare_parameter("reconnect_delay_sec", 1.0);
   declare_parameter("first_rtcm_timeout_sec", 30.0);
   declare_parameter("first_gga_timeout_sec", 40.0);
+  declare_parameter("gga_refresh_timeout_sec", 2.0);
   declare_parameter("data_timeout_sec", 10.0);
   declare_parameter("connect_timeout_sec", 10.0);
   declare_parameter("header_timeout_sec", 15.0);
@@ -246,6 +247,9 @@ void NtripClient::loadParameters() {
   first_gga_timeout_sec_ = PositiveOr(
       "first_gga_timeout_sec",
       get_parameter("first_gga_timeout_sec").as_double(), 40.0);
+  gga_refresh_timeout_sec_ = PositiveOr(
+      "gga_refresh_timeout_sec",
+      get_parameter("gga_refresh_timeout_sec").as_double(), 2.0);
   data_timeout_sec_ = PositiveOr(
       "data_timeout_sec", get_parameter("data_timeout_sec").as_double(),
       10.0);
@@ -699,6 +703,12 @@ void NtripClient::workerLoop() {
     SPDLOG_INFO("NTRIP 连接成功");
 
     // ---- 4. 数据交互 (内层)。 ----
+    const auto fresh_gga = waitForGga(gga_refresh_timeout_sec_);
+    if (!fresh_gga) {
+      SPDLOG_WARN("NTRIP 连接成功后未取得新 GGA, 重建链路");
+      ::close(socket_fd);
+      continue;
+    }
     {
       // socket_fd 由 RAII 守卫管理, 作用域结束自动关闭。
       struct SocketGuard {
@@ -708,7 +718,7 @@ void NtripClient::workerLoop() {
             ::close(fd);
         }
       } guard{socket_fd};
-      runSession(socket_fd, first_gga->first, first_gga->second,
+      runSession(socket_fd, fresh_gga->first, fresh_gga->second,
                  pending_data);
       // 会话结束后不立即关闭串口, 由下一轮循环开头统一关闭 (确保干净的重连状态)。
     }

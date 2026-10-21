@@ -25,6 +25,8 @@ namespace {
 constexpr double kDegToRad              = M_PI / 180.0;
 constexpr double kVerticalAccuracyScale = 2.0;
 constexpr double kVelocityStd           = 0.05;   // m/s (人工标定: 速度精度 < 0.05 m/s 1-sigma)
+constexpr int64_t kGpsEpochUnixSec      = 315964800;  // 1980-01-06 00:00:00 UTC
+constexpr double kSecondsPerWeek        = 604800.0;
 
 // 标定参数的**启动**有效性校验: yaml 里可能躺着旧版本写坏的 nan (那时 onSetParameters 的范围判断
 // 拦不住 NaN, 见那里的说明)。非有限值一律退回 0.0 (未标定) 并告警 —— 比起带着 NaN 跑 (odom 的
@@ -300,6 +302,8 @@ void GnssDriver::loadParameters() {
   declare_parameter("odom_log_interval", 10);
   declare_parameter("giavp_timeout_sec", 1.0);
   declare_parameter("serial_retry_interval_sec", 1.0);
+  declare_parameter("use_gps_timestamp", true);
+  declare_parameter("gps_utc_leap_seconds", 18);
 
   serial_port_path_         = get_parameter("serial_port").as_string();
   baud_rate_                = get_parameter("baud_rate").as_int();
@@ -326,6 +330,10 @@ void GnssDriver::loadParameters() {
   serial_retry_interval_sec_ = PositiveOr(
       "serial_retry_interval_sec",
       get_parameter("serial_retry_interval_sec").as_double(), 1.0);
+  use_gps_timestamp_ =
+      get_parameter("use_gps_timestamp").as_bool();
+  gps_utc_leap_seconds_ = static_cast<int>(std::max<int64_t>(
+      0, get_parameter("gps_utc_leap_seconds").as_int()));
 
   // ---- ENU 原点: 优先使用 YAML 配置；未配置时沿用首次 RTK 固定解 ----
   const bool origin_any = !std::isnan(origin_lat) || !std::isnan(origin_lon) || !std::isnan(origin_alt);
@@ -362,6 +370,9 @@ void GnssDriver::loadParameters() {
   SPDLOG_INFO("状态日志间隔: {} 条 (10Hz 下约 {:.1f}s), 里程计日志间隔: {} 条 (10Hz 下约 {:.1f}s)", status_log_interval_, status_log_interval_ / 10.0, odom_log_interval_, odom_log_interval_ / 10.0);
   SPDLOG_INFO("GIAVP 超时: {:.2f}s, 串口重开间隔: {:.2f}s",
               giavp_timeout_sec_, serial_retry_interval_sec_);
+  SPDLOG_INFO("GPS 时间戳: {}, UTC 闰秒: {}s",
+              use_gps_timestamp_ ? "启用" : "禁用",
+              gps_utc_leap_seconds_);
   SPDLOG_INFO("日志级别: {}, 目录: {}, 文件上限: {} MB, 文件数量: {}, 控制台: {}", log_level_, log_dir_, log_file_size_mb_, log_file_count_, log_enable_console_ ? "是" : "否");
   SPDLOG_INFO("=========================================");
 }
@@ -470,8 +481,7 @@ GnssDriver::PersistOutcome GnssDriver::persistParamsToYaml(const std::vector<std
     return PersistOutcome::kSkippedNoPath;   // 部署时未配置持久化路径 (文档化的行为)
   }
 
-  // 写回实现按字符串值处理 (与 tractor_calibration / global_path_planner 共用同一套规则), 这里把
-  // double 转成字符串: std::to_string 与标定侧的 FormatDouble 同为固定 6 位小数, 写进 yaml 的格式一致。
+  // 写回实现按字符串值处理；标定参数统一使用固定六位小数文本。
   std::vector<std::pair<std::string, std::string>> text_updates;
   text_updates.reserve(updates.size());
   for (const auto& [key, value] : updates) {
@@ -479,7 +489,11 @@ GnssDriver::PersistOutcome GnssDriver::persistParamsToYaml(const std::vector<std
   }
 
   YamlUpdateReport report;
-  const YamlPersistStatus status = PersistYamlKeys(gnss_config_path_, text_updates, &report);
+  const YamlPersistStatus status = PersistYamlKeys(
+      gnss_config_path_, "gnss_driver", text_updates, &report);
+  if (!report.target_node_found) {
+    SPDLOG_WARN("{} 中未找到唯一的 gnss_driver 节点", gnss_config_path_);
+  }
   if (report.duplicate_keys > 0) {
     SPDLOG_WARN("{} 中存在重复键 ({} 处, 已全部替换为同一值): YAML 解析器对重复键取最后一个, 建议手工清理重复行", gnss_config_path_, report.duplicate_keys);
   }
@@ -489,12 +503,21 @@ GnssDriver::PersistOutcome GnssDriver::persistParamsToYaml(const std::vector<std
   if (report.dir_sync_failed) {
     SPDLOG_WARN("{} 的父目录 fsync 失败 (本次写入已生效, 但掉电后可能丢这次 rename)", gnss_config_path_);
   }
+  if (report.yaml_validated) {
+    SPDLOG_INFO("{} 修改后的 YAML 结构校验通过", gnss_config_path_);
+  }
   switch (status) {
     case YamlPersistStatus::kUnchanged:
       SPDLOG_INFO("参数值与 {} 中已有内容一致, 未重写文件", gnss_config_path_);
       return PersistOutcome::kPersisted;
     case YamlPersistStatus::kReadFailed:
       SPDLOG_WARN("无法读取 gnss 配置文件 {} (参数未写回)", gnss_config_path_);
+      return PersistOutcome::kFailed;
+    case YamlPersistStatus::kInvalidStructure:
+      SPDLOG_ERROR("gnss 配置文件 {} 的节点结构或修改结果无效", gnss_config_path_);
+      return PersistOutcome::kFailed;
+    case YamlPersistStatus::kLockFailed:
+      SPDLOG_ERROR("无法获取 gnss 配置文件 {} 的写锁", gnss_config_path_);
       return PersistOutcome::kFailed;
     case YamlPersistStatus::kWriteFailed:
       SPDLOG_ERROR("写入 {} 失败 (参数未写回)", gnss_config_path_);
@@ -607,6 +630,32 @@ double GnssDriver::positionAccuracyForStatus(int status) const {
   }
 }
 
+// 把 GIAVP 的 GPS 周和周内秒转换为 ROS 时间，非法时回退到本机时间。
+rclcpp::Time GnssDriver::timestampFor(const GiavpData& data) const {
+  if (!use_gps_timestamp_ || data.gps_week <= 0 ||
+      !std::isfinite(data.gps_time_sec) || data.gps_time_sec < 0.0 ||
+      data.gps_time_sec >= kSecondsPerWeek) {
+    return now();
+  }
+
+  const double unix_seconds =
+      static_cast<double>(kGpsEpochUnixSec) +
+      static_cast<double>(data.gps_week) * kSecondsPerWeek +
+      data.gps_time_sec - static_cast<double>(gps_utc_leap_seconds_);
+  if (!std::isfinite(unix_seconds) || unix_seconds <= 0.0) {
+    return now();
+  }
+
+  int64_t seconds = static_cast<int64_t>(std::floor(unix_seconds));
+  uint32_t nanoseconds = static_cast<uint32_t>(std::llround(
+      (unix_seconds - static_cast<double>(seconds)) * 1e9));
+  if (nanoseconds >= 1000000000U) {
+    ++seconds;
+    nanoseconds = 0;
+  }
+  return rclcpp::Time(seconds, nanoseconds, RCL_ROS_TIME);
+}
+
 // 发布ENU原点
 void GnssDriver::publishOriginLlh() {
   std::lock_guard<std::mutex> lock(datum_mutex_);
@@ -628,7 +677,7 @@ void GnssDriver::publishOriginLlh() {
 // 发布经纬度数据
 void GnssDriver::publishFix(const GiavpData& d) {
   auto msg            = sensor_msgs::msg::NavSatFix();
-  msg.header.stamp    = now();
+  msg.header.stamp    = timestampFor(d);
   msg.header.frame_id = frame_id_;
 
   switch (d.status) {
@@ -645,9 +694,6 @@ void GnssDriver::publishFix(const GiavpData& d) {
       msg.status.status = sensor_msgs::msg::NavSatStatus::STATUS_GBAS_FIX;
       break;
     case 5:   // RTK 浮点解 (5) — 非固定, 不夸大精度
-      msg.status.status = sensor_msgs::msg::NavSatStatus::STATUS_FIX;
-      break;
-    case kStatusIns:
       msg.status.status = sensor_msgs::msg::NavSatStatus::STATUS_FIX;
       break;
     default:
@@ -746,7 +792,7 @@ void GnssDriver::publishOdom(const GiavpData& d) {
           : d.ve_ms * std::cos(yaw_raw) + d.vn_ms * std::sin(yaw_raw);
   const double speed_var         = rtk_fixed ? (kVelocityStd * kVelocityStd) : 1e6;
 
-  const auto stamp = now();
+  const auto stamp = timestampFor(d);
 
   // 两套里程计共用同一套协方差规则: 标定节点判"RTK 固定解"只看这几个对角元
   // (calibration_manager 的 kCovInvalidThreshold), 两边必须一致, 否则同一帧数据会
@@ -847,12 +893,14 @@ void GnssDriver::publishOdom(const GiavpData& d) {
 // 发布IMU数据
 void GnssDriver::publishImu(const GiavpData& d) {
   auto msg            = sensor_msgs::msg::Imu();
-  msg.header.stamp    = now();
+  msg.header.stamp    = timestampFor(d);
   msg.header.frame_id = frame_id_;
 
   double yaw_rad   = headingToEnuYaw(d.heading_deg);
-  double roll_rad  = d.roll_deg * kDegToRad;
-  double pitch_rad = d.pitch_deg * kDegToRad;
+  // 设备约定 Pitch+ 为车头抬起、Roll- 为车身向右倾；
+  // ROS 右手系中 Pitch+ 为车头向下、Roll+ 为车身向右倾，因此二者取反。
+  const double roll_rad = -d.roll_deg * kDegToRad;
+  const double pitch_rad = -d.pitch_deg * kDegToRad;
 
   // 四元数及其协方差。
   tf2::Quaternion q;
@@ -900,7 +948,7 @@ void GnssDriver::publishImu(const GiavpData& d) {
 // 发布车体线速度和角速度。
 void GnssDriver::publishVelocity(const GiavpData& d) {
   auto msg            = geometry_msgs::msg::TwistWithCovarianceStamped();
-  msg.header.stamp    = now();
+  msg.header.stamp    = timestampFor(d);
   msg.header.frame_id = frame_id_;
 
   // ROS 车体系: x 前, y 左, z 上。
@@ -940,7 +988,7 @@ void GnssDriver::publishVelocity(const GiavpData& d) {
 // 发布GNSS状态信息
 void GnssDriver::publishStatus(const GiavpData& d) {
   auto msg            = weeder_msgs::msg::GnssStatus();
-  msg.header.stamp    = now();
+  msg.header.stamp    = timestampFor(d);
   msg.header.frame_id = frame_id_;
 
   msg.fix_type       = static_cast<uint8_t>(d.status);

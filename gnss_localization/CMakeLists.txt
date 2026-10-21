@@ -32,7 +32,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(weeder_msgs REQUIRED)
 find_package(spdlog_vendor REQUIRED)
 find_package(spdlog REQUIRED)
-find_package(yaml-cpp REQUIRED)
+find_package(yaml REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 # GeographicLib (provides LocalCartesian geodetic projection).
@@ -99,7 +99,11 @@ ament_target_dependencies(gnss_driver_node
   weeder_msgs
 )
 
-target_link_libraries(gnss_driver_node ${GEOGRAPHIC_LIBRARY} spdlog::spdlog yaml-cpp)
+target_link_libraries(gnss_driver_node
+  ${GEOGRAPHIC_LIBRARY}
+  spdlog::spdlog
+  ${yaml_LIBRARIES}
+)
 
 # 让 SPDLOG_* 宏携带源码文件名与行号（source location）
 target_compile_definitions(gnss_driver_node PRIVATE
@@ -209,13 +213,15 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/config
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO)
 
-  # 参数写回 yaml 的契约 (src/yaml_persist.hpp —— 与 tractor_calibration 的同名文件是镜像实现):
-  # 运行期改标定参数会把新值落盘, 规则必须"保留注释与缩进、重复键全替换并回报、缺键插进
-  # ros__parameters 映射内、等值不重写、原子替换" —— 写坏一次 yaml 就是整车配置丢失, 必须钉住。
-  # 与 tractor_calibration 的 test_yaml_persist 是同一套用例 (那份测的是镜像的另一份实现)。
+  # 参数写回 yaml 的契约 (src/yaml_persist.hpp):
+  # 只改目标节点、保留注释与缩进、写后解析校验、保持文件权限、支持软链与并发锁。
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_yaml_persist test/test_yaml_persist.cpp)
   target_include_directories(test_yaml_persist PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(test_yaml_persist
+    ${yaml_LIBRARIES}
+    Threads::Threads
+  )
 
   # $GIAVP 解析器的有效性校验: 数值字段出现 nan/inf -> 整句判无效 (不给下游发带 NaN 的 fix/odom/imu/vel)。
   # 无接收机的台架上唯一能钉住这条的地方 (报文喂不进节点), 见 tmp/verify_gnss_param_nan.sh 的说明。
