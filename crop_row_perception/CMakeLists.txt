@@ -41,7 +41,8 @@ set_target_properties(crop_row_observer PROPERTIES
   INSTALL_RPATH "$ORIGIN/.." INSTALL_RPATH_USE_LINK_PATH TRUE)
 install(TARGETS crop_row_observer_node LIBRARY DESTINATION lib)
 install(TARGETS crop_row_observer RUNTIME DESTINATION lib/${PROJECT_NAME})
-install(PROGRAMS scripts/replay_images.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/replay_images.py scripts/record_observations.py DESTINATION lib/${PROJECT_NAME})
+install(FILES scripts/observation_contract.py DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
 endif()
 
@@ -65,6 +66,11 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_crop_row_observer rclcpp rcl_interfaces sensor_msgs weeder_msgs)
   set_tests_properties(test_crop_row_observer PROPERTIES ENVIRONMENT "ROS_DOMAIN_ID=83")
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME crop_row_observation_contract
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_observation_contract.py)
+  add_test(NAME crop_row_recorder
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_recorder.py)
+  set_tests_properties(crop_row_recorder PROPERTIES ENVIRONMENT "ROS_DOMAIN_ID=86" TIMEOUT 20)
   add_test(NAME crop_row_replay
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_replay.py
             ${CMAKE_CURRENT_SOURCE_DIR}/scripts/replay_images.py)

@@ -1,0 +1,38 @@
+{
+  "scope": "Native CPU ONNX load, forward and segmentation decode on three independent CRDLD validation images; not a navigation accuracy or temporal replay evaluation",
+  "sdk_source_commit": "1cf533d911a7fbca3525eb627f1e7f24f63b089e",
+  "platform": "MyUbuntu x86_64, OpenCV 4.5.4, DNN_TARGET_CPU",
+  "model": "crdld-yolo11n-seg-tracked-v1-100e-rknnopt.onnx",
+  "model_sha256": "dc2b3f1a25642e131484de03b42fc8bdd0d787a3198bf068df7933109f4a7480",
+  "model_input_size": [640, 640],
+  "layout_probe": "10-output Rockchip-compatible single-class segmentation layout",
+  "runner": "rk/apps/onnx_segment_image.cpp at the pinned SDK source commit",
+  "timing_definition": "inference_ms covers letterbox, blob construction and network forward; excludes model loading, mask decoding, image IO, undistortion, BEV and ROS transport. One process/call per sample, not a steady-state benchmark.",
+  "samples": [
+    {
+      "image": "data/processed/crdld-yolo-seg-tracked-v1/images/val/0.jpg",
+      "image_sha256": "6e5269ce2d831db363ffd6af88fb745ef2288005b9bd6a553323faaade8a6244",
+      "instances": 5,
+      "inference_ms": 64.2164,
+      "mask_sha256": "fa0b2635870b9f06f2714c90c835159a2b63e597cdf6b5631ecec41cf976aa69"
+    },
+    {
+      "image": "data/processed/crdld-yolo-seg-tracked-v1/images/val/1.jpg",
+      "image_sha256": "d206b6de4388a3085dcb2ddc022fe0e0844785bd56d83a6a1d2d92c932f86bcd",
+      "instances": 5,
+      "inference_ms": 61.6405,
+      "mask_sha256": "a6156280bb502a73c744c7f74100ac62ec4405f8d8b6b6cc6717f565a67270ac"
+    },
+    {
+      "image": "data/processed/crdld-yolo-seg-tracked-v1/images/val/10.jpg",
+      "image_sha256": "39f1e80c1bf219e86f47bb35c86152611e258cac89185da264ce594b8c4232ca",
+      "instances": 5,
+      "inference_ms": 69.4886,
+      "mask_sha256": "fe69ae69efca22e5a8cf4450198e68220fc0d4e2910b6e206dc8aa1111531da3"
+    }
+  ],
+  "visual_review": "Inspected original and non-empty mask of sample 0; multiple row bands and scattered edge fragments are visible. No quantitative accuracy acceptance.",
+  "artifacts_on_myubuntu": "/tmp/laser-weed-crop-row.8uhjNA/real-model-preflight",
+  "navigation_validation": "Pending matched, accepted intrinsic and vehicle-ground BEV calibration. No calibration acceptance flags were changed.",
+  "production_default_changed": false
+}

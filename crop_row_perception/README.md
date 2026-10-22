@@ -4,6 +4,9 @@
 `/crop_row/observation`（`weeder_msgs/CropRowObservation`）。
 本包没有底盘指令发布者，也没有订阅/修改工作模式、GNSS 或全局路径。
 当前 `path_tracker` 尚未消费此消息，启动本包不会启用视觉转向。
+整车侧接入与职责说明见 [INTEGRATION.md](INTEGRATION.md)。
+只读观测记录工具 `record_observations.py` 可保存标准 JSONL，检查时间、序号、
+会话、无效数值泄漏和回放标记，使用方法见该说明。
 
 ## 仓库与依赖
 
@@ -124,7 +127,8 @@ colcon test --packages-select crop_row_perception --return-code-on-test-failure
 
 测试模式不生成/安装生产观察节点，不会把替身 SDK 带入发布程序。
 真实 SDK 链接、图像推理精度、RKNN/NPU 执行和实车控制是独立验收项。
-后续先验证观察数据，再单独修改跟踪器的作业/掉头状态和视觉纠偏接口。
+我们的交付边界是图像到导航观测及联调支持。整车团队负责在跟踪器中消费观测，
+处理作业/掉头状态、控制策略、限速和失效停车；不由本模块实现转向或发布底盘指令。
 
 ### 2026-10-22 开发验证记录
 
@@ -139,3 +143,17 @@ colcon test --packages-select crop_row_perception --return-code-on-test-failure
   已修复 ament 链接声明兼容性及独立 SDK 安装后的动态库搜索路径问题。
 - 尚未验证真实模型有效帧推理、板端 NPU、现场相机及实车闭环；节点通信测试使用替身 SDK，
   回放样本为测试生成图片/短视频。未修改现有路径跟踪、避障或底盘控制逻辑。
+
+### 补充验证与交付
+
+- 新增只读观测记录工具及 [整车侧接口说明](INTEGRATION.md)，明确我们不承担转向控制实现。
+  记录工具检查会话、帧序号、坐标/标定标识、无效数值、接收帧龄和回放标记，
+  无效心跳不重复累计为新帧；JSONL 将非有限数值写成标准 null。
+- 新增 14 个独立契约用例和真实 ROS 记录工具用例。Humble 的发布者数量查询使用
+  `Node.count_publishers`。完整 6 个 CTest 组通过，colcon 汇总 14 tests / 0 errors / 0 failures。
+- 真实现有 YOLO11 crop-row ONNX 模型在 3 张 CRDLD 验证图片上完成原生推理、解码和掩码输出。
+  预处理加网络前向分别为 64.2164、61.6405、69.4886ms，不含掩码解码、BEV 或完整 SDK/ROS 开销。
+  模型/输入/掩码 SHA256 和测试范围见 [model-preflight.json](test/model-preflight.json)。
+  这是兼容性检查，不代表已测精度、连续视频、稻田泛化或 RK 板速度，也未更改默认模型选型。
+- 完整米制导航观测仍待匹配影像的已验收内参和 BEV；不能给公开数据套用现场相机标定，
+  也未通过更改 `calibration_valid` 标记绕过校验。实际 SDK/ROS 有效帧链路仍需这项现场输入。
