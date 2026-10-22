@@ -87,10 +87,9 @@ void PathTrackerNode::loadParameters() {
   max_track_error_m_                 = declare_parameter<double>("max_track_error_m", 3.0);
   snap_forward_points_               = static_cast<size_t>(declare_parameter<int64_t>("snap_forward_points", 20));
   pose_timeout_s_                    = declare_parameter<double>("pose_timeout_s", 1.0);
-  path_timeout_s_                    = declare_parameter<double>("path_timeout_s", 5.0);
-  work_mode_timeout_s_               = declare_parameter<double>("work_mode_timeout_s", 3.0);
-  work_mode_startup_grace_s_         = declare_parameter<double>("work_mode_startup_grace_s", 20.0);
-  velocity_planner_status_timeout_s_ = declare_parameter<double>("velocity_planner_status_timeout_s", 0.5);
+  path_timeout_s_                    = declare_parameter<double>("path_timeout_s", 1.0);
+  work_mode_timeout_s_               = declare_parameter<double>("work_mode_timeout_s", 1.0);
+  velocity_planner_status_timeout_s_ = declare_parameter<double>("velocity_planner_status_timeout_s", 1.0);
   require_unmanned_                  = declare_parameter<bool>("require_unmanned", true);
   require_velocity_planner_          = declare_parameter<bool>("require_velocity_planner", true);
   frame_id_                          = declare_parameter<std::string>("frame_id", "odom");
@@ -101,30 +100,28 @@ void PathTrackerNode::loadParameters() {
   cmd_topic_                         = declare_parameter<std::string>("cmd_topic", "/chassis/cmd");
   viz_                               = declare_parameter<bool>("viz", true);
 
-  const double lqr_eps              = declare_parameter<double>("lqr_eps", 1e-6);
-  const int lqr_max_iteration       = static_cast<int>(declare_parameter<int64_t>("lqr_max_iteration", 1000));
-  const double lqr_q_lateral        = declare_parameter<double>("lqr_Q_lateral", 50.0);
-  const double lqr_q_heading        = declare_parameter<double>("lqr_Q_heading", 25.0);
-  const double lqr_r_steer          = declare_parameter<double>("lqr_R_steer", 25.0);
-
-  steer_mode_ = 0;
+  const double lqr_eps        = declare_parameter<double>("lqr_eps", 1e-6);
+  const int lqr_max_iteration = static_cast<int>(declare_parameter<int64_t>("lqr_max_iteration", 1000));
+  const double lqr_q_lateral  = declare_parameter<double>("lqr_Q_lateral", 50.0);
+  const double lqr_q_heading  = declare_parameter<double>("lqr_Q_heading", 25.0);
+  const double lqr_r_steer    = declare_parameter<double>("lqr_R_steer", 25.0);
 
   LQRConfig lqr_config;
-  lqr_config.dt                            = 1.0 / control_hz_;
-  lqr_config.eps                           = lqr_eps;
-  lqr_config.max_iteration                 = lqr_max_iteration;
-  lqr_config.q_lateral                     = lqr_q_lateral;
-  lqr_config.q_heading                     = lqr_q_heading;
-  lqr_config.r_steer                       = lqr_r_steer;
-  lqr_config.wheelbase                     = wheelbase_;
-  lqr_config.turn_mode_enter_m             = turn_mode_enter_m_;
-  lqr_config.turn_mode_exit_m              = turn_mode_exit_m_;
-  lqr_config.max_steer_rad                 = max_steer_deg_ / kRad2Deg;
-  lqr_config.snap_forward_points           = snap_forward_points_;
-  lqr_config.work_speed                    = work_speed_;
-  lqr_config.turn_speed                    = turn_speed_;
-  lqr_config.turn_speed_preview_m          = turn_speed_preview_m_;
-  lqr_config.turn_speed_hold_m             = turn_speed_hold_m_;
+  lqr_config.dt                   = 1.0 / control_hz_;
+  lqr_config.eps                  = lqr_eps;
+  lqr_config.max_iteration        = lqr_max_iteration;
+  lqr_config.q_lateral            = lqr_q_lateral;
+  lqr_config.q_heading            = lqr_q_heading;
+  lqr_config.r_steer              = lqr_r_steer;
+  lqr_config.wheelbase            = wheelbase_;
+  lqr_config.turn_mode_enter_m    = turn_mode_enter_m_;
+  lqr_config.turn_mode_exit_m     = turn_mode_exit_m_;
+  lqr_config.max_steer_rad        = max_steer_deg_ / kRad2Deg;
+  lqr_config.snap_forward_points  = snap_forward_points_;
+  lqr_config.work_speed           = work_speed_;
+  lqr_config.turn_speed           = turn_speed_;
+  lqr_config.turn_speed_preview_m = turn_speed_preview_m_;
+  lqr_config.turn_speed_hold_m    = turn_speed_hold_m_;
   lqr_->Configure(lqr_config);
 }
 
@@ -160,7 +157,6 @@ void PathTrackerNode::setupInterfaces() {
   }
 
   const auto t               = now();
-  boot_time_                 = t;
   last_pose_time_            = t;
   last_path_time_            = t;
   last_work_mode_time_       = t;
@@ -196,7 +192,7 @@ void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) 
   }
 
   std::vector<TrajectoryPoint> traj;
-  if (!computePathProfile(xy, &traj)) {
+  if (!ComputePathProfile(xy, &traj)) {
     SPDLOG_ERROR("路径剖面计算失败，忽略这条路径");
     return;
   }
@@ -204,10 +200,10 @@ void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) 
     traj[i].waypoint_type = msg->waypoint_types[i];
   }
 
-  has_path_                = true;
-  accept_path_message_     = false;
-  path_point_count_        = traj.size();
-  last_speed_cmd_          = 0.0;
+  has_path_            = true;
+  accept_path_message_ = false;
+  path_point_count_    = traj.size();
+  last_speed_cmd_      = 0.0;
   lqr_->SetTrajectory(traj);
 
   SPDLOG_INFO(
@@ -243,19 +239,6 @@ void PathTrackerNode::ObstacleStatusCallback(const weeder_msgs::msg::ObstacleSta
   obstacle_points_           = msg->obstacle_points;
 }
 
-bool PathTrackerNode::ApplySteerMode(int mode, double effective_wheelbase) {
-  if (mode != 0 && mode != 1) {
-    SPDLOG_ERROR("拒绝不支持的转向模式 {}，输出停车", mode);
-    return false;
-  }
-  if (steer_mode_ == mode) {
-    return true;
-  }
-  steer_mode_ = mode;
-  SPDLOG_INFO("转向模式切换为 {}（{}），等效轴距 {:.3f} m", steer_mode_, steer_mode_ == 1 ? "对称阿克曼" : "单阿克曼", effective_wheelbase);
-  return true;
-}
-
 void PathTrackerNode::publishStop() {
   weeder_msgs::msg::ChassisCmd zero;
   zero.gear            = 0;
@@ -270,12 +253,7 @@ void PathTrackerNode::publishStop() {
 }
 
 void PathTrackerNode::controlTick() {
-  const auto t            = now();
-  const double since_boot = (t - boot_time_).seconds();
-
-  // 启动宽限期：上电后尚未收到任何数据时抑制告警，避免启动阶段误报。
-  // 与 MegaTrak 的 *_startup_grace_s 语义一致。宽限期只抑制告警，不放行运动。
-  const bool in_grace = since_boot < work_mode_startup_grace_s_;
+  const auto t = now();
 
   // ---- 门控 1：工作模式，也就是系统级使能信号 ----
   // 只有 MODE_UNMANNED 才允许运动。过期的 /work_mode 按非无人模式处理：
@@ -283,13 +261,11 @@ void PathTrackerNode::controlTick() {
   if (require_unmanned_) {
     const bool fresh = ever_got_work_mode_ && (t - last_work_mode_time_).seconds() <= work_mode_timeout_s_;
     if (!fresh || !unmanned_) {
-      if (!in_grace) {
-        SPDLOG_WARN(
-          "未使能：需在 {} 上以不低于 {:.2f} Hz 持续发布 MODE_UNMANNED，"
-          "输出停车",
-          work_mode_topic_,
-          1.0 / work_mode_timeout_s_);
-      }
+      SPDLOG_WARN(
+        "未使能：需在 {} 上以不低于 {:.2f} Hz 持续发布 MODE_UNMANNED，"
+        "输出停车",
+        work_mode_topic_,
+        1.0 / work_mode_timeout_s_);
       publishStop();
       return;
     }
@@ -297,9 +273,7 @@ void PathTrackerNode::controlTick() {
 
   // ---- 门控 2：RTK 位姿存在、新鲜且为固定解 ----
   if (!has_pose_) {
-    if (!in_grace) {
-      SPDLOG_WARN("等待定位数据（{}），输出停车", pose_topic_);
-    }
+    SPDLOG_WARN("等待定位数据（{}），输出停车", pose_topic_);
     publishStop();
     return;
   }
@@ -317,9 +291,7 @@ void PathTrackerNode::controlTick() {
 
   // ---- 门控 3：存在可跟踪且未超时的路径 ----
   if (!has_path_) {
-    if (!in_grace) {
-      SPDLOG_WARN("等待路径（{}），输出停车", path_topic_);
-    }
+    SPDLOG_WARN("等待路径（{}），输出停车", path_topic_);
     publishStop();
     return;
   }
@@ -329,13 +301,7 @@ void PathTrackerNode::controlTick() {
     return;
   }
 
-  // ---- 门控 4：当前转向模式必须满足阿克曼模型假设 ----
-  if (steer_mode_ == 2 || steer_mode_ == 3) {
-    publishStop();
-    return;
-  }
-
-  // ---- 门控 5：点云避停安全门控 ----
+  // ---- 门控 4：点云避停安全门控 ----
   const double obstacle_status_age_s = has_obstacle_status_ ? (t - last_obstacle_status_time_).seconds() : 0.0;
   const ObstacleGateDecision obstacle_decision =
     EvaluateObstacleGate(require_velocity_planner_, has_obstacle_status_, obstacle_status_age_s, velocity_planner_status_timeout_s_, obstacle_sensor_valid_, obstacle_stop_required_);
@@ -380,12 +346,7 @@ void PathTrackerNode::controlTick() {
     return;
   }
 
-  if (!ApplySteerMode(out.steer_mode, out.effective_wheelbase)) {
-    publishStop();
-    return;
-  }
-
-  // ---- 门控 6：车辆必须仍在跟踪目标点附近 ----
+  // ---- 门控 5：车辆必须仍在跟踪目标点附近 ----
   //
   // 该门控用于弥补 LQR 误差状态 [e_lateral, e_heading] 不含沿路径方向误差的问题。
   // 车辆沿路径方向冲过目标点时，横向和航向误差都为 0，控制器会误判为完美跟踪，
@@ -425,7 +386,7 @@ void PathTrackerNode::controlTick() {
   // 转角单位为 rad、左正，与 ADCU_toVCU_01 的符号约定一致。
   weeder_msgs::msg::ChassisCmd cmd;
   cmd.gear            = 1;
-  cmd.steer_mode      = static_cast<uint8_t>(steer_mode_);
+  cmd.steer_mode      = static_cast<uint8_t>(out.steer_mode);
   cmd.release_brake   = true;
   cmd.estop           = false;
   cmd.ctrl_mode       = true;
@@ -437,7 +398,7 @@ void PathTrackerNode::controlTick() {
     "mode={} type={} v={:.3f}/{:.3f} m/s delta={:+.2f} deg "
     "(fb={:+.2f} ff={:+.2f}) e_lat={:+.3f} m "
     "e_head={:+.3f} rad d_goal={:.2f} m idx={}/{}",
-    steer_mode_,
+    out.steer_mode,
     static_cast<unsigned>(out.target_pt.waypoint_type),
     v,
     target_v,

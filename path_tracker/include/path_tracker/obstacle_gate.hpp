@@ -1,4 +1,3 @@
-// 版权所有 2026。点云避停门控的纯逻辑判定。
 #pragma once
 
 namespace path_tracker {

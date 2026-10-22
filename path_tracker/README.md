@@ -54,7 +54,7 @@ A = [[1, v·dt], [0, 1]]      B = [[0], [v·dt/L]]    输入 δ
 
 - **Riccati 求解器** `calRicatti()`：定点迭代解 DARE，与模型无关，逐行沿用
 - **`discrete_points_math` 曲率/航向/弧长计算**：与 local_path_planner
-  使用同一套 Apollo 离散点算法，`path_profile` 仅负责填充轨迹点容器
+  使用同一套 Apollo 离散点算法，并直接填充轨迹点容器
 - **WORK/TURN 分段速度**策略：与模型无关
 - **参数命名**：沿用 MegaTrak 的 `lqr_*` 前缀，调参经验可迁移
 
@@ -160,18 +160,16 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: un
 
 | 门控 | 参数 | 默认 |
 |---|---|---|
-| 工作模式 | `work_mode_timeout_s` | 3.0 |
+| 工作模式 | `work_mode_timeout_s` | 1.0 |
 | 定位超时 | `pose_timeout_s` | 1.0 |
 | **RTK 位姿有效** | `Pose.valid` | true |
-| 路径超时 | `path_timeout_s` | 5.0 |
-| 转向模式兼容 | `steer_mode` | 0 |
+| 路径超时 | `path_timeout_s` | 1.0 |
 | **横向误差超限** | `max_lateral_error_m` | 0.3 |
 | **偏离目标距离** | `max_track_error_m` | 3.0 |
 | ROI 内检测到障碍 | `min_obstacle_points` | 3 |
-| **避停状态不可用/超时/感知无效** | `require_velocity_planner` / `velocity_planner_status_timeout_s` | true / 0.5 |
-| 启动宽限 | `work_mode_startup_grace_s` | 20.0 |
+| **避停状态不可用/超时/感知无效** | `require_velocity_planner` / `velocity_planner_status_timeout_s` | true / 1.0 |
 
-门控按顺序判定：工作模式 → RTK 位姿（存在/新鲜/`valid=true`）→ 路径（存在/新鲜）→ 转向模式兼容 → **点云避停** → **横向误差超限** → **偏离目标距离**。`gnss_driver` 仅在 RTK 固定解时把 `Pose.valid` 置为 true，浮点/RTD/单点解都会输出停车。
+门控按顺序判定：工作模式 → RTK 位姿（存在/新鲜/`valid=true`）→ 路径（存在/新鲜）→ **点云避停** → **横向误差超限** → **偏离目标距离**。`gnss_driver` 仅在 RTK 固定解时把 `Pose.valid` 置为 true，浮点/RTD/单点解都会输出停车。
 
 ### 点云避停门控
 
@@ -179,7 +177,7 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: un
 `estop=true`：
 
 - 从未收到 `/velocity_planner/status`
-- 最近状态超过 `velocity_planner_status_timeout_s`（默认 0.5s）
+- 最近状态超过 `velocity_planner_status_timeout_s`（默认 1.0s）
 - `sensor_valid=false`
 - `stop_required=true`
 
@@ -197,8 +195,6 @@ LQR 的状态量只有 `[横向误差, 航向误差]`，**没有沿路径方向�
 在向前 `snap_forward_points` 个点的范围内吸附到离车最近的路径点，避免纯弧长累积
 在里程计打滑时与车越走越远。索引单调不减，所以永远不会把目标点拉回上一行
 （弓字形作业不会重跑已覆盖的垄）。
-
-启动宽限**只抑制故障上报**（上电时不刷 FAULT），**从不放开运动**——宽限期内没收到定位/路径照样停车。
 
 ---
 
@@ -235,7 +231,7 @@ colcon test-result --verbose
 ros2 launch path_tracker path_tracker.launch.py
 ```
 
-纯算法层（`lqr.cpp` + `path_profile.cpp`，编成 `path_tracker_lib`）零 ROS 依赖，但**测试可执行文件依赖 rclcpp/gtest，且 `path_tracker_node` 依赖 weeder_msgs**，所以整个包必须在完整 ROS2 环境里 `colcon build`，不能脱离 ROS 单独编译。
+纯算法层（`discrete_points_math.cpp` + `lqr.cpp`，编成 `path_tracker_lib`）零 ROS 依赖，但**测试可执行文件依赖 rclcpp/gtest，且 `path_tracker_node` 依赖 weeder_msgs**，所以整个包必须在完整 ROS2 环境里 `colcon build`，不能脱离 ROS 单独编译。
 
 ---
 
@@ -301,7 +297,7 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
 | 文件 | 覆盖 |
 |---|---|
 | `test_lqr_kinematics.cpp` | 精确阿克曼前馈、运行时等效轴距、WORK/TURN 速度区、跟踪误差和曲率不参与降速、直线与对称阿克曼圆弧闭环、左右偏差符号、转角限幅、小位移弧长累计、沿路径盲区和前向吸附 |
-| `test_path_profile.cpp` | 少于三点拒绝、空指针拒绝、直线零曲率、弧长累加、左/右转弯曲率符号、端点单边差分、相邻重合点与航向退化检查、四分之一圆曲率量级 |
+| `test_discrete_points_math.cpp` | 少于三点拒绝、空指针拒绝、直线零曲率、弧长累加、左/右转弯曲率符号、端点单边差分、相邻重合点与航向退化检查、四分之一圆曲率量级 |
 | `test_obstacle_gate.cpp` | 避停关闭、状态缺失、状态超时、感知无效、停车请求和正常放行 |
 
 闭环测试同时覆盖直线横向误差收敛和 `L_eff=L/2` 的对称阿克曼圆弧跟踪。

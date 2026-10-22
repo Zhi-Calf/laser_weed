@@ -1,5 +1,5 @@
-// 版权所有 2026。路径剖面（航向、弧长和曲率）单元测试。
-#include "path_tracker/path_profile.hpp"
+// 版权所有 2026。离散点路径参数单元测试。
+#include "path_tracker/discrete_points_math.hpp"
 
 #include <gtest/gtest.h>
 
@@ -8,7 +8,7 @@
 #include <vector>
 
 using path_tracker::TrajectoryPoint;
-using path_tracker::computePathProfile;
+using path_tracker::ComputePathProfile;
 
 namespace
 {
@@ -24,30 +24,30 @@ std::vector<std::pair<double, double>> makeXY(
 }
 }  // 匿名命名空间
 
-TEST(PathProfile, RejectsFewerThanThreePoints)
+TEST(DiscretePointsMath, RejectsFewerThanThreePoints)
 {
   std::vector<TrajectoryPoint> out;
-  EXPECT_FALSE(computePathProfile({}, &out));
+  EXPECT_FALSE(ComputePathProfile({}, &out));
   EXPECT_TRUE(out.empty());
-  EXPECT_FALSE(computePathProfile({{0.0, 0.0}}, &out));
+  EXPECT_FALSE(ComputePathProfile({{0.0, 0.0}}, &out));
   EXPECT_TRUE(out.empty());
   EXPECT_FALSE(
-    computePathProfile({{0.0, 0.0}, {1.0, 0.0}}, &out));
+    ComputePathProfile({{0.0, 0.0}, {1.0, 0.0}}, &out));
   EXPECT_TRUE(out.empty());
 }
 
-TEST(PathProfile, RejectsNullOutput)
+TEST(DiscretePointsMath, RejectsNullOutput)
 {
   const auto xy = makeXY({0.0, 1.0, 2.0}, {0.0, 0.0, 0.0});
-  EXPECT_FALSE(computePathProfile(xy, nullptr));
+  EXPECT_FALSE(ComputePathProfile(xy, nullptr));
 }
 
-TEST(PathProfile, StraightLineHasZeroCurvatureAndHeading)
+TEST(DiscretePointsMath, StraightLineHasZeroCurvatureAndHeading)
 {
   const auto xy =
     makeXY({0.0, 1.0, 2.0, 3.0, 4.0}, {0.0, 0.0, 0.0, 0.0, 0.0});
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(xy, &out));
+  ASSERT_TRUE(ComputePathProfile(xy, &out));
   ASSERT_EQ(out.size(), 5u);
 
   for (const auto & p : out) {
@@ -56,12 +56,12 @@ TEST(PathProfile, StraightLineHasZeroCurvatureAndHeading)
   }
 }
 
-TEST(PathProfile, ArcLengthAccumulates)
+TEST(DiscretePointsMath, ArcLengthAccumulates)
 {
   // 三段各 1 米，总弧长应为 3 米。
   const auto xy = makeXY({0.0, 1.0, 2.0, 3.0}, {0.0, 0.0, 0.0, 0.0});
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(xy, &out));
+  ASSERT_TRUE(ComputePathProfile(xy, &out));
 
   EXPECT_NEAR(out.front().s, 0.0, 1e-9);
   EXPECT_NEAR(out[1].s, 1.0, 1e-9);
@@ -69,13 +69,13 @@ TEST(PathProfile, ArcLengthAccumulates)
   EXPECT_NEAR(out.back().s, 3.0, 1e-9);
 }
 
-TEST(PathProfile, LeftTurnHasPositiveCurvature)
+TEST(DiscretePointsMath, LeftTurnHasPositiveCurvature)
 {
   // 先沿 +x 再沿 +y 是左转（逆时针）。CAN 协议规定左转为正，
   // 因此计算出的曲率必须为正。
   const auto xy = makeXY({0.0, 1.0, 1.0, 1.0}, {0.0, 0.0, 1.0, 2.0});
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(xy, &out));
+  ASSERT_TRUE(ComputePathProfile(xy, &out));
 
   EXPECT_GT(out[1].kappa, 0.0) << "left turn must yield positive curvature";
   EXPECT_NEAR(out[0].heading, 0.0, 1e-9);
@@ -83,21 +83,21 @@ TEST(PathProfile, LeftTurnHasPositiveCurvature)
   EXPECT_NEAR(out[2].heading, M_PI / 2.0, 1e-9);
 }
 
-TEST(PathProfile, RightTurnHasNegativeCurvature)
+TEST(DiscretePointsMath, RightTurnHasNegativeCurvature)
 {
   // 先沿 +x 再沿 -y 是右转（顺时针），曲率应为负。
   const auto xy = makeXY({0.0, 1.0, 1.0, 1.0}, {0.0, 0.0, -1.0, -2.0});
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(xy, &out));
+  ASSERT_TRUE(ComputePathProfile(xy, &out));
 
   EXPECT_LT(out[1].kappa, 0.0) << "right turn must yield negative curvature";
 }
 
-TEST(PathProfile, EndpointsUseOneSidedDifferences)
+TEST(DiscretePointsMath, EndpointsUseOneSidedDifferences)
 {
   const auto xy = makeXY({0.0, 1.0, 1.0, 1.0}, {0.0, 0.0, 1.0, 2.0});
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(xy, &out));
+  ASSERT_TRUE(ComputePathProfile(xy, &out));
 
   EXPECT_NEAR(out.front().heading, 0.0, 1e-9);
   EXPECT_NEAR(out.back().heading, M_PI / 2.0, 1e-9);
@@ -105,23 +105,23 @@ TEST(PathProfile, EndpointsUseOneSidedDifferences)
   EXPECT_TRUE(std::isfinite(out.back().kappa));
 }
 
-TEST(PathProfile, RejectsDuplicatePoints)
+TEST(DiscretePointsMath, RejectsDuplicatePoints)
 {
   const auto xy = makeXY({0.0, 0.0, 1.0, 2.0}, {0.0, 0.0, 0.0, 0.0});
   std::vector<TrajectoryPoint> out;
-  EXPECT_FALSE(computePathProfile(xy, &out));
+  EXPECT_FALSE(ComputePathProfile(xy, &out));
   EXPECT_TRUE(out.empty());
 }
 
-TEST(PathProfile, RejectsNonAdjacentRepeatedNeighbor)
+TEST(DiscretePointsMath, RejectsNonAdjacentRepeatedNeighbor)
 {
   const auto xy = makeXY({0.0, 1.0, 0.0}, {0.0, 0.0, 0.0});
   std::vector<TrajectoryPoint> out;
-  EXPECT_FALSE(computePathProfile(xy, &out));
+  EXPECT_FALSE(ComputePathProfile(xy, &out));
   EXPECT_TRUE(out.empty());
 }
 
-TEST(PathProfile, QuarterCircleCurvatureApproximatesTrueValue)
+TEST(DiscretePointsMath, QuarterCircleCurvatureApproximatesTrueValue)
 {
   // 半径为 2 米、按 30 度间隔采样的四分之一圆。有限差分估计较粗，
   // 因此允许较大容差。本测试关注符号和数量级，而不是精确数值。
@@ -133,7 +133,7 @@ TEST(PathProfile, QuarterCircleCurvatureApproximatesTrueValue)
     ys.push_back(r * std::sin(th));
   }
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(makeXY(xs, ys), &out));
+  ASSERT_TRUE(ComputePathProfile(makeXY(xs, ys), &out));
 
   // 真实曲率为 1/r = 0.5，逆时针圆弧的曲率为正。
   EXPECT_GT(out[1].kappa, 0.0);

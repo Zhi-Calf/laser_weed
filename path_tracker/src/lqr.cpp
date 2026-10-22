@@ -1,6 +1,8 @@
 // 版权所有 2026。四轮转向 LQR 横向控制器实现。
 #include "path_tracker/lqr.hpp"
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -172,10 +174,21 @@ LQROutput LQR::ComputeFeedbackControl(double effective_wheelbase) const {
 
 // 根据路径段类型和滞回区选择当前转向模式。
 bool LQR::SelectSymmetricAckermann() {
+  const bool previous_mode = turn_mode_active_;
   if (!turn_mode_active_ && HasTurnNear(config_.turn_mode_enter_m, 0.0)) {
     turn_mode_active_ = true;
   } else if (turn_mode_active_ && !HasTurnNear(config_.turn_mode_enter_m, config_.turn_mode_exit_m)) {
     turn_mode_active_ = false;
+  }
+
+  if (turn_mode_active_ != previous_mode) {
+    const double effective_wheelbase =
+      EffectiveWheelbase(config_.wheelbase, turn_mode_active_);
+    SPDLOG_INFO(
+      "转向模式切换为 {}（{}），等效轴距 {:.3f} m",
+      turn_mode_active_ ? 1 : 0,
+      turn_mode_active_ ? "对称阿克曼" : "单阿克曼",
+      effective_wheelbase);
   }
   return turn_mode_active_;
 }

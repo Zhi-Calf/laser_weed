@@ -1,26 +1,12 @@
-// 版权所有 2026。四轮转向激光除草机的 LQR 横向控制器。
-//
-// 本实现源自 MegaTrak 的 path_controller，并针对阿克曼和四轮转向
-// 运动学重新推导。具体推导见 README。MegaTrak 的差速驱动 B 矩阵不可复用。
 #pragma once
 
 #include <Eigen/Dense>
 #include <cstddef>
-#include <cstdint>
 #include <vector>
 
-namespace path_tracker {
+#include "path_tracker/discrete_points_math.hpp"
 
-/// 控制器所需的轨迹点及其几何属性。
-struct TrajectoryPoint {
-  double x              = 0.0;   // ENU 坐标系 x 坐标（米）
-  double y              = 0.0;   // ENU 坐标系 y 坐标（米）
-  double heading        = 0.0;   // 路径航向角（弧度）
-  double kappa          = 0.0;   // 路径曲率（1/米），左转为正
-  double dkappa         = 0.0;   // 曲率变化率 d(kappa)/ds
-  double s              = 0.0;   // 累计路径弧长（米）
-  uint8_t waypoint_type = 0;     // 路径段类型，0=作业，1=掉头
-};
+namespace path_tracker {
 
 /// 误差动力学使用的车辆状态。
 struct RobotState {

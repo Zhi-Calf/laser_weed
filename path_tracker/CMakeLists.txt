@@ -32,7 +32,6 @@ add_library(${PROJECT_NAME}_lib SHARED
   src/discrete_points_math.cpp
   src/lqr.cpp
   src/obstacle_gate.cpp
-  src/path_profile.cpp
 )
 target_link_libraries(${PROJECT_NAME}_lib
   Eigen3::Eigen
@@ -65,8 +64,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_lqr_kinematics test/test_lqr_kinematics.cpp)
   target_link_libraries(test_lqr_kinematics ${PROJECT_NAME}_lib)
 
-  ament_add_gtest(test_path_profile test/test_path_profile.cpp)
-  target_link_libraries(test_path_profile ${PROJECT_NAME}_lib)
+  ament_add_gtest(
+    test_discrete_points_math test/test_discrete_points_math.cpp)
+  target_link_libraries(test_discrete_points_math ${PROJECT_NAME}_lib)
 
   ament_add_gtest(test_obstacle_gate test/test_obstacle_gate.cpp)
   target_link_libraries(test_obstacle_gate ${PROJECT_NAME}_lib)

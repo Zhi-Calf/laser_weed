@@ -12,8 +12,13 @@ path_tracker:
     log_level: "info"
 
     # ============================================================
-    # 除草机底盘物理参数（必须按实车改，不是默认值能用的）
+    # LQR 控制器
+    # 以下参数全部写入 LQRConfig，集中定义控制器几何、分段、
+    # 权重、求解器和速度策略。
     # ============================================================
+    # 控制频率同时决定 LQR 离散周期和节点调度周期。
+    control_hz: 10.0
+
     # 真实前后轴距 (m)。控制器按转向模式自动选择 L 或 L/2 作为等效轴距。
     # 填错会直接导致横向跟踪振荡或收敛过慢。
     wheelbase: 1.2
@@ -27,8 +32,36 @@ path_tracker:
     # 转向角协议上限 ±90°。
     max_steer_deg: 90.0
 
-    control_hz: 10.0
-    frame_id: odom
+    # 目标点最大前向搜索点数（路径点数，非米）。每拍从上一次的目标索引开始，
+    # 在 [上一目标点, 上一目标点 + snap_forward_points] 内搜索离车最近的点。
+    #
+    # 为什么需要：只靠弧长累积推进的话，目标点完全信任里程计——打滑、被推、
+    # 里程计跳变都会让它和车越走越远，且没有任何机制拉回来。
+    # 搜索**从上一最近点开始**，所以索引单调不减，吸附永远不会把目标点拉回
+    # 已完成的路径，否则弓字形作业会重跑已覆盖的垄。
+    # 20 点 × path_resolution 0.2m = 4m。该参数必须为正。
+    snap_forward_points: 20
+
+    # 参数名沿用 MegaTrak path_controller.yaml，调参经验可迁移。
+    # 注意 R 的语义变了：履带项目里是"角速度代价"，这里是"转向角代价"，
+    # 所以同一组数值的表现会不同，需要重新标定（见 README 调参一节）。
+    lqr_eps: 0.000001
+    lqr_max_iteration: 1000
+    lqr_Q_lateral: 50.0        # 横向误差权重
+    lqr_Q_heading: 25.0        # 航向误差权重
+    lqr_R_steer: 25.0          # 转向角控制代价
+    # 路径分段速度（米/秒），始终启用。
+    work_speed_m_s: 0.6
+    turn_speed_m_s: 0.3
+    # 提前进入低速区的距离和离开掉头区后的低速保持距离。
+    turn_speed_preview_m: 1.0
+    turn_speed_hold_m: 0.5
+
+    # ============================================================
+    # 节点运行参数
+    # ============================================================
+    # 速度指令加速度限制（m/s²）。
+    speed_ramp_mps2: 0.5
 
     # ============================================================
     # 话题名（与 gnss_localization / global_path_planner 对齐）
@@ -41,24 +74,10 @@ path_tracker:
     cmd_topic: /chassis/cmd
 
     # ============================================================
-    # LQR 权重与求解器
-    # 参数名沿用 MegaTrak path_controller.yaml，调参经验可迁移。
-    # 注意 R 的语义变了：履带项目里是"角速度代价"，这里是"转向角代价"，
-    # 所以同一组数值的表现会不同，需要重新标定（见 README 调参一节）。
+    # RViz 可视化
     # ============================================================
-    lqr_eps: 0.000001
-    lqr_max_iteration: 1000
-    lqr_Q_lateral: 50.0        # 横向误差权重
-    lqr_Q_heading: 25.0        # 航向误差权重
-    lqr_R_steer: 25.0          # 转向角控制代价
-    # 路径分段速度（米/秒），始终启用。
-    work_speed_m_s: 0.6
-    turn_speed_m_s: 0.3
-    # 提前进入低速区的距离和离开掉头区后的低速保持距离。
-    turn_speed_preview_m: 1.0
-    turn_speed_hold_m: 0.5
-    # 速度指令加速度限制（m/s²）。
-    speed_ramp_mps2: 0.5
+    frame_id: odom
+    viz: true
 
     # ============================================================
     # 安全门控
@@ -82,18 +101,9 @@ path_tracker:
     # 的距离。该参数必须为正，配置时需人工保证。
     max_track_error_m: 3.0
 
-    # 目标点最大前向搜索点数（路径点数，非米）。每拍从上一次的目标索引开始，
-    # 在 [上一目标点, 上一目标点 + snap_forward_points] 内搜索离车最近的点。
-    #
-    # 为什么需要：只靠弧长累积推进的话，目标点完全信任里程计——打滑、被推、
-    # 里程计跳变都会让它和车越走越远，且没有任何机制拉回来。
-    # 搜索**从上一最近点开始**，所以索引单调不减，吸附永远不会把目标点拉回
-    # 已完成的路径，否则弓字形作业会重跑已覆盖的垄。
-    # 20 点 × path_resolution 0.2m = 4m。该参数必须为正。
-    snap_forward_points: 20
-
-    pose_timeout_s: 1.0        # 定位位姿超时 → 停车
-    path_timeout_s: 5.0        # 路径超时 → 停车
+    # 输入数据超时统一为 1 秒，超过后立即输出停车。
+    pose_timeout_s: 1.0
+    path_timeout_s: 1.0
 
     # 工作模式门控：与 global_path_planner、gnss_driver 共用同一条系统级
     # /work_mode 总线（weeder_msgs/WorkMode，由 APP 或模式管理方以 latched QoS
@@ -103,15 +113,9 @@ path_tracker:
     #   ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
     #       "{mode: 1, mode_name: unmanned}"
     require_unmanned: true
-    work_mode_timeout_s: 3.0
-    # 启动宽限 (s)：仅在"从未收到过 /work_mode"时生效，期间抑制告警，
-    # 给 APP/链路上电重连留时间。宽限**只抑制告警，不放开运动**。
-    # 与 MegaTrak path_controller 的 work_mode_startup_grace_s 同义同量级。
-    work_mode_startup_grace_s: 20.0
+    work_mode_timeout_s: 1.0
 
     # 点云避停门控。实车默认启用：无避停状态、状态超时或 sensor_valid=false
     # 时均按失效停车。无雷达仿真必须在 launch 中显式关闭。
     require_velocity_planner: true
-    velocity_planner_status_timeout_s: 0.5
-
-    viz: true
+    velocity_planner_status_timeout_s: 1.0

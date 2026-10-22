@@ -113,7 +113,7 @@ TEST(PathTrackerObstacleIntegration, GatesChassisCommandFromStatus)
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
     rclcpp::Parameter("require_velocity_planner", true),
-    rclcpp::Parameter("velocity_planner_status_timeout_s", 0.5),
+    rclcpp::Parameter("velocity_planner_status_timeout_s", 1.0),
     rclcpp::Parameter("max_lateral_error_m", 0.3),
     rclcpp::Parameter("speed_ramp_mps2", 10.0),
     rclcpp::Parameter("viz", false),
