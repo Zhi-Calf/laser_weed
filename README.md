@@ -61,6 +61,11 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker
 | `rslidar_sdk` | 速腾 E1R 激光雷达 ROS 2 驱动；解析 UDP 数据包并发布 `PointCloud2` |
 | `rslidar_msg` | 速腾激光雷达原始 `RslidarPacket` 消息，供驱动录制/回放 packet 使用 |
 | `sim_vehicle` | 无硬件仿真：模拟 RTK、车辆运动学、工作模式，并可一键启动完整链路 |
+| `crop_row_perception` | 独立 RowNav SDK 的 ROS 2 观察模式接入：图像输入、稻行观测、断流检测；不发布底盘指令 |
+
+稻行模块的构建、时钟/标定约定和回放方法见
+[`crop_row_perception/README.md`](crop_row_perception/README.md)。
+本模块尚未接入 `path_tracker` 控制逻辑。
 
 ## 路径消息
 

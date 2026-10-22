@@ -1,0 +1,19 @@
+crop_row_perception:
+  ros__parameters:
+    image_topic: /camera/image_raw
+    observation_topic: /crop_row/observation
+    camera_frame: camera_optical_frame
+    # BEV must already be calibrated to this exact vehicle reference point.
+    vehicle_frame: base_link
+    calibration_id: ""
+    model_path: ""
+    intrinsic_path: ""
+    bev_path: ""
+    backend: onnx
+    model_width: 640
+    model_height: 640
+    detection_confidence: 0.25
+    navigation_confidence: 0.35
+    max_frame_age_ms: 250.0
+    replay: false
+    use_sim_time: false

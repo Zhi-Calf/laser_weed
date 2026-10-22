@@ -12,6 +12,7 @@ find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ChassisCmd.msg"
   "msg/ChassisState.msg"
+  "msg/CropRowObservation.msg"
   "msg/ObstacleStatus.msg"
   "msg/Path.msg"
   "msg/Pose.msg"

@@ -1,0 +1,10 @@
+{
+  "name": "RowNav",
+  "version": "0.1.0",
+  "abi_version": 1,
+  "source_commit": "1cf533d911a7fbca3525eb627f1e7f24f63b089e",
+  "source_url": null,
+  "development_source": "../rk",
+  "delivery": "Independent SDK install prefix; SDK repository currently has no Git remote configured. Set the real remote before adding automated source fetching.",
+  "target": "Build separate x86_64/ONNX and aarch64/RKNN packages; runtime hardware acceptance pending."
+}

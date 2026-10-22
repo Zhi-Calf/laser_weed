@@ -1,0 +1,174 @@
+#include "crop_row_perception/observer_node.hpp"
+#include <gtest/gtest.h>
+#include <sensor_msgs/msg/image.hpp>
+#include <weeder_msgs/msg/crop_row_observation.hpp>
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <functional>
+#include <thread>
+#include <vector>
+
+using Observation = weeder_msgs::msg::CropRowObservation;
+using Image = sensor_msgs::msg::Image;
+using namespace std::chrono_literals;
+extern "C" bool fake_sdk_busy();
+
+class ObserverTest : public ::testing::Test
+{
+protected:
+  static void SetUpTestSuite() {rclcpp::init(0, nullptr);}
+  static void TearDownTestSuite() {rclcpp::shutdown();}
+  void SetUp() override {
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+      {"model_path", "fake"}, {"intrinsic_path", "fake"}, {"bev_path", "fake"},
+      {"calibration_id", "test-only"}, {"max_frame_age_ms", 200.0},
+      {"image_topic", "/crop_row_test/image"},
+      {"observation_topic", "/crop_row_test/observation"}, {"replay", true}});
+    observer = std::make_shared<crop_row_perception::ObserverNode>(options);
+    client = std::make_shared<rclcpp::Node>("crop_row_test_client");
+    pub = client->create_publisher<Image>("/crop_row_test/image", rclcpp::SensorDataQoS());
+    sub = client->create_subscription<Observation>("/crop_row_test/observation",
+      rclcpp::QoS(100).reliable(), [this](Observation::ConstSharedPtr msg) {messages.push_back(*msg);});
+    executor.add_node(observer); executor.add_node(client);
+    ASSERT_TRUE(wait([this] {return pub->get_subscription_count() > 0 &&
+      sub->get_publisher_count() > 0;}));
+  }
+  void TearDown() override {
+    executor.remove_node(observer); executor.remove_node(client);
+    observer.reset(); client.reset();
+  }
+  bool wait(const std::function<bool()> & predicate, std::chrono::milliseconds duration = 2500ms) {
+    const auto end = std::chrono::steady_clock::now() + duration;
+    do {
+      executor.spin_some();
+      if (predicate()) {return true;}
+      std::this_thread::sleep_for(5ms);
+    } while (std::chrono::steady_clock::now() < end);
+    return predicate();
+  }
+  Image image(uint8_t mode = 0) {
+    Image value;
+    value.header.stamp = client->now();
+    value.header.frame_id = "camera_optical_frame";
+    value.width = 2; value.height = 2; value.step = 8;  // row padding accepted
+    value.encoding = "bgr8"; value.data.resize(16, mode);
+    return value;
+  }
+  bool has(uint8_t status) const {
+    return std::any_of(messages.begin(), messages.end(), [status](const auto & msg) {
+      return msg.status == status;
+    });
+  }
+  std::shared_ptr<crop_row_perception::ObserverNode> observer;
+  rclcpp::Node::SharedPtr client;
+  rclcpp::Publisher<Image>::SharedPtr pub;
+  rclcpp::Subscription<Observation>::SharedPtr sub;
+  rclcpp::executors::SingleThreadedExecutor executor;
+  std::vector<Observation> messages;
+};
+
+TEST_F(ObserverTest, ValidObservationPreservesSignsCaptureAndBecomesStale) {
+  ASSERT_TRUE(wait([this] {return has(Observation::NO_INPUT);}));
+  const auto input = image();
+  pub->publish(input);
+  ASSERT_TRUE(wait([this] {return has(Observation::VALID);}));
+  const auto valid = *std::find_if(messages.begin(), messages.end(), [](const auto & msg) {
+    return msg.status == Observation::VALID;
+  });
+  EXPECT_EQ(valid.header.stamp, input.header.stamp);
+  EXPECT_EQ(valid.header.frame_id, "base_link");
+  EXPECT_TRUE(valid.has_capture_time); EXPECT_TRUE(valid.replay);
+  EXPECT_FALSE(valid.session_id.empty()); EXPECT_EQ(valid.sdk_version, "test-only");
+  EXPECT_DOUBLE_EQ(valid.lateral_error_m, 0.12);
+  EXPECT_DOUBLE_EQ(valid.heading_error_rad, -0.03);
+  ASSERT_TRUE(wait([this] {return has(Observation::STALE);}));
+  EXPECT_TRUE(std::isnan(messages.back().lateral_error_m));
+  EXPECT_DOUBLE_EQ(messages.back().confidence, 0);
+}
+
+TEST_F(ObserverTest, InvalidBuffersTimestampsAndFramesNeverReachSdk) {
+  auto value = image(); value.encoding = "nv12"; pub->publish(value);
+  ASSERT_TRUE(wait([this] {return has(Observation::INVALID_INPUT);}));
+  for (int failure = 0; failure < 5; ++failure) {
+    messages.clear(); value = image();
+    if (failure == 0) {value.data.resize(1);}
+    if (failure == 1) {value.header.frame_id = "wrong_frame";}
+    if (failure == 2) {value.header.stamp.sec = 0; value.header.stamp.nanosec = 0;}
+    if (failure == 3) {value.header.stamp.sec += 2;}
+    if (failure == 4) {value.header.stamp.sec -= 2;}
+    pub->publish(value);
+    ASSERT_TRUE(wait([this, &value] {
+      return std::any_of(messages.begin(), messages.end(), [&value](const auto & msg) {
+        return msg.status == Observation::INVALID_INPUT && msg.header.stamp == value.header.stamp;
+      });
+    }));
+    EXPECT_FALSE(has(Observation::VALID));
+  }
+}
+
+TEST_F(ObserverTest, DuplicateStampDoesNotReuseValidResult) {
+  const auto value = image(); pub->publish(value);
+  ASSERT_TRUE(wait([this] {return has(Observation::VALID);}));
+  messages.clear(); pub->publish(value);
+  ASSERT_TRUE(wait([this] {return has(Observation::INVALID_INPUT);}));
+  EXPECT_FALSE(has(Observation::VALID));
+}
+
+TEST_F(ObserverTest, InferenceErrorNoRowAndNanAreInvalidated) {
+  for (uint8_t mode : {1, 2, 3, 5, 6, 7}) {
+    messages.clear();
+    const auto input = image(mode);
+    pub->publish(input);
+    const auto status = mode == 2 ? Observation::NO_ROW :
+      (mode == 7 ? Observation::LOW_CONFIDENCE : Observation::SDK_ERROR);
+    const auto matching = [status, &input](const auto & msg) {
+      return msg.status == status && msg.header.stamp == input.header.stamp;
+    };
+    ASSERT_TRUE(wait([this, &matching] {
+      return std::any_of(messages.begin(), messages.end(), matching);
+    }));
+    const auto & result = *std::find_if(messages.begin(), messages.end(), matching);
+    EXPECT_TRUE(std::isnan(result.lateral_error_m)); EXPECT_DOUBLE_EQ(result.confidence, 0);
+    EXPECT_FALSE(has(Observation::VALID));
+  }
+}
+
+TEST_F(ObserverTest, SlowInferenceIsNeverPublishedAsValid) {
+  pub->publish(image(4));
+  ASSERT_TRUE(wait([this] {return has(Observation::STALE);}));
+  EXPECT_FALSE(has(Observation::VALID));
+}
+
+TEST_F(ObserverTest, NewerInputErrorCannotBeOverwrittenByOlderInFlightResult) {
+  pub->publish(image(4));
+  ASSERT_TRUE(wait([] {return fake_sdk_busy();}));
+  auto invalid = image(); invalid.encoding = "nv12";
+  pub->publish(invalid);
+  ASSERT_TRUE(wait([this] {return has(Observation::INVALID_INPUT);}));
+  const auto rejected_sequence = messages.back().sequence;
+  messages.clear();
+  EXPECT_FALSE(wait([] {return false;}, 450ms));
+  ASSERT_FALSE(messages.empty());
+  for (const auto & msg : messages) {
+    EXPECT_GE(msg.sequence, rejected_sequence);
+    EXPECT_EQ(msg.status, Observation::INVALID_INPUT);
+    EXPECT_DOUBLE_EQ(msg.confidence, 0);
+  }
+}
+
+TEST_F(ObserverTest, NoRowAlsoExpiresWhenImageStreamStops) {
+  pub->publish(image(2));
+  ASSERT_TRUE(wait([this] {return has(Observation::NO_ROW);}));
+  ASSERT_TRUE(wait([this] {return has(Observation::STALE);}));
+}
+
+TEST_F(ObserverTest, RuntimeCalibrationOrClockChangesAreRejected) {
+  const auto result = observer->set_parameters_atomically({
+    rclcpp::Parameter("vehicle_frame", "different_reference")});
+  EXPECT_FALSE(result.successful);
+  EXPECT_EQ(observer->get_parameter("vehicle_frame").as_string(), "base_link");
+  EXPECT_FALSE(observer->set_parameters_atomically({
+    rclcpp::Parameter("use_sim_time", true)}).successful);
+}
