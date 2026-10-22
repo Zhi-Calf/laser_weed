@@ -80,8 +80,8 @@ uint8[] waypoint_types
 - `1` = 掉头段
 
 规划器以 `transient_local` QoS 按 10Hz 重发该消息；LQR 控制器根据
-`x/y` 计算曲率、航向和跟踪目标。当前 `path_tracker` 不读取
-`waypoint_types`，该字段保留给后续机具/激光分段控制。
+`x/y` 计算曲率、航向和跟踪目标，并按 `waypoint_types` 在 WORK 段使用
+0.6 m/s + 单阿克曼，在 TURN 段及过渡区使用 0.3 m/s + 对称阿克曼。
 
 ## 激光雷达与点云接口
 
@@ -366,8 +366,8 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 | 差分账号 | `ntrip_client.yaml` / `sdk_client.yaml` | 按设备分别配置；SDK 1.29 还需配置 `sdk_openapi_host/port`、`sdk_oss_host/port` 和 NOSR 坐标框架/历元 |
 | ENU 原点 | `gnss_localization/config/gnss_driver.yaml` | `origin_lat` / `origin_lon` / `origin_alt`，必须等于 `poly` 第一个顶点 |
 | 田块顶点 / 垄宽 / 田边余量 | `global_path_planner/config/global_path_planner.yaml` | `poly` / `ridge_width` / `field_margin`，修改后重启规划器 |
-| `wheelbase` | `path_tracker/config/path_tracker.yaml` | 单阿克曼填真实轴距，双阿克曼填 `L/2` |
-| `steer_mode` | `path_tracker` | 由路径跟踪控制器随 `/chassis/cmd` 下发 |
+| `wheelbase` | `path_tracker/config/path_tracker.yaml` | 填真实前后轴距；对称阿克曼的等效轴距由控制器自动取 `L/2` |
+| `work/turn_steer_mode` | `path_tracker` | 默认 WORK=0（单阿克曼）、TURN=1（对称阿克曼） |
 | `cmd_topic` | 两侧配置文件 | 默认 `/chassis/cmd` |
 | `can_interface` | `weeder_base/config/weeder_base.yaml` | 仿真用 `vcan0`，实车用 `can0` |
 | 雷达型号 | `rslidar_sdk/config/config.yaml` | E1R 必须使用 `lidar_type: RSE1`，不能保留 `RSM1` |

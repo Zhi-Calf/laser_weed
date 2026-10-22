@@ -10,10 +10,13 @@
     /gnss_driver/origin  (NavSatFix, latched)  ENU 投影原点
     /work_mode           (WorkMode, latched)   手动/无人模式切换
 
-运动学：单阿克曼自行车模型（与 path_tracker 的 B 矩阵 v*dt/L 同源）
+运动学：按转向模式选择等效轴距的自行车模型
     x'   = v·cos(yaw)
     y'   = v·sin(yaw)
-    yaw' = (v/L)·tan(delta)
+    yaw' = (v/L_eff)·tan(delta)
+
+    mode 0：L_eff = L（单阿克曼）
+    mode 1：L_eff = L/2（前后轮反向等角的对称阿克曼）
 
 ⚠️ 这是**理想模型**：无轮胎侧偏、无执行器延迟、无噪声、无打滑。
 它验证的是"控制律与话题链路是否正确"，**不能**用来评估实车跟踪精度。
@@ -97,6 +100,7 @@ class SimVehicleNode(Node):
         self.v = 0.0            # 当前实际速度（仿真里等于指令速度）
         self.v_cmd = 0.0
         self.delta_cmd = 0.0
+        self.steer_mode = 0
         self.unmanned = self.get_parameter("start_unmanned").value
         self.steer_clamped_count = 0
         self.align_to_path = self.get_parameter("align_to_path_start").value
@@ -160,6 +164,20 @@ class SimVehicleNode(Node):
     def on_chassis_cmd(self, msg):
         """速度与转角来自同一控制周期，保证仿真车辆执行一致的运动学组合。"""
         self.last_cmd_time = self.get_clock().now()
+        if msg.steer_mode > 1:
+            if self.steer_mode != msg.steer_mode:
+                self.get_logger().warn(
+                    "仿真仅支持 steer_mode 0/1，收到 %d，车辆停车"
+                    % msg.steer_mode)
+            self.steer_mode = msg.steer_mode
+            self.v_cmd = 0.0
+            self.delta_cmd = 0.0
+            return
+        if self.steer_mode != msg.steer_mode:
+            self.steer_mode = msg.steer_mode
+            self.get_logger().info(
+                "转向模式切换为 %d（等效轴距 %.3fm）"
+                % (self.steer_mode, self.effective_wheelbase()))
         self.v_cmd = max(0.0, min(msg.speed_m_s, self.max_speed))
         raw = msg.steer_angle_rad
         clamped = max(-self.max_plant_steer, min(self.max_plant_steer, raw))
@@ -173,6 +191,10 @@ class SimVehicleNode(Node):
                     % (math.degrees(raw), math.degrees(self.max_plant_steer),
                        self.steer_clamped_count))
         self.delta_cmd = clamped
+
+    def effective_wheelbase(self):
+        """返回当前模式对应的等效轴距。"""
+        return self.wheelbase * (0.5 if self.steer_mode == 1 else 1.0)
 
     def on_unmanned(self, msg):
         if msg.data != self.unmanned:
@@ -220,14 +242,17 @@ class SimVehicleNode(Node):
             self.v_cmd = 0.0
             self.delta_cmd = 0.0
 
-        # 单阿克曼自行车模型积分（与 path_tracker 的离散模型同源）
+        # 输入为前轴中心等效角；根据当前模式选择运动学增益。
         self.v = self.v_cmd
         if self.v > 1e-6:
             self.x += self.v * math.cos(self.yaw) * self.dt
             self.y += self.v * math.sin(self.yaw) * self.dt
             # tan(delta) 在 delta 接近 ±90° 时发散，已由 max_plant_steer 夹住
             self.yaw = wrap_angle(
-                self.yaw + (self.v / self.wheelbase) * math.tan(self.delta_cmd) * self.dt)
+                self.yaw
+                + (self.v / self.effective_wheelbase())
+                * math.tan(self.delta_cmd)
+                * self.dt)
 
         self.publish_pose()
         self.publish_tf()

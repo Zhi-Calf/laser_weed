@@ -1,4 +1,4 @@
-// Copyright 2026. 点云避停节点入口。
+// 版权所有 2026。点云避停节点入口。
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
 

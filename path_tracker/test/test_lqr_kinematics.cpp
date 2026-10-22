@@ -1,8 +1,7 @@
-// Copyright 2026. Unit tests for the four-wheel-steering LQR.
+// 版权所有 2026。四轮转向 LQR 单元测试。
 //
-// These tests are the safety net for the port: they pin down the derivation
-// claims made in the README, in particular that the feedforward steering angle
-// equals L*kappa (not v*kappa as in MegaTrak's differential-drive model).
+// 这些测试用于约束移植后的运动学推导，
+// 重点验证前馈使用 atan(L*kappa)，而不是履带差速模型的 v*kappa。
 #include "path_tracker/lqr.hpp"
 
 #include <gtest/gtest.h>
@@ -11,26 +10,30 @@
 #include <vector>
 
 using path_tracker::LQR;
+using path_tracker::LQROutput;
 using path_tracker::RobotState;
 using path_tracker::TrajectoryPoint;
 
 namespace
 {
 
-/// Build a controller with the documented defaults.
+/// 使用文档中的默认参数构建控制器。
 LQR makeController(double wheelbase = 1.2)
 {
   LQR lqr;
   lqr.configure(
-    /*dt*/ 0.1, /*eps*/ 1e-6, /*max_iter*/ 1000,
-    /*q_lat*/ 50.0, /*q_head*/ 25.0, /*r_steer*/ 25.0,
-    wheelbase, /*max_steer_rad*/ 90.0 * M_PI / 180.0, /*max_speed*/ 1.4,
-    /*min_speed_factor*/ 0.3, /*heading_deadband*/ 0.1, /*heading_max*/ 1.0,
-    /*target_v*/ 0.5, /*min_vel*/ 0.1);
+    /* 时间步长 */ 0.1, /* 收敛阈值 */ 1e-6, /* 最大迭代次数 */ 1000,
+    /* 横向误差权重 */ 50.0, /* 航向误差权重 */ 25.0,
+    /* 转角代价 */ 25.0,
+    wheelbase, /* 最大转角 */ 90.0 * M_PI / 180.0,
+    /* 最大速度 */ 1.4,
+    /* 最低速度比例 */ 0.3, /* 航向死区 */ 0.1,
+    /* 航向误差上限 */ 1.0,
+    /* 目标速度 */ 0.5, /* 最低速度 */ 0.1);
   return lqr;
 }
 
-/// A straight line along +x with the given length and spacing.
+/// 生成沿 +x 方向、指定长度和点间距的直线路径。
 std::vector<TrajectoryPoint> straightLine(double length = 20.0, double step = 0.1)
 {
   std::vector<TrajectoryPoint> pts;
@@ -49,20 +52,17 @@ std::vector<TrajectoryPoint> straightLine(double length = 20.0, double step = 0.
   return pts;
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 // ---------------------------------------------------------------------------
-// Feedforward: the core difference from the differential-drive model.
+// 前馈：与差速驱动模型的核心差异。
 // ---------------------------------------------------------------------------
 
-// On a curve of constant curvature kappa, holding the curve requires a steady
-// steering angle of L*kappa. The feedforward term must produce exactly that,
-// independent of speed. This is the single most important port-specific claim:
-// MegaTrak used omega_ff = v*kappa because its input was an angular rate.
-TEST(LqrFeedforward, OnConstantCurvatureFeedforwardIsWheelbaseTimesKappa)
+// 定曲率稳态前馈必须使用 atan(L*kappa)，不能在大转角时继续用 L*kappa。
+TEST(LqrFeedforward, OnConstantCurvatureUsesExactAckermannFeedforward)
 {
   const double wheelbase = 1.2;
-  const double kappa = 0.1;  // 10 m radius turn
+  const double kappa = 0.1;  // 半径 10 米的弯道
 
   LQR lqr = makeController(wheelbase);
   auto pts = straightLine();
@@ -71,8 +71,7 @@ TEST(LqrFeedforward, OnConstantCurvatureFeedforwardIsWheelbaseTimesKappa)
   }
   lqr.setTrajectory(pts);
 
-  // Place the robot exactly on the path with zero error, so the feedback term
-  // vanishes and only the feedforward remains.
+  // 将车辆精确放在路径上并使误差为零，使反馈项消失，只保留前馈项。
   RobotState state;
   state.x = 0.0;
   state.y = 0.0;
@@ -81,14 +80,16 @@ TEST(LqrFeedforward, OnConstantCurvatureFeedforwardIsWheelbaseTimesKappa)
   lqr.setRobotState(state);
 
   const auto out = lqr.getControlOutput();
-  EXPECT_NEAR(out.steer_ff, wheelbase * kappa, 1e-9);
-  // Feedback should be ~0 when the robot sits exactly on the path.
+  EXPECT_NEAR(out.steer_ff, std::atan(wheelbase * kappa), 1e-9);
+  // 车辆精确位于路径上时，反馈转角应接近 0。
   EXPECT_NEAR(out.steer_fb, 0.0, 1e-6);
-  EXPECT_NEAR(out.vel_cmd.steer_angle, wheelbase * kappa, 1e-6);
+  EXPECT_NEAR(
+    out.vel_cmd.steer_angle,
+    std::atan(wheelbase * kappa), 1e-6);
 }
 
-// The feedforward must not scale with speed. If someone reverts to the
-// differential-drive formula v*kappa, this test fails at any v != L.
+// 前馈不得随速度变化。如果误改回差速驱动公式 v*kappa，
+// 只要 v 不等于 L，本测试就会失败。
 TEST(LqrFeedforward, FeedforwardIsSpeedIndependent)
 {
   const double wheelbase = 1.2;
@@ -118,13 +119,75 @@ TEST(LqrFeedforward, FeedforwardIsSpeedIndependent)
   EXPECT_NEAR(feedforwards[1], feedforwards[2], 1e-9);
 }
 
+// 运行时切换等效轴距后，前馈必须立即按新模式重新计算。
+TEST(LqrFeedforward, RuntimeWheelbaseUpdateChangesFeedforward)
+{
+  constexpr double kPhysicalWheelbase = 1.2;
+  constexpr double kKappa = 0.8;
+
+  LQR lqr = makeController(kPhysicalWheelbase);
+  auto pts = straightLine();
+  for (auto & p : pts) {
+    p.kappa = kKappa;
+  }
+  lqr.setTrajectory(pts);
+
+  RobotState state;
+  state.linear_v = 0.3;
+  lqr.setRobotState(state);
+
+  lqr.SetWheelbase(kPhysicalWheelbase);
+  const double single_feedforward = lqr.getControlOutput().steer_ff;
+  lqr.SetWheelbase(kPhysicalWheelbase * 0.5);
+  const double symmetric_feedforward = lqr.getControlOutput().steer_ff;
+
+  EXPECT_NEAR(
+    single_feedforward, std::atan(kPhysicalWheelbase * kKappa), 1e-9);
+  EXPECT_NEAR(
+    symmetric_feedforward,
+    std::atan(kPhysicalWheelbase * 0.5 * kKappa), 1e-9);
+  EXPECT_LT(
+    std::fabs(symmetric_feedforward),
+    std::fabs(single_feedforward));
+}
+
+// WORK/TURN 分段速度必须在前方预览区和后方保持区生效。
+TEST(LqrSpeedProfile, TurnZoneUsesFixedLowSpeed)
+{
+  constexpr double kStep = 0.1;
+  LQR lqr = makeController(1.2);
+  lqr.SetSpeedShapingEnabled(false);
+  lqr.SetSegmentSpeedProfile(0.6, 0.3, 1.0, 0.5, true);
+
+  auto pts = straightLine(20.0, kStep);
+  for (size_t i = 0; i < pts.size(); ++i) {
+    const bool is_turn = (i >= 50 && i <= 60);
+    pts[i].waypoint_type = is_turn ? 1 : 0;
+    pts[i].v = is_turn ? 0.3 : 0.6;
+  }
+  lqr.setTrajectory(pts);
+
+  RobotState state;
+  state.linear_v = 0.6;
+  lqr.setRobotState(state);
+  EXPECT_NEAR(lqr.getControlOutput().vel_cmd.linear_v, 0.6, 1e-9);
+
+  lqr.advanceGoal(4.5);
+  EXPECT_NEAR(lqr.getControlOutput().vel_cmd.linear_v, 0.3, 1e-9);
+
+  lqr.advanceGoal(2.0);
+  EXPECT_NEAR(lqr.getControlOutput().vel_cmd.linear_v, 0.3, 1e-9);
+
+  lqr.advanceGoal(1.0);
+  EXPECT_NEAR(lqr.getControlOutput().vel_cmd.linear_v, 0.6, 1e-9);
+}
+
 // ---------------------------------------------------------------------------
-// Feedback: sign convention and convergence.
+// 反馈：符号约定与收敛性。
 // ---------------------------------------------------------------------------
 
-// A robot offset to the LEFT of the path (positive y, path heading +x) must be
-// steered RIGHT, i.e. a negative steering angle under the protocol's
-// left-positive convention.
+// 车辆位于路径左侧（y 为正、路径航向为 +x）时必须向右修正，
+// 即按照协议左正右负的约定输出负转角。
 TEST(LqrFeedback, LeftLateralErrorCommandsRightSteer)
 {
   LQR lqr = makeController(1.2);
@@ -132,7 +195,7 @@ TEST(LqrFeedback, LeftLateralErrorCommandsRightSteer)
 
   RobotState state;
   state.x = 0.0;
-  state.y = 0.5;   // 0.5 m to the left of the path
+  state.y = 0.5;   // 位于路径左侧 0.5 米
   state.heading = 0.0;
   state.linear_v = 0.5;
   lqr.setRobotState(state);
@@ -142,7 +205,7 @@ TEST(LqrFeedback, LeftLateralErrorCommandsRightSteer)
   EXPECT_LT(out.vel_cmd.steer_angle, 0.0) << "must steer right to return to the path";
 }
 
-// Mirror case: offset to the right must steer left.
+// 对称情形：位于路径右侧时必须向左修正。
 TEST(LqrFeedback, RightLateralErrorCommandsLeftSteer)
 {
   LQR lqr = makeController(1.2);
@@ -160,8 +223,8 @@ TEST(LqrFeedback, RightLateralErrorCommandsLeftSteer)
   EXPECT_GT(out.vel_cmd.steer_angle, 0.0);
 }
 
-// On a straight path with zero initial error, the controller must command no
-// steering at all - a nonzero value here would mean the model is biased.
+// 直线路径且初始误差为零时，控制器不得输出转角；
+// 非零输出说明模型存在偏置。
 TEST(LqrFeedback, StraightPathNoErrorCommandsZeroSteer)
 {
   LQR lqr = makeController(1.2);
@@ -175,9 +238,8 @@ TEST(LqrFeedback, StraightPathNoErrorCommandsZeroSteer)
   EXPECT_NEAR(out.vel_cmd.steer_angle, 0.0, 1e-9);
 }
 
-// Closed-loop convergence: simulate the bicycle model forward and check the
-// lateral error shrinks. This catches sign errors that a single-tick test would
-// miss (a wrong sign looks plausible for one tick but diverges over time).
+// 闭环收敛：向前积分自行车模型并检查横向误差是否减小。
+// 单周期测试可能看不出符号错误，但错误符号会随时间发散，可通过本测试发现。
 TEST(LqrConvergence, LateralErrorShrinksOverTime)
 {
   const double wheelbase = 1.2;
@@ -185,7 +247,7 @@ TEST(LqrConvergence, LateralErrorShrinksOverTime)
   LQR lqr = makeController(wheelbase);
   lqr.setTrajectory(straightLine(/*length*/ 30.0, /*step*/ 0.1));
 
-  double x = 0.0, y = 0.8, heading = 0.0;  // start 0.8 m left of the path
+  double x = 0.0, y = 0.8, heading = 0.0;  // 初始位于路径左侧 0.8 米
   double v = 0.5;
 
   const double initial_err = std::fabs(y);
@@ -199,14 +261,14 @@ TEST(LqrConvergence, LateralErrorShrinksOverTime)
     state.linear_v = v;
     lqr.setRobotState(state);
 
-    // Goal advancement must be driven by real motion, as in the node.
+    // 与节点一致，目标点必须由实际运动推进。
     lqr.advanceGoal(v * dt);
 
     const auto out = lqr.getControlOutput();
     const double delta = out.vel_cmd.steer_angle;
     v = out.vel_cmd.linear_v;
 
-    // Kinematic bicycle integration.
+    // 积分运动学自行车模型。
     x += v * std::cos(heading) * dt;
     y += v * std::sin(heading) * dt;
     heading += (v / wheelbase) * std::tan(delta) * dt;
@@ -219,12 +281,80 @@ TEST(LqrConvergence, LateralErrorShrinksOverTime)
   EXPECT_LT(last_err, 0.05) << "should settle within 5 cm of the path";
 }
 
+// 对称阿克曼在定曲率圆弧上必须能由前馈保持，而不是只在直线上收敛。
+TEST(LqrConvergence, SymmetricAckermannTracksCircularArc)
+{
+  constexpr double kDt = 0.1;
+  constexpr double kRadius = 2.0;
+  constexpr double kKappa = 1.0 / kRadius;
+  constexpr double kPhysicalWheelbase = 1.2;
+  constexpr double kEffectiveWheelbase = kPhysicalWheelbase * 0.5;
+  constexpr double kArcStep = 0.05;
+
+  std::vector<TrajectoryPoint> arc;
+  double arc_length = 0.0;
+  const double sweep = M_PI / 2.0;
+  const int samples =
+    static_cast<int>(std::ceil(kRadius * sweep / kArcStep));
+  for (int i = 0; i <= samples; ++i) {
+    const double theta =
+      -M_PI / 2.0 + sweep * static_cast<double>(i) /
+      static_cast<double>(samples);
+    TrajectoryPoint point;
+    point.x = kRadius * std::cos(theta);
+    point.y = kRadius + kRadius * std::sin(theta);
+    point.heading = theta + M_PI / 2.0;
+    point.kappa = kKappa;
+    point.s = arc_length;
+    point.v = 0.3;
+    point.waypoint_type = 1;
+    arc.push_back(point);
+    arc_length += kRadius * sweep / static_cast<double>(samples);
+  }
+
+  LQR lqr = makeController(kPhysicalWheelbase);
+  lqr.SetWheelbase(kEffectiveWheelbase);
+  lqr.SetSpeedShapingEnabled(false);
+  lqr.SetSegmentSpeedProfile(0.6, 0.3, 1.0, 0.5, true);
+  lqr.setTrajectory(arc);
+
+  double x = 0.0;
+  double y = 0.0;
+  double heading = 0.0;
+  double max_radial_error = 0.0;
+  for (int i = 0; i < 100; ++i) {
+    RobotState state;
+    state.x = x;
+    state.y = y;
+    state.heading = heading;
+    state.linear_v = 0.3;
+    lqr.setRobotState(state);
+    if (i > 0) {
+      ASSERT_TRUE(lqr.advanceGoal(0.3 * kDt));
+    }
+
+    const LQROutput output = lqr.getControlOutput();
+    const double speed = output.vel_cmd.linear_v;
+    const double delta = output.vel_cmd.steer_angle;
+    x += speed * std::cos(heading) * kDt;
+    y += speed * std::sin(heading) * kDt;
+    heading +=
+      (speed / kEffectiveWheelbase) * std::tan(delta) * kDt;
+
+    const double radial_error =
+      std::fabs(std::hypot(x, y - kRadius) - kRadius);
+    max_radial_error = std::max(max_radial_error, radial_error);
+  }
+
+  EXPECT_LT(max_radial_error, 0.05)
+    << "symmetric Ackermann feedforward should hold a 2 m arc";
+}
+
 // ---------------------------------------------------------------------------
-// Limits and guards.
+// 限幅和保护条件。
 // ---------------------------------------------------------------------------
 
-// The steering command must never exceed the protocol limit of +/-90 deg, even
-// for an absurd initial error.
+// 即使初始误差极大，转角指令也不得超过协议规定的 ±90 度。
 TEST(LqrLimits, SteeringIsClampedToProtocolLimit)
 {
   const double max_steer = 90.0 * M_PI / 180.0;
@@ -233,7 +363,7 @@ TEST(LqrLimits, SteeringIsClampedToProtocolLimit)
 
   RobotState state;
   state.x = 0.0;
-  state.y = 50.0;   // absurd 50 m offset
+  state.y = 50.0;   // 极端横向偏差 50 米
   state.heading = 2.0;
   state.linear_v = 0.5;
   lqr.setRobotState(state);
@@ -242,7 +372,7 @@ TEST(LqrLimits, SteeringIsClampedToProtocolLimit)
   EXPECT_LE(std::fabs(out.vel_cmd.steer_angle), max_steer + 1e-9);
 }
 
-// Speed must stay within the protocol ceiling of 1.4 m/s and above the floor.
+// 速度必须保持在协议上限 1.4 米/秒和最低速度之间。
 TEST(LqrLimits, SpeedStaysWithinProtocolRange)
 {
   LQR lqr = makeController(1.2);
@@ -257,13 +387,13 @@ TEST(LqrLimits, SpeedStaysWithinProtocolRange)
   EXPECT_LE(out.vel_cmd.linear_v, 1.4 + 1e-9);
 }
 
-// A huge curvature must trigger the look-ahead slowdown, not full speed.
+// 大曲率必须触发前瞻降速，而不能保持全速。
 TEST(LqrLimits, HighCurvatureTriggersSlowdown)
 {
   LQR lqr = makeController(1.2);
   auto pts = straightLine();
   for (auto & p : pts) {
-    p.kappa = 1.0;   // 1 m radius: far above the 0.2 threshold
+    p.kappa = 1.0;   // 半径 1 米，远高于 0.2 的曲率阈值
   }
   lqr.setTrajectory(pts);
 
@@ -275,7 +405,7 @@ TEST(LqrLimits, HighCurvatureTriggersSlowdown)
   EXPECT_LT(out.vel_cmd.linear_v, 0.5) << "tight curvature must slow the robot";
 }
 
-// Degenerate trajectories must command a stop rather than crash or emit NaN.
+// 退化轨迹必须输出停车，而不是崩溃或输出 NaN。
 TEST(LqrGuards, EmptyTrajectoryCommandsStop)
 {
   LQR lqr = makeController(1.2);
@@ -290,7 +420,7 @@ TEST(LqrGuards, EmptyTrajectoryCommandsStop)
   EXPECT_DOUBLE_EQ(out.vel_cmd.steer_angle, 0.0);
 }
 
-// A single point cannot define a heading; must stop, not divide by zero.
+// 单点无法定义航向，必须停车，不能发生除零。
 TEST(LqrGuards, SinglePointTrajectoryCommandsStop)
 {
   LQR lqr = makeController(1.2);
@@ -306,12 +436,12 @@ TEST(LqrGuards, SinglePointTrajectoryCommandsStop)
   EXPECT_DOUBLE_EQ(out.vel_cmd.steer_angle, 0.0);
 }
 
-// A zero wheelbase would divide by zero in B_d. configure() must reject it.
+// 零轴距会使 B_d 除零，configure() 必须拒绝该配置。
 TEST(LqrGuards, NonPositiveWheelbaseIsRejected)
 {
   LQR lqr;
   lqr.configure(0.1, 1e-6, 1000, 50.0, 25.0, 25.0,
-    /*wheelbase*/ 0.0, 1.5708, 1.4, 0.3, 0.1, 1.0, 0.5, 0.1);
+    /* 轴距 */ 0.0, 1.5708, 1.4, 0.3, 0.1, 1.0, 0.5, 0.1);
   lqr.setTrajectory(straightLine());
 
   RobotState state;
@@ -324,13 +454,13 @@ TEST(LqrGuards, NonPositiveWheelbaseIsRejected)
   EXPECT_TRUE(std::isfinite(out.vel_cmd.linear_v));
 }
 
-// Goal advancement must never run off the end of the trajectory.
+// 目标推进不得越过轨迹末端。
 TEST(LqrGuards, AdvanceGoalStopsAtEnd)
 {
   LQR lqr = makeController(1.2);
   lqr.setTrajectory(straightLine(/*length*/ 5.0, /*step*/ 0.1));
 
-  // Ask to advance far past the end repeatedly.
+  // 反复请求远超终点的推进距离。
   for (int i = 0; i < 100; ++i) {
     lqr.advanceGoal(1.0);
   }
@@ -345,25 +475,39 @@ TEST(LqrGuards, AdvanceGoalStopsAtEnd)
   EXPECT_FALSE(lqr.advanceGoal(1.0)) << "should report the path is exhausted";
 }
 
-// Negative travelled distance must not rewind the goal (a bad odometry frame
-// would otherwise make the controller chase a stale point).
+// 单拍位移小于路径点间距时，残余弧长必须累计，不能永久卡在第一个点。
+TEST(LqrGuards, SmallTravelAccumulatesAcrossTicks)
+{
+  LQR lqr = makeController(1.2);
+  lqr.setTrajectory(straightLine(/*length*/ 2.0, /*step*/ 0.1));
+
+  lqr.advanceGoal(0.03);
+  EXPECT_EQ(lqr.CurrentIndex(), 0u);
+  lqr.advanceGoal(0.03);
+  EXPECT_EQ(lqr.CurrentIndex(), 0u);
+  lqr.advanceGoal(0.03);
+  EXPECT_EQ(lqr.CurrentIndex(), 0u);
+  lqr.advanceGoal(0.03);
+  EXPECT_EQ(lqr.CurrentIndex(), 1u);
+}
+
+// 负行驶距离不得回退目标点，否则错误的里程计帧会让控制器追逐旧目标。
 TEST(LqrGuards, NegativeTravelDoesNotRewindGoal)
 {
   LQR lqr = makeController(1.2);
   lqr.setTrajectory(straightLine(/*length*/ 20.0, /*step*/ 0.1));
 
   RobotState state;
-  state.x = 2.0;   // robot sits at the advanced goal so the feedback term is ~0
+  state.x = 2.0;   // 车辆位于推进后的目标点，使反馈项接近 0
   state.linear_v = 0.5;
   lqr.setRobotState(state);
 
-  // Advance the goal 2 m forward.
+  // 将目标点向前推进 2 米。
   lqr.advanceGoal(2.0);
   const double x_after_advance = lqr.getControlOutput().target_pt.x;
   EXPECT_GT(x_after_advance, 1.5) << "goal should have advanced ~2 m along +x";
 
-  // A negative travel (e.g. from a bad odometry jump) must be clamped to zero,
-  // leaving the goal where it was rather than rewinding it.
+  // 负位移（例如里程计异常跳变）必须截断为零，保持目标点位置不变。
   lqr.advanceGoal(-5.0);
   const double x_after_negative = lqr.getControlOutput().target_pt.x;
   EXPECT_DOUBLE_EQ(x_after_negative, x_after_advance)
@@ -371,29 +515,28 @@ TEST(LqrGuards, NegativeTravelDoesNotRewindGoal)
 }
 
 // ---------------------------------------------------------------------------
-// Along-track blind spot. REGRESSION TEST for the 2026-10-15 simulation finding.
+// 沿路径方向盲区。针对 2026-10-15 仿真问题的回归测试。
 //
-// Observed: the tracked goal stayed pinned at the path start while the robot ran
-// 238 m downrange. steer_angle_rad came out as 2.4e-14 and NO error was reported,
-// because the LQR state [e_lateral, e_heading] contains no along-track term:
-// a robot that runs straight along the path's own direction has both errors
-// exactly zero. The vehicle left the field while every metric read "nominal".
+// 当时目标点固定在路径起点，车辆向前行驶了 238 米。
+// steer_angle_rad 仅为 2.4e-14，且没有任何误差告警，
+// 因为 LQR 状态 [e_lateral, e_heading] 不含沿路径方向误差：
+// 车辆沿路径自身方向直行时，两项误差都恰为零，所有指标仍显示正常。
 //
-// These tests pin down (a) that the blind spot really exists, so nobody later
-// assumes e_lat/e_head are sufficient, and (b) that distToGoal() exposes it.
+// 这些测试用于确认盲区确实存在，防止后续误认为 e_lat/e_head 已经足够，
+// 同时验证 distToGoal() 能暴露该问题。
 // ---------------------------------------------------------------------------
 
-// The blind spot, stated explicitly: a robot 200 m past the goal along a
-// straight path reports ZERO lateral and ZERO heading error.
+// 显式验证盲区：车辆沿直线路径冲过目标点 200 米后，
+// 横向误差和航向误差仍然都为零。
 TEST(LqrAlongTrackBlindSpot, RunningPastGoalReportsZeroError)
 {
   LQR lqr = makeController(1.2);
   lqr.setTrajectory(straightLine(/*length*/ 20.0, /*step*/ 0.1));
 
-  // Do not advance the goal: this mimics the frozen-goal failure.
+  // 不推进目标点，模拟目标冻结失效。
   RobotState state;
-  state.x = 200.0;   // 200 m downrange of the goal at x=0
-  state.y = 0.0;     // exactly on the path line
+  state.x = 200.0;   // 位于 x=0 目标点前方 200 米
+  state.y = 0.0;     // 精确位于路径线上
   state.heading = 0.0;
   state.linear_v = 0.5;
   lqr.setRobotState(state);
@@ -408,12 +551,12 @@ TEST(LqrAlongTrackBlindSpot, RunningPastGoalReportsZeroError)
   EXPECT_GT(out.vel_cmd.linear_v, 0.0)
     << "and it still commands forward speed - the robot keeps leaving the field";
 
-  // The ONLY signal that anything is wrong is the raw distance to the goal.
+  // 能够发现异常的唯一信号是车辆到目标点的原始距离。
   EXPECT_GT(lqr.distToGoal(), 199.0);
 }
 
-// distToGoal() must track the real robot-to-goal distance, including after the
-// goal advances, since the node's safety gate reads it every tick.
+// distToGoal() 必须反映真实的车辆到目标点距离，并在目标推进后继续更新，
+// 因为节点每个控制周期都会使用该值执行安全门控。
 TEST(LqrAlongTrackBlindSpot, DistToGoalTracksRobotAndGoal)
 {
   LQR lqr = makeController(1.2);
@@ -426,46 +569,43 @@ TEST(LqrAlongTrackBlindSpot, DistToGoalTracksRobotAndGoal)
   lqr.setRobotState(state);
   EXPECT_NEAR(lqr.distToGoal(), 0.0, 1e-9) << "robot is on the goal";
 
-  // Move the robot 5 m off in y: distance must be the Euclidean gap.
+  // 将车辆沿 y 方向偏移 5 米，距离应为欧氏距离。
   state.y = 5.0;
   lqr.setRobotState(state);
   EXPECT_NEAR(lqr.distToGoal(), 5.0, 1e-9);
 
-  // Advance the goal 10 m along +x; the gap is now sqrt(10^2 + 5^2).
+  // 将目标沿 +x 推进 10 米，此时距离应为 sqrt(10^2 + 5^2)。
   lqr.advanceGoal(10.0);
   EXPECT_NEAR(lqr.distToGoal(), std::hypot(10.0, 5.0), 1e-6);
 }
 
 // ---------------------------------------------------------------------------
-// Forward snapping: re-anchors the goal to the nearest path point so it cannot
-// drift away from the robot on odometry slip alone.
+// 前向吸附：将目标重新锚定到最近的路径点，避免仅由里程计打滑导致目标漂移。
 // ---------------------------------------------------------------------------
 
-// With snapping enabled, a robot that has drifted ahead of the arc-length goal
-// must pull the goal forward to the nearest point.
+// 开启吸附后，已偏离到弧长目标前方的车辆应将目标点前拉至最近路径点。
 TEST(LqrSnap, GoalSnapsForwardToNearestPoint)
 {
   LQR lqr = makeController(1.2);
   lqr.setTrajectory(straightLine(/*length*/ 50.0, /*step*/ 0.1));
-  lqr.setSnapWindow(100);   // 100 points = 10 m of path at 0.1 m spacing
+  lqr.setSnapWindow(100);   // 100 个点，按 0.1 米间距等于 10 米路径
 
-  // Robot sits at x=8, but reports zero travel (odometry slipped / frozen).
+  // 车辆位于 x=8，但行驶距离为零，模拟里程计打滑或冻结。
   RobotState state;
   state.x = 8.0;
   state.y = 0.0;
   state.linear_v = 0.5;
   lqr.setRobotState(state);
 
-  lqr.advanceGoal(0.0);   // no arc-length advance at all
+  lqr.advanceGoal(0.0);   // 不进行弧长推进
   const auto out = lqr.getControlOutput();
   EXPECT_NEAR(out.target_pt.x, 8.0, 0.1)
     << "snapping must re-anchor the goal to the robot's position";
   EXPECT_LT(lqr.distToGoal(), 0.2);
 }
 
-// Snapping must never move the goal backwards: the search starts at the current
-// index, so a robot falling behind cannot drag the goal to an earlier row of a
-// boustrophedon field (which would re-run already-covered ground).
+// 吸附不得向后移动目标点。搜索从当前索引开始，
+// 因此落后的车辆不能把目标拉回弓字形田块的上一行，避免重复作业。
 TEST(LqrSnap, GoalNeverSnapsBackward)
 {
   LQR lqr = makeController(1.2);
@@ -478,7 +618,7 @@ TEST(LqrSnap, GoalNeverSnapsBackward)
   state.linear_v = 0.5;
   lqr.setRobotState(state);
 
-  // Advance the goal to x=30, then teleport the robot back to x=5.
+  // 将目标推进到 x=30，然后把车辆瞬移回 x=5。
   lqr.advanceGoal(30.0);
   const double x_advanced = lqr.getControlOutput().target_pt.x;
   EXPECT_GT(x_advanced, 29.0);
@@ -491,13 +631,13 @@ TEST(LqrSnap, GoalNeverSnapsBackward)
     << "goal index is monotonic; snapping must not rewind it";
 }
 
-// A zero snap window must disable snapping and fall back to pure arc-length
-// accumulation, so the existing advancement tests stay valid.
+// 吸附窗口为零时必须关闭吸附，退回到纯弧长累计，
+// 使原有目标推进测试仍然有效。
 TEST(LqrSnap, ZeroWindowDisablesSnapping)
 {
   LQR lqr = makeController(1.2);
   lqr.setTrajectory(straightLine(/*length*/ 50.0, /*step*/ 0.1));
-  lqr.setSnapWindow(0);   // disabled (the class default)
+  lqr.setSnapWindow(0);   // 关闭吸附，这也是类默认值
 
   RobotState state;
   state.x = 8.0;

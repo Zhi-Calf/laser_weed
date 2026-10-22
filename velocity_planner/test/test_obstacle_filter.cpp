@@ -1,4 +1,4 @@
-// Copyright 2026. 点云 ROI 过滤与停车保持逻辑单元测试。
+// 版权所有 2026。点云 ROI 过滤与停车保持逻辑单元测试。
 #include "velocity_planner/obstacle_filter.hpp"
 
 #include <cmath>

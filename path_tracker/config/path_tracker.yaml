@@ -3,18 +3,25 @@ path_tracker:
     # ============================================================
     # 除草机底盘物理参数（必须按实车改，不是默认值能用的）
     # ============================================================
-    # 等效轴距 (m)：前轮到后轮的距离。四轮转向底盘的等效轴距取决于转向模式，
-    # 见下方 steer_mode 说明。填错会直接导致横向跟踪振荡或收敛过慢。
+    # 真实前后轴距 (m)。控制器按转向模式自动选择 L 或 L/2 作为等效轴距。
+    # 填错会直接导致横向跟踪振荡或收敛过慢。
     wheelbase: 1.2
 
-    # 转向模式，对应 CAN 协议 ADCU_toVCU_01 的 SteerModeCmd：
-    #   0 = 单阿克曼（仅前轮转向）→ wheelbase 填真实前后轴距
-    #   1 = 双阿克曼（前后轮反向）  → wheelbase 填 L/2（转向增益翻倍）
+    # 无路径分段类型时使用的回退转向模式：
+    #   0 = 单阿克曼（仅前轮转向）→ 等效轴距 L
+    #   1 = 双阿克曼（前后轮反向）  → 等效轴距 L/2
     #   2 = 平移                    → 本控制器不适用，需另写控制律
     #   3 = 原地转向                  → 本控制器不适用，需另写控制律
-    # 除草机走全覆盖路径时建议用 0 或 1。模式 2/3 下阿克曼假设不成立，
-    # LQR 的 B 矩阵 v*dt/L 会失效。
     steer_mode: 0
+
+    # 根据 global_path_planner 的 waypoint_types 自动切换模式：
+    # WORK(0) 使用单阿克曼，TURN(1) 使用对称阿克曼。
+    enable_turn_steer_mode_switch: true
+    work_steer_mode: 0
+    turn_steer_mode: 1
+    # 进入掉头区前和离开掉头区后的模式保持距离（米）。
+    turn_mode_enter_m: 0.6
+    turn_mode_exit_m: 0.6
 
     # 协议上限，勿超：车速 0~1400 mm/s，转向角 ±90°
     max_speed_m_s: 1.4
@@ -44,8 +51,24 @@ path_tracker:
     lqr_Q_lateral: 50.0        # 横向误差权重
     lqr_Q_heading: 25.0        # 航向误差权重
     lqr_R_steer: 25.0          # 转向角控制代价
-    lqr_target_v: 0.5          # 目标线速度 (m/s)，建议从 0.3 起调
+    # 无有效 waypoint_types 或关闭分段速度时的回退目标速度。
+    lqr_target_v: 0.6
+
+    # 路径分段速度（米/秒）。
+    enable_segment_speed_profile: true
+    work_speed_m_s: 0.6
+    turn_speed_m_s: 0.3
+    # 提前进入低速区的距离和离开掉头区后的低速保持距离。
+    turn_speed_preview_m: 1.0
+    turn_speed_hold_m: 0.5
+    # 速度指令加速度限制（m/s²）。
+    speed_ramp_mps2: 0.5
+
     lqr_min_vel: 0.1           # 跟踪期间的全局速度下限 (m/s)
+
+    # 默认由 WORK/TURN 决定基础速度。设为 true 时额外启用原有
+    # 曲率/航向误差降速，实际速度可能低于 0.6 或 0.3。
+    lqr_enable_speed_shaping: false
 
     # 航向误差降速：大偏差时给转向留纠偏时间
     lqr_heading_deadband: 0.1  # 死区 (rad)，低于此值不降速

@@ -1,4 +1,4 @@
-// Copyright 2026. Unit tests for the path profile (heading / arc length / curvature).
+// 版权所有 2026。路径剖面（航向、弧长和曲率）单元测试。
 #include "path_tracker/path_profile.hpp"
 
 #include <gtest/gtest.h>
@@ -22,7 +22,7 @@ std::vector<std::pair<double, double>> makeXY(
   }
   return xy;
 }
-}  // namespace
+}  // 匿名命名空间
 
 TEST(PathProfile, RejectsFewerThanTwoPoints)
 {
@@ -55,7 +55,7 @@ TEST(PathProfile, StraightLineHasZeroCurvatureAndHeading)
 
 TEST(PathProfile, ArcLengthAccumulates)
 {
-  // Three segments of 1 m each -> total 3 m.
+  // 三段各 1 米，总弧长应为 3 米。
   const auto xy = makeXY({0.0, 1.0, 2.0, 3.0}, {0.0, 0.0, 0.0, 0.0});
   std::vector<TrajectoryPoint> out;
   ASSERT_TRUE(computePathProfile(xy, 0.5, &out));
@@ -68,8 +68,8 @@ TEST(PathProfile, ArcLengthAccumulates)
 
 TEST(PathProfile, LeftTurnHasPositiveCurvature)
 {
-  // +x then +y is a left (counter-clockwise) turn; the CAN protocol treats left
-  // as positive, so kappa must come out positive.
+  // 先沿 +x 再沿 +y 是左转（逆时针）。CAN 协议规定左转为正，
+  // 因此计算出的曲率必须为正。
   const auto xy = makeXY({0.0, 1.0, 1.0, 1.0}, {0.0, 0.0, 1.0, 2.0});
   std::vector<TrajectoryPoint> out;
   ASSERT_TRUE(computePathProfile(xy, 0.5, &out));
@@ -81,7 +81,7 @@ TEST(PathProfile, LeftTurnHasPositiveCurvature)
 
 TEST(PathProfile, RightTurnHasNegativeCurvature)
 {
-  // +x then -y is a right (clockwise) turn -> negative curvature.
+  // 先沿 +x 再沿 -y 是右转（顺时针），曲率应为负。
   const auto xy = makeXY({0.0, 1.0, 1.0, 1.0}, {0.0, 0.0, -1.0, -2.0});
   std::vector<TrajectoryPoint> out;
   ASSERT_TRUE(computePathProfile(xy, 0.5, &out));
@@ -91,8 +91,8 @@ TEST(PathProfile, RightTurnHasNegativeCurvature)
 
 TEST(PathProfile, EndpointsInheritInteriorCurvature)
 {
-  // Endpoints have no two-sided stencil; they must inherit the nearest interior
-  // value so the look-ahead does not see a fake zero-curvature at the path ends.
+  // 端点没有双侧差分模板，因此继承最近的内点值，
+  // 避免路径首尾被前瞻误判为零曲率。
   const auto xy = makeXY({0.0, 1.0, 1.0, 1.0}, {0.0, 0.0, 1.0, 2.0});
   std::vector<TrajectoryPoint> out;
   ASSERT_TRUE(computePathProfile(xy, 0.5, &out));
@@ -103,7 +103,7 @@ TEST(PathProfile, EndpointsInheritInteriorCurvature)
 
 TEST(PathProfile, DuplicatePointsDoNotProduceNaN)
 {
-  // Zero-length segments would divide by zero in the curvature formula.
+  // 零长度线段会使曲率公式除零。
   const auto xy = makeXY({0.0, 0.0, 1.0, 2.0}, {0.0, 0.0, 0.0, 0.0});
   std::vector<TrajectoryPoint> out;
   ASSERT_TRUE(computePathProfile(xy, 0.5, &out));
@@ -117,7 +117,7 @@ TEST(PathProfile, DuplicatePointsDoNotProduceNaN)
 
 TEST(PathProfile, ArcLengthIgnoresDuplicateSegments)
 {
-  // The duplicated point contributes zero length.
+  // 重复点贡献的弧长为零。
   const auto xy = makeXY({0.0, 0.0, 1.0, 2.0}, {0.0, 0.0, 0.0, 0.0});
   std::vector<TrajectoryPoint> out;
   ASSERT_TRUE(computePathProfile(xy, 0.5, &out));
@@ -126,9 +126,8 @@ TEST(PathProfile, ArcLengthIgnoresDuplicateSegments)
 
 TEST(PathProfile, QuarterCircleCurvatureApproximatesTrueValue)
 {
-  // A quarter circle of radius 2 m sampled at 30 deg steps. The finite-difference
-  // estimate is coarse, so allow a generous tolerance - the point of this test is
-  // the sign and the order of magnitude, not precision.
+  // 半径为 2 米、按 30 度间隔采样的四分之一圆。有限差分估计较粗，
+  // 因此允许较大容差。本测试关注符号和数量级，而不是精确数值。
   const double r = 2.0;
   std::vector<double> xs, ys;
   for (int i = 0; i <= 3; ++i) {
@@ -139,7 +138,7 @@ TEST(PathProfile, QuarterCircleCurvatureApproximatesTrueValue)
   std::vector<TrajectoryPoint> out;
   ASSERT_TRUE(computePathProfile(makeXY(xs, ys), 0.5, &out));
 
-  // True curvature is 1/r = 0.5, positive for a counter-clockwise arc.
+  // 真实曲率为 1/r = 0.5，逆时针圆弧的曲率为正。
   EXPECT_GT(out[1].kappa, 0.0);
   EXPECT_GT(out[1].kappa, 0.5 * 0.5) << "coarse sampling underestimates, allow 50%";
   EXPECT_LT(out[1].kappa, 0.5 * 2.0);

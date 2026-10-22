@@ -240,7 +240,7 @@ void GlobalPathPlannerNode::planGeometry() {
 
 // 100ms 定时器: 发布当前生效路径 (/global_path_planner/path) + RViz Markers。
 void GlobalPathPlannerNode::timerCallback() {
-  // path points for rviz
+  // 供 RViz 显示的路径点
   visualization_msgs::msg::Marker path_point;
   path_point.header.frame_id    = "odom";
   path_point.header.stamp       = get_clock()->now();
@@ -261,7 +261,7 @@ void GlobalPathPlannerNode::timerCallback() {
     path_point.points.emplace_back(p);
   }
 
-  // key points for rviz
+  // 供 RViz 显示的关键点
   visualization_msgs::msg::Marker key_points;
   key_points.header.frame_id    = "odom";
   key_points.header.stamp       = get_clock()->now();
@@ -282,7 +282,7 @@ void GlobalPathPlannerNode::timerCallback() {
     key_points.points.emplace_back(p);
   }
 
-  // boundary line (from YAML) for rviz
+  // 供 RViz 显示的 YAML 边界线
   const bool show_local_boundary = cell_.size() >= 3;
   visualization_msgs::msg::Marker boundary_points;
   boundary_points.header.frame_id    = "odom";

@@ -1,4 +1,4 @@
-// Copyright 2026. 点云前向矩形避停状态节点实现。
+// 版权所有 2026。点云前向矩形避停状态节点实现。
 #include "velocity_planner/velocity_planner_node.hpp"
 
 #include <spdlog/sinks/rotating_file_sink.h>

@@ -1,4 +1,4 @@
-// Copyright 2026. 点云避停门控的纯逻辑判定。
+// 版权所有 2026。点云避停门控的纯逻辑判定。
 #ifndef PATH_TRACKER__OBSTACLE_GATE_HPP_
 #define PATH_TRACKER__OBSTACLE_GATE_HPP_
 
@@ -21,6 +21,6 @@ ObstacleGateDecision EvaluateObstacleGate(
   bool sensor_valid,
   bool stop_required);
 
-}  // namespace path_tracker
+}  // 命名空间 path_tracker
 
 #endif  // PATH_TRACKER__OBSTACLE_GATE_HPP_

@@ -1,4 +1,4 @@
-// Copyright 2026. 点云避停门控的纯逻辑判定实现。
+// 版权所有 2026。点云避停门控的纯逻辑判定实现。
 #include "path_tracker/obstacle_gate.hpp"
 
 namespace path_tracker
@@ -29,4 +29,4 @@ ObstacleGateDecision EvaluateObstacleGate(
   return ObstacleGateDecision::kAllow;
 }
 
-}  // namespace path_tracker
+}  // 命名空间 path_tracker

@@ -1,4 +1,4 @@
-# Copyright 2026. Launch file for the four-wheel-steering LQR controller.
+# 版权所有 2026。四轮转向 LQR 控制器启动文件。
 import os
 
 from ament_index_python.packages import get_package_share_directory
@@ -27,9 +27,9 @@ def generate_launch_description():
             description='Use simulation clock (set true under Gazebo/bag replay)',
         ),
 
-        # The CAN bridge (weeder_base chassis_node) must be running for the
-        # commands to reach the vehicle. It is intentionally NOT started here:
-        # it owns the CAN interface and may be launched separately on the robot.
+        # 必须单独运行 CAN 桥（weeder_base chassis_node），控制指令才能到达车辆。
+        # 本启动文件故意不启动 CAN 桥，因为它独占 CAN 接口，
+        # 并且可能需要按实车部署方式单独启动。
         Node(
             package='path_tracker',
             executable='path_tracker_node',

@@ -1,4 +1,4 @@
-// Copyright 2026. 点云前向矩形避停状态节点。
+// 版权所有 2026。点云前向矩形避停状态节点。
 #ifndef VELOCITY_PLANNER__VELOCITY_PLANNER_NODE_HPP_
 #define VELOCITY_PLANNER__VELOCITY_PLANNER_NODE_HPP_
 

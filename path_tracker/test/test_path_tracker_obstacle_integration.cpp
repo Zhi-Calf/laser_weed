@@ -1,4 +1,4 @@
-// Copyright 2026. path_tracker 点云避停门控节点集成测试。
+// 版权所有 2026。path_tracker 点云避停与分段调度节点集成测试。
 #include "path_tracker/path_tracker_node.hpp"
 
 #include <chrono>
@@ -51,6 +51,19 @@ Path MakePath()
   return path;
 }
 
+Path MakeSegmentPath()
+{
+  Path path;
+  path.header.frame_id = "odom";
+  for (int index = 0; index <= 100; ++index) {
+    path.x.push_back(static_cast<double>(index) * 0.1);
+    path.y.push_back(0.0);
+    path.waypoint_types.push_back(
+      (index >= 20 && index <= 29) ? 1U : 0U);
+  }
+  return path;
+}
+
 WorkMode MakeUnmannedMode()
 {
   WorkMode mode;
@@ -92,7 +105,7 @@ void SpinFor(
   }
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 TEST(PathTrackerObstacleIntegration, GatesChassisCommandFromStatus)
 {
@@ -164,6 +177,90 @@ TEST(PathTrackerObstacleIntegration, GatesChassisCommandFromStatus)
   ASSERT_TRUE(has_command);
   EXPECT_TRUE(last_command.estop);
   EXPECT_DOUBLE_EQ(last_command.speed_m_s, 0.0);
+
+  executor.remove_node(tracker);
+  executor.remove_node(tester);
+}
+
+TEST(PathTrackerSegmentIntegration, SwitchesSpeedAndSteerModeByPathType)
+{
+  rclcpp::NodeOptions tracker_options;
+  tracker_options.parameter_overrides({
+    rclcpp::Parameter("control_hz", 20.0),
+    rclcpp::Parameter("require_velocity_planner", false),
+    rclcpp::Parameter("require_unmanned", false),
+    rclcpp::Parameter("viz", false),
+    rclcpp::Parameter("wheelbase", 1.2),
+    rclcpp::Parameter("work_speed_m_s", 0.6),
+    rclcpp::Parameter("turn_speed_m_s", 0.3),
+    rclcpp::Parameter("turn_speed_preview_m", 1.0),
+    rclcpp::Parameter("turn_speed_hold_m", 0.5),
+    rclcpp::Parameter("speed_ramp_mps2", 10.0),
+    rclcpp::Parameter("turn_mode_enter_m", 0.6),
+    rclcpp::Parameter("turn_mode_exit_m", 0.6),
+    rclcpp::Parameter("work_steer_mode", 0),
+    rclcpp::Parameter("turn_steer_mode", 1),
+  });
+
+  auto tester = std::make_shared<rclcpp::Node>("path_tracker_segment_test");
+  auto tracker = std::make_shared<path_tracker::PathTrackerNode>(
+    tracker_options);
+
+  ChassisCmd last_command;
+  bool has_command = false;
+  auto command_subscription = tester->create_subscription<ChassisCmd>(
+    "/chassis/cmd", 10,
+    [&last_command, &has_command](const ChassisCmd::SharedPtr msg) {
+      last_command = *msg;
+      has_command = true;
+    });
+
+  TestPublishers publishers;
+  publishers.pose =
+    tester->create_publisher<Pose>(
+    "/gnss_driver/pose", rclcpp::SensorDataQoS());
+  const auto latched_qos =
+    rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
+  publishers.path = tester->create_publisher<Path>(
+    "/global_path_planner/path", latched_qos);
+  publishers.mode = tester->create_publisher<WorkMode>(
+    "/work_mode", latched_qos);
+  publishers.obstacle = tester->create_publisher<ObstacleStatus>(
+    "/velocity_planner/status",
+    rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+
+  auto pose = MakePose();
+  pose.x = 0.8;
+  const auto path = MakeSegmentPath();
+  const auto mode = MakeUnmannedMode();
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(tester);
+  executor.add_node(tracker);
+
+  SpinFor(
+    executor, publishers, pose, path, mode, nullptr, 0.4);
+  ASSERT_TRUE(has_command);
+  EXPECT_EQ(last_command.steer_mode, 0U);
+  EXPECT_NEAR(last_command.speed_m_s, 0.6, 1e-6);
+
+  pose.x = 1.5;
+  SpinFor(
+    executor, publishers, pose, path, mode, nullptr, 0.4);
+  EXPECT_EQ(last_command.steer_mode, 1U);
+  EXPECT_NEAR(last_command.speed_m_s, 0.3, 1e-6);
+
+  pose.x = 3.2;
+  SpinFor(
+    executor, publishers, pose, path, mode, nullptr, 0.4);
+  EXPECT_EQ(last_command.steer_mode, 1U);
+  EXPECT_NEAR(last_command.speed_m_s, 0.3, 1e-6);
+
+  pose.x = 4.0;
+  SpinFor(
+    executor, publishers, pose, path, mode, nullptr, 0.4);
+  EXPECT_EQ(last_command.steer_mode, 0U);
+  EXPECT_NEAR(last_command.speed_m_s, 0.6, 1e-6);
 
   executor.remove_node(tracker);
   executor.remove_node(tester);

@@ -38,8 +38,9 @@ ros2 launch sim_vehicle weeder_sim.launch.py
 常用参数：
 
 ```bash
-# 改垄宽和目标速度
-ros2 launch sim_vehicle weeder_sim.launch.py ridge_width:=3.0 target_v:=0.8
+# 改垄宽、WORK 速度和 TURN 速度
+ros2 launch sim_vehicle weeder_sim.launch.py \
+  ridge_width:=3.0 target_v:=0.6 turn_speed:=0.3
 
 # 无显示器/SSH
 ros2 launch sim_vehicle weeder_sim.launch.py rviz:=false

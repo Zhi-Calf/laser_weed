@@ -44,9 +44,11 @@ A = [[1, v·dt], [0, 1]]      B = [[0], [v·dt/L]]    输入 δ
 | | 前馈 |
 |---|---|
 | 履带 | `ω_ff = v·κ` |
-| 除草机 | `δ_ff = L·κ` |
+| 除草机 | `δ_ff = atan(L·κ)` |
 
-这两个公式是本包单元测试重点锁定的对象（`test_lqr_kinematics.cpp` 的 `LqrFeedforward` 系列）。如果有人误改回差速形式，`FeedforwardIsSpeedIndependent` 会立刻失败——因为 `v·κ` 随速度变化而 `L·κ` 不变。
+这两个公式是本包单元测试重点锁定的对象（`test_lqr_kinematics.cpp` 的
+`LqrFeedforward` 系列）。小角度时 `atan(L·κ) ≈ L·κ`，但转弯段不应继续
+使用线性近似。
 
 ### 可以直接复用的部分
 
@@ -79,8 +81,9 @@ MegaTrak 的 `lqr_R_w` 是**角速度代价**，本包的 `lqr_R_steer` 是**转
 速度与转角放在同一帧，CAN 桥不会把两个不同时刻计算出的值拼在一起。
 `weeder_base/chassis_node` 订阅该话题并转换为 `ADCU_toVCU_01`。
 
-`steer_mode` 由本控制器随指令一起发送。双阿克曼模式在控制器中按
-`L/2` 的等效轴距计算转角，若底盘按单阿克曼执行，实际转角会差一倍。
+`steer_mode` 由本控制器随指令一起发送。WORK 段默认使用单阿克曼，
+TURN 段默认使用前后轮反向的对称阿克曼；切换模式时同步把 LQR 的
+等效轴距从 `L` 改为 `L/2`。
 
 ### 2.4 符号约定（已追踪源码核对）
 
@@ -104,8 +107,9 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 | 发布 | `/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
 | 发布 | `/path_tracker/target_point` | `visualization_msgs/Marker` | RViz |
 
-当前路径回调**只读取** `Path.x/y`；`waypoint_types`（作业/掉头）暂不参与控制，
-字段保留给后续机具或激光分段控制。
+当前路径回调同时读取 `Path.x/y` 和 `waypoint_types`。WORK 段目标速度
+默认 `0.6 m/s`，TURN 段及前后过渡区默认 `0.3 m/s`；速度指令受
+`speed_ramp_mps2` 加速度限制。
 
 **QoS 匹配是硬要求**：`gnss_driver` 用 `SensorDataQoS`（best effort）发 pose，订阅端必须是 best effort，否则一条都收不到；规划器的 path 和 `/work_mode` 都是 `transient_local`（latched），订阅端必须匹配 durability 才能让晚加入的订阅者立刻收到最后一条。本节点已按此配置。
 
@@ -212,14 +216,19 @@ ros2 launch path_tracker path_tracker.launch.py
 
 | 参数 | 说明 |
 |---|---|
-| `wheelbase` | **最关键**。填错会直接导致横向振荡或收敛过慢。单阿克曼填真实前后轴距；双阿克曼（前后轮反向）填 `L/2` |
-| `steer_mode` | 必须与下发给 VCU 的模式一致。模式 2（平移）/3（原地转向）下阿克曼假设不成立，本控制器不适用 |
-| `lqr_target_v` | 建议从 0.3 m/s 起调，协议上限 1.4 |
+| `wheelbase` | **最关键**。填真实前后轴距；控制器按 WORK/TURN 自动使用 `L` 或 `L/2` |
+| `steer_mode` | 无有效 `waypoint_types` 时的回退模式，只支持 0/1 |
+| `work_steer_mode` / `turn_steer_mode` | WORK/TURN 自动切换模式，默认 0/1 |
+| `work_speed_m_s` / `turn_speed_m_s` | WORK/TURN 基础速度，默认 0.6/0.3 m/s |
+| `turn_speed_preview_m` / `turn_speed_hold_m` | 转弯前预览和转弯后低速保持距离 |
+| `lqr_target_v` | 无有效分段类型或关闭分段速度时的回退目标速度 |
 | `lqr_Q_*` / `lqr_R_steer` | 见上方"语义差异"，不能照抄履带项目的值 |
 
 建议调参顺序：先仿真（`sim_demo` 那套思路可复用）验证收敛 → 低速直线（0.3 m/s）验证符号与增益 → 弓字形全覆盖路径验证弯道减速 → 逐步提速。
 
-MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验对 LQR 不直接适用，但"分段切换 + 段间 blend 避免突变"的思路值得参考——全覆盖路径的 WORK 段和 TURN 段曲率差异很大，本包靠曲率前瞻降速处理。
+MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
+经验对 LQR 不直接适用。全覆盖路径默认由 WORK/TURN 分段决定速度和模式；
+原有的曲率/航向降速可通过 `lqr_enable_speed_shaping` 作为附加安全限制启用。
 
 ---
 
@@ -263,11 +272,12 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s` 经验
 
 | 文件 | 覆盖 |
 |---|---|
-| `test_lqr_kinematics.cpp` | 前馈 = L·κ、前馈与速度无关、左右偏差的转向符号、直线零误差零转角、**闭环收敛仿真**、转角限幅 ±90°、速度限幅、曲率降速、空/单点轨迹停车、零轴距不产生 inf/nan、终点不越界、负位移不回退、**沿路径盲区（3 条）**、**前向吸附（3 条）** |
+| `test_lqr_kinematics.cpp` | 精确阿克曼前馈、运行时等效轴距、WORK/TURN 速度区、直线与对称阿克曼圆弧闭环、左右偏差符号、转角/速度限幅、小位移弧长累计、沿路径盲区和前向吸附 |
 | `test_path_profile.cpp` | 少于两点拒绝、空指针拒绝、直线零曲率、弧长累加、左/右转弯曲率符号、端点继承内点曲率、重复点不产生 NaN、四分之一圆曲率量级 |
 | `test_obstacle_gate.cpp` | 避停关闭、状态缺失、状态超时、感知无效、停车请求和正常放行 |
 
-闭环收敛测试（`LqrConvergence.LateralErrorShrinksOverTime`）用自行车模型积分 200 拍，从 0.8 m 横向偏差验证收敛到 5 cm 内——这条能抓住单拍测试抓不到的符号错误（符号写反时单拍看起来合理，但会随时间发散）。
+闭环测试同时覆盖直线横向误差收敛和 `L_eff=L/2` 的对称阿克曼圆弧跟踪。
+后者能同时检查精确前馈、等效轴距和路径目标推进是否一致。
 
 `LqrAlongTrackBlindSpot.RunningPastGoalReportsZeroError` 是**特意写成"记录盲区存在"**的回归测试：它断言车在目标点前方 200 m 处时横向/航向误差**都是 0**、转向指令为 0、但速度仍大于 0，同时 `distToGoal() > 199`。这条测试的价值在于——如果将来有人认为 `e_lat`/`e_head` 已经足够而删掉偏离距离门，`distToGoal()` 断言会失败，从而暴露那次删除的风险。
 

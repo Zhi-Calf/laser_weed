@@ -1,4 +1,4 @@
-// Copyright 2026. 点云避停门控单元测试。
+// 版权所有 2026。点云避停门控单元测试。
 #include "path_tracker/obstacle_gate.hpp"
 
 #include <gtest/gtest.h>

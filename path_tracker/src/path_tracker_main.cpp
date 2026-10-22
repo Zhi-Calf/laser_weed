@@ -1,4 +1,4 @@
-// Copyright 2026. Entry point for the path_tracker node.
+// 版权所有 2026。path_tracker 节点入口。
 #include "path_tracker/path_tracker_node.hpp"
 
 #include <rclcpp/rclcpp.hpp>

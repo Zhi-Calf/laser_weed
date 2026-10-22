@@ -23,9 +23,9 @@ set(DEPS
   weeder_msgs
 )
 
-# ---- Core library: pure algorithms, no ROS node dependencies ----
-# Split out so the unit tests can link it without pulling in the ROS stack,
-# the same pattern MegaTrak's global_path_planner uses for its bow algorithm.
+# ---- 核心库：纯算法，不依赖 ROS 节点 ----
+# 单独拆出，使单元测试无需引入完整 ROS 栈即可链接。
+# 该结构与 MegaTrak global_path_planner 的弓字形算法库一致。
 add_library(${PROJECT_NAME}_lib SHARED
   src/lqr.cpp
   src/obstacle_gate.cpp
@@ -34,7 +34,7 @@ add_library(${PROJECT_NAME}_lib SHARED
 target_link_libraries(${PROJECT_NAME}_lib Eigen3::Eigen)
 ament_target_dependencies(${PROJECT_NAME}_lib ${DEPS})
 
-# ---- Node library / executable ----
+# ---- 节点库和可执行文件 ----
 add_library(path_tracker_node_lib SHARED
   src/path_tracker_node.cpp
 )
@@ -45,7 +45,7 @@ add_executable(path_tracker_node src/path_tracker_main.cpp)
 target_link_libraries(path_tracker_node path_tracker_node_lib)
 ament_target_dependencies(path_tracker_node rclcpp)
 
-# ---- Tests ----
+# ---- 测试 ----
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
 
@@ -82,10 +82,10 @@ if(BUILD_TESTING)
   )
 endif()
 
-# ---- Install ----
-# The shared library goes to lib/; the executable MUST go to lib/${PROJECT_NAME}/
-# because `ros2 run <pkg> <exe>` only searches that directory. Installing it to
-# bin/ would make the launch file fail with "executable not found".
+# ---- 安装 ----
+# 共享库安装到 lib/；可执行文件必须安装到 lib/${PROJECT_NAME}/，
+# 因为 ros2 run <包名> <可执行文件> 只在该目录搜索。
+# 安装到 bin/ 会导致 launch 报找不到可执行文件。
 install(TARGETS ${PROJECT_NAME}_lib
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
