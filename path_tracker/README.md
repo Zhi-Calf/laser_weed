@@ -55,7 +55,7 @@ A = [[1, v·dt], [0, 1]]      B = [[0], [v·dt/L]]    输入 δ
 - **Riccati 求解器** `calRicatti()`：定点迭代解 DARE，与模型无关，逐行沿用
 - **`discrete_points_math` 曲率/航向/弧长计算**：与 local_path_planner
   使用同一套 Apollo 离散点算法，`path_profile` 仅负责填充轨迹点容器
-- **WORK/TURN 分段速度 + 航向误差降速**策略：与模型无关
+- **WORK/TURN 分段速度**策略：与模型无关
 - **参数命名**：沿用 MegaTrak 的 `lqr_*` 前缀，调参经验可迁移
 
 ### 一个重要的语义差异
@@ -111,6 +111,7 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 当前路径回调读取 `Path.x/y` 和 `waypoint_types`，轨迹点本身不保存速度。
 LQR 根据分段类型选择速度：WORK 段默认 `0.6 m/s`，TURN 段及前后过渡区
 默认 `0.3 m/s`；速度指令受 `speed_ramp_mps2` 加速度限制。
+航向和横向误差只参与转向控制，不改变目标速度。
 
 规划器会持续重发路径。`path_tracker` 在首次接收有效路径后停止重建轨迹，
 但每条重发消息仍用于刷新路径心跳；只有 `/work_mode` 的模式值发生实际变化后，
@@ -249,14 +250,13 @@ YAML 参数被视为可信输入，节点运行时不再对参数范围做自动
 | `wheelbase` | **最关键**。填真实前后轴距；控制器按 WORK/TURN 自动使用 `L` 或 `L/2` |
 | `work_speed_m_s` / `turn_speed_m_s` | WORK/TURN 基础速度，默认 0.6/0.3 m/s |
 | `turn_speed_preview_m` / `turn_speed_hold_m` | 转弯前预览和转弯后低速保持距离 |
-| `max_speed_m_s` | 最大线速度，默认 1.0 m/s，且不得超过 CAN 协议上限 1.4 m/s |
 | `lqr_Q_*` / `lqr_R_steer` | 见上方"语义差异"，不能照抄履带项目的值 |
 
 建议调参顺序：先仿真（`sim_demo` 那套思路可复用）验证收敛 → 低速直线（0.3 m/s）验证符号与增益 → 弓字形全覆盖路径验证 WORK/TURN 速度切换 → 逐步提速。
 
 MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
 经验对 LQR 不直接适用。全覆盖路径默认由 WORK/TURN 分段决定速度和模式；
-曲率只用于转角前馈，不参与速度判断；航向和横向误差降速始终启用。
+曲率只用于转角前馈，不参与速度判断；航向和横向误差也不参与速度判断。
 
 ---
 
@@ -300,7 +300,7 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
 
 | 文件 | 覆盖 |
 |---|---|
-| `test_lqr_kinematics.cpp` | 精确阿克曼前馈、运行时等效轴距、WORK/TURN 速度区、曲率不参与降速、直线与对称阿克曼圆弧闭环、左右偏差符号、转角/速度限幅、小位移弧长累计、沿路径盲区和前向吸附 |
+| `test_lqr_kinematics.cpp` | 精确阿克曼前馈、运行时等效轴距、WORK/TURN 速度区、跟踪误差和曲率不参与降速、直线与对称阿克曼圆弧闭环、左右偏差符号、转角限幅、小位移弧长累计、沿路径盲区和前向吸附 |
 | `test_path_profile.cpp` | 少于三点拒绝、空指针拒绝、直线零曲率、弧长累加、左/右转弯曲率符号、端点单边差分、相邻重合点与航向退化检查、四分之一圆曲率量级 |
 | `test_obstacle_gate.cpp` | 避停关闭、状态缺失、状态超时、感知无效、停车请求和正常放行 |
 

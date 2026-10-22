@@ -44,10 +44,9 @@ PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNod
 
   SPDLOG_INFO(
     "LQR 控制器已启动: 轴距={:.3f}m "
-    "最大转角={:.1f}deg 最大速度={:.2f}m/s 频率={:.1f}Hz",
+    "最大转角={:.1f}deg 频率={:.1f}Hz",
     wheelbase_,
     max_steer_deg_,
-    max_speed_,
     control_hz_);
   SPDLOG_INFO(
     "订阅 位姿={} 路径={} 工作模式={} 避停状态={} | 发布 {} | 避停门控={}",
@@ -79,7 +78,6 @@ void PathTrackerNode::loadParameters() {
   turn_mode_enter_m_                 = declare_parameter<double>("turn_mode_enter_m", 0.6);
   turn_mode_exit_m_                  = declare_parameter<double>("turn_mode_exit_m", 0.6);
   max_steer_deg_                     = declare_parameter<double>("max_steer_deg", 90.0);
-  max_speed_                         = declare_parameter<double>("max_speed_m_s", 1.0);
   work_speed_                        = declare_parameter<double>("work_speed_m_s", 0.6);
   turn_speed_                        = declare_parameter<double>("turn_speed_m_s", 0.3);
   turn_speed_preview_m_              = declare_parameter<double>("turn_speed_preview_m", 1.0);
@@ -108,12 +106,6 @@ void PathTrackerNode::loadParameters() {
   const double lqr_q_lateral        = declare_parameter<double>("lqr_Q_lateral", 50.0);
   const double lqr_q_heading        = declare_parameter<double>("lqr_Q_heading", 25.0);
   const double lqr_r_steer          = declare_parameter<double>("lqr_R_steer", 25.0);
-  const double lqr_min_speed_factor = declare_parameter<double>("lqr_min_speed_factor", 0.3);
-  const double lqr_heading_deadband = declare_parameter<double>("lqr_heading_deadband", 0.1);
-  const double lqr_heading_max      = declare_parameter<double>("lqr_heading_max", 1.0);
-  const double lqr_lateral_deadband = declare_parameter<double>("lqr_lateral_speed_deadband", 0.05);
-  const double lqr_lateral_max      = declare_parameter<double>("lqr_lateral_speed_max", 0.25);
-  const double lqr_min_vel          = declare_parameter<double>("lqr_min_vel", 0.1);
 
   steer_mode_ = 0;
 
@@ -128,13 +120,6 @@ void PathTrackerNode::loadParameters() {
   lqr_config.turn_mode_enter_m             = turn_mode_enter_m_;
   lqr_config.turn_mode_exit_m              = turn_mode_exit_m_;
   lqr_config.max_steer_rad                 = max_steer_deg_ / kRad2Deg;
-  lqr_config.max_speed                     = max_speed_;
-  lqr_config.min_speed_factor              = lqr_min_speed_factor;
-  lqr_config.heading_deadband              = lqr_heading_deadband;
-  lqr_config.heading_max                   = lqr_heading_max;
-  lqr_config.lateral_speed_deadband        = lqr_lateral_deadband;
-  lqr_config.lateral_speed_max             = lqr_lateral_max;
-  lqr_config.min_vel                       = lqr_min_vel;
   lqr_config.snap_forward_points           = snap_forward_points_;
   lqr_config.work_speed                    = work_speed_;
   lqr_config.turn_speed                    = turn_speed_;

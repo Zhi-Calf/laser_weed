@@ -387,37 +387,21 @@ TEST(LqrLimits, SteeringIsClampedToProtocolLimit)
   EXPECT_LE(std::fabs(out.vel_cmd.steer_angle), max_steer + 1e-9);
 }
 
-// 速度不得超过配置的最大线速度。
-TEST(LqrLimits, SpeedClampsToConfiguredMaximum)
-{
-  LQRConfig config = makeConfig(1.2);
-  config.work_speed = 2.0;
-  LQR lqr;
-  lqr.Configure(config);
-
-  auto points = straightLine();
-  lqr.SetTrajectory(points);
-
-  RobotState state;
-  state.linear_v = 0.0;
-  const auto out = RunControl(lqr, state);
-  EXPECT_GE(out.vel_cmd.linear_v, 0.0);
-  EXPECT_NEAR(out.vel_cmd.linear_v, 1.0, 1e-9);
-}
-
-// 横向误差超过死区后必须降低目标速度。
-TEST(LqrLimits, LateralErrorSlowsDown)
+// 横向和航向误差不得改变路径分段决定的目标速度。
+TEST(LqrLimits, TrackingErrorsDoNotChangeSpeed)
 {
   LQR lqr = makeController(1.2);
   lqr.SetTrajectory(straightLine());
 
   RobotState state;
-  state.y = 0.2;
-  state.linear_v = 0.0;
-  const auto out = RunControl(lqr, state);
+  state.y = 0.25;
+  EXPECT_NEAR(
+    RunControl(lqr, state).vel_cmd.linear_v, 0.6, 1e-9);
 
-  EXPECT_NEAR(out.lateral_error, 0.2, 1e-9);
-  EXPECT_NEAR(out.vel_cmd.linear_v, 0.285, 1e-9);
+  state.y = 0.0;
+  state.heading = 1.0;
+  EXPECT_NEAR(
+    RunControl(lqr, state).vel_cmd.linear_v, 0.6, 1e-9);
 }
 
 // 曲率只用于转角前馈，不再触发速度降档。

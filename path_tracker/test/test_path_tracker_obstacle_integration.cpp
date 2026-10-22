@@ -115,6 +115,7 @@ TEST(PathTrackerObstacleIntegration, GatesChassisCommandFromStatus)
     rclcpp::Parameter("require_velocity_planner", true),
     rclcpp::Parameter("velocity_planner_status_timeout_s", 0.5),
     rclcpp::Parameter("max_lateral_error_m", 0.3),
+    rclcpp::Parameter("speed_ramp_mps2", 10.0),
     rclcpp::Parameter("viz", false),
   });
 
@@ -186,7 +187,13 @@ TEST(PathTrackerObstacleIntegration, GatesChassisCommandFromStatus)
     executor, publishers, lateral_pose, path, mode, &clear_status, 0.4);
   ASSERT_TRUE(has_command);
   EXPECT_FALSE(last_command.estop);
-  EXPECT_GT(last_command.speed_m_s, 0.0);
+  EXPECT_NEAR(last_command.speed_m_s, 0.6, 1e-6);
+
+  lateral_pose.y = 0.29;
+  SpinFor(
+    executor, publishers, lateral_pose, path, mode, &clear_status, 0.4);
+  EXPECT_FALSE(last_command.estop);
+  EXPECT_NEAR(last_command.speed_m_s, 0.6, 1e-6);
 
   lateral_pose.y = 0.4;
   SpinFor(

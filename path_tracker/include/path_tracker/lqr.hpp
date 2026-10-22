@@ -67,13 +67,6 @@ struct LQRConfig {
   double turn_mode_enter_m        = 0.6;      // 进入 TURN 模式的前视距离（米）
   double turn_mode_exit_m         = 0.6;      // 退出 TURN 模式的保持距离（米）
   double max_steer_rad            = 1.5708;   // 最大转角（弧度）
-  double max_speed                = 1.0;      // 最大线速度（米/秒）
-  double min_speed_factor         = 0.3;      // 误差降速下限比例
-  double heading_deadband         = 0.1;      // 航向误差降速死区（弧度）
-  double heading_max              = 1.0;      // 航向误差降速上限（弧度）
-  double lateral_speed_deadband   = 0.05;     // 横向误差降速死区（米）
-  double lateral_speed_max        = 0.25;     // 横向误差降速上限（米）
-  double min_vel                  = 0.1;      // 最低速度（米/秒）
   std::size_t snap_forward_points = 20;       // 从上一目标点向前的搜索点数，必须大于 0
   double work_speed               = 0.6;      // WORK 段目标速度（米/秒）
   double turn_speed               = 0.3;      // TURN 段目标速度（米/秒）
@@ -116,7 +109,7 @@ private:
 
   void CalRicatti(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B, Eigen::MatrixXd& K) const;
 
-  double ScaleSpeed(double heading_error, double lateral_error) const;
+  double ScaleSpeed() const;
 
   // 配置与派生的权重矩阵
   LQRConfig config_;   // LQR 完整配置

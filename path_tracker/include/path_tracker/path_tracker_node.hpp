@@ -58,11 +58,8 @@ private:
   double wheelbase_{1.0};
   int steer_mode_{0};
   double max_steer_deg_{90.0};
-  double max_speed_{1.0};
   double work_speed_{0.6};
   double turn_speed_{0.3};
-  double lateral_speed_deadband_{0.05};
-  double lateral_speed_max_{0.25};
   double turn_speed_preview_m_{1.0};
   double turn_speed_hold_m_{0.5};
   double speed_ramp_mps2_{0.5};

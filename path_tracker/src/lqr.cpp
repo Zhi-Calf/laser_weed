@@ -104,30 +104,16 @@ void LQR::CalRicatti(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B, Eigen::
   K = (R_ + BT * P * B).inverse() * BT * P * A;
 }
 
-// 计算分段基础速度，并应用航向、横向误差降速和速度限幅。
-double LQR::ScaleSpeed(double heading_error, double lateral_error) const {
+// 计算路径分段对应的基础速度。
+double LQR::ScaleSpeed() const {
   double v = config_.work_speed;
   if (HasTurnNear(config_.turn_speed_preview_m, config_.turn_speed_hold_m)) {
     v = config_.turn_speed;
   }
-
-  const auto error_speed_factor = [this](double error, double deadband, double max_error) {
-    if (error <= deadband || max_error <= deadband) {
-      return 1.0;
-    }
-    const double ratio = (error - deadband) / (max_error - deadband);
-    return 1.0 - std::clamp(ratio, 0.0, 1.0) * (1.0 - config_.min_speed_factor);
-  };
-
-  const double psi_factor = error_speed_factor(std::fabs(heading_error), config_.heading_deadband, config_.heading_max);
-  const double lat_factor = error_speed_factor(std::fabs(lateral_error), config_.lateral_speed_deadband, config_.lateral_speed_max);
-  v *= std::min(psi_factor, lat_factor);
-
-  // 跟踪期间不得低于全局速度下限，也不得超过车辆限制。
-  v = std::clamp(v, config_.min_vel, config_.max_speed);
   return v;
 }
 
+// 计算反馈控制量
 LQROutput LQR::ComputeFeedbackControl(double effective_wheelbase) const {
   LQROutput output;
   output.target_pt = goal_;
@@ -143,8 +129,8 @@ LQROutput LQR::ComputeFeedbackControl(double effective_wheelbase) const {
   const double heading_error = NormalizeAngle(robot_state_.heading - target_heading);
   const double lateral_error = dy * std::cos(target_heading) - dx * std::sin(target_heading);
 
-  // 计算本控制周期的目标速度，并按航向、横向误差进行整形。
-  const double v_cmd = ScaleSpeed(heading_error, lateral_error);
+  // 目标速度只由路径分段和全局速度限幅决定。
+  const double v_cmd = ScaleSpeed();
 
   // 在指令速度处线性化运动学自行车模型的误差动力学。
   // 使用指令速度而非实测速度，可在车辆短暂停止时保持 B_d 良态。
@@ -153,8 +139,6 @@ LQROutput LQR::ComputeFeedbackControl(double effective_wheelbase) const {
 
   Eigen::MatrixXd A = Eigen::MatrixXd::Zero(2, 2);
   A << 1.0, v * config_.dt, 0.0, 1.0;
-  // 注意：B 与 MegaTrak 的差速驱动模型 [[0],[dt]] 不同。
-  // 阿克曼和四轮转向的横摆角速度为 (v/L)*delta。
   Eigen::MatrixXd B = Eigen::MatrixXd::Zero(2, 1);
   B << 0.0, (v * config_.dt) / L;
 
@@ -164,8 +148,7 @@ LQROutput LQR::ComputeFeedbackControl(double effective_wheelbase) const {
   Eigen::VectorXd X(2);
   X << lateral_error, heading_error;
 
-  // 计算反馈转角。此处 U = -K*x 已经是转角（弧度），
-  // 因为阿克曼模型的控制输入是 delta，而不是角速度 omega。
+  // 计算反馈转角。此处 U = -K*x 已经是转角（弧度），因为阿克曼模型的控制输入是 delta，而不是角速度 omega。
   const Eigen::VectorXd U = -K * X;
   const double steer_fb   = U(0);
 
