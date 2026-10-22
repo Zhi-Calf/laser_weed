@@ -53,8 +53,9 @@ A = [[1, v·dt], [0, 1]]      B = [[0], [v·dt/L]]    输入 δ
 ### 可以直接复用的部分
 
 - **Riccati 求解器** `calRicatti()`：定点迭代解 DARE，与模型无关，逐行沿用
-- **`path_profile` 曲率/航向/弧长计算**：纯几何，与模型无关
-- **弯道前瞻降速 + 航向误差降速**策略：与模型无关
+- **`discrete_points_math` 曲率/航向/弧长计算**：与 local_path_planner
+  使用同一套 Apollo 离散点算法，`path_profile` 仅负责填充轨迹点容器
+- **WORK/TURN 分段速度 + 航向误差降速**策略：与模型无关
 - **参数命名**：沿用 MegaTrak 的 `lqr_*` 前缀，调参经验可迁移
 
 ### 一个重要的语义差异
@@ -107,9 +108,32 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 | 发布 | `/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
 | 发布 | `/path_tracker/target_point` | `visualization_msgs/Marker` | RViz |
 
-当前路径回调同时读取 `Path.x/y` 和 `waypoint_types`。WORK 段目标速度
-默认 `0.6 m/s`，TURN 段及前后过渡区默认 `0.3 m/s`；速度指令受
-`speed_ramp_mps2` 加速度限制。
+当前路径回调读取 `Path.x/y` 和 `waypoint_types`，轨迹点本身不保存速度。
+LQR 根据分段类型选择速度：WORK 段默认 `0.6 m/s`，TURN 段及前后过渡区
+默认 `0.3 m/s`；速度指令受 `speed_ramp_mps2` 加速度限制。
+
+规划器会持续重发路径。`path_tracker` 在首次接收有效路径后停止重建轨迹，
+但每条重发消息仍用于刷新路径心跳；只有 `/work_mode` 的模式值发生实际变化后，
+才会重新接收下一条有效路径。模式重复发布不会触发路径重载。
+
+### spdlog 日志
+
+节点使用与 `global_path_planner` 相同的 spdlog 滚动文件配置，默认写入：
+
+```text
+~/.ros/logs/path_tracker.log
+```
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `log_dir` | `~/.ros/logs` | 日志目录，支持 `~` 和 `$VAR` |
+| `log_file_size_mb` | `50` | 单个文件大小上限 |
+| `log_file_count` | `10` | 保留文件数量 |
+| `log_enable_console` | `true` | 同时输出到控制台 |
+| `log_level` | `info` | `trace/debug/info/warn/error/critical/off` |
+
+目录不可写时会回退到 `$ROS_HOME/logs` 或 `~/.ros/logs`；
+若仍不可写则仅保留控制台日志。
 
 **QoS 匹配是硬要求**：`gnss_driver` 用 `SensorDataQoS`（best effort）发 pose，订阅端必须是 best effort，否则一条都收不到；规划器的 path 和 `/work_mode` 都是 `transient_local`（latched），订阅端必须匹配 durability 才能让晚加入的订阅者立刻收到最后一条。本节点已按此配置。
 
@@ -133,19 +157,20 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: un
 
 任一条不满足即输出**停车**（零速 + 零转角），且 CAN 桥自身还有 0.3s 指令超时急停作为第二道防线：
 
-| 门控 | 参数 | 默认 | 失败故障码 |
-|---|---|---|---|
-| 工作模式 | `work_mode_timeout_s` | 3.0 | 10101 |
-| 定位超时 | `pose_timeout_s` | 1.0 | 10102 |
-| **RTK 位姿有效** | `Pose.valid` | true | 10102 |
-| 路径超时 | `path_timeout_s` | 5.0 | 10103 |
-| 转向模式兼容 | `steer_mode` | 0 | 10104 |
-| **偏离目标距离** | `max_track_error_m` | 3.0 | 10106 |
-| ROI 内检测到障碍 | `min_obstacle_points` | 3 | 10107 |
-| **避停状态不可用/超时/感知无效** | `require_velocity_planner` / `velocity_planner_status_timeout_s` | true / 0.5 | 10108 |
-| 启动宽限 | `work_mode_startup_grace_s` | 20.0 | — |
+| 门控 | 参数 | 默认 |
+|---|---|---|
+| 工作模式 | `work_mode_timeout_s` | 3.0 |
+| 定位超时 | `pose_timeout_s` | 1.0 |
+| **RTK 位姿有效** | `Pose.valid` | true |
+| 路径超时 | `path_timeout_s` | 5.0 |
+| 转向模式兼容 | `steer_mode` | 0 |
+| **横向误差超限** | `max_lateral_error_m` | 0.3 |
+| **偏离目标距离** | `max_track_error_m` | 3.0 |
+| ROI 内检测到障碍 | `min_obstacle_points` | 3 |
+| **避停状态不可用/超时/感知无效** | `require_velocity_planner` / `velocity_planner_status_timeout_s` | true / 0.5 |
+| 启动宽限 | `work_mode_startup_grace_s` | 20.0 |
 
-门控按顺序判定：工作模式 → RTK 位姿（存在/新鲜/`valid=true`）→ 路径（存在/新鲜）→ 转向模式兼容 → **点云避停** → **偏离目标距离**。`gnss_driver` 仅在 RTK 固定解时把 `Pose.valid` 置为 true，浮点/RTD/单点解都会输出停车。
+门控按顺序判定：工作模式 → RTK 位姿（存在/新鲜/`valid=true`）→ 路径（存在/新鲜）→ 转向模式兼容 → **点云避停** → **横向误差超限** → **偏离目标距离**。`gnss_driver` 仅在 RTK 固定解时把 `Pose.valid` 置为 true，浮点/RTD/单点解都会输出停车。
 
 ### 点云避停门控
 
@@ -165,9 +190,12 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: un
 
 LQR 的状态量只有 `[横向误差, 航向误差]`，**没有沿路径方向的误差项**。这意味着：车如果沿着路径自己的方向笔直冲过目标点，两个误差**都恰好为 0**，控制器会判定"完美跟踪"并继续给全速零转角——**没有任何告警**。
 
-仿真实测就是这样：目标点冻结在起点，车跑出 238 m，`steer_angle_rad = 2.4e-14`，所有误差指标都是 0，车径直冲出田块。`max_track_error_m` 这道门是唯一能发现该情况的手段，所以代码里强制下限 0.1 m，防止误配成 0 把它关掉。
+仿真实测就是这样：目标点冻结在起点，车跑出 238 m，`steer_angle_rad = 2.4e-14`，所有误差指标都是 0，车径直冲出田块。`max_track_error_m` 这道门是唯一能发现该情况的手段，因此必须配置为正数。
 
-配套的 `snap_window`（默认 25 点）让目标点每拍在窗口内吸附到离车最近的路径点，避免纯弧长累积在里程计打滑时与车越走越远。吸附**从当前索引开始搜索**，索引单调不减，所以永远不会把目标点拉回上一行（弓字形作业不会重跑已覆盖的垄）。
+配套的 `snap_forward_points`（默认 20 点）让目标点每拍从上一目标点开始，
+在向前 `snap_forward_points` 个点的范围内吸附到离车最近的路径点，避免纯弧长累积
+在里程计打滑时与车越走越远。索引单调不减，所以永远不会把目标点拉回上一行
+（弓字形作业不会重跑已覆盖的垄）。
 
 启动宽限**只抑制故障上报**（上电时不刷 FAULT），**从不放开运动**——宽限期内没收到定位/路径照样停车。
 
@@ -214,21 +242,21 @@ ros2 launch path_tracker path_tracker.launch.py
 
 `config/path_tracker.yaml` 里的默认值是**保守起点，不是可用值**。必须按实车改的：
 
+YAML 参数被视为可信输入，节点运行时不再对参数范围做自动修正；部署前必须自行检查单位、符号和取值范围。
+
 | 参数 | 说明 |
 |---|---|
 | `wheelbase` | **最关键**。填真实前后轴距；控制器按 WORK/TURN 自动使用 `L` 或 `L/2` |
-| `steer_mode` | 无有效 `waypoint_types` 时的回退模式，只支持 0/1 |
-| `work_steer_mode` / `turn_steer_mode` | WORK/TURN 自动切换模式，默认 0/1 |
 | `work_speed_m_s` / `turn_speed_m_s` | WORK/TURN 基础速度，默认 0.6/0.3 m/s |
 | `turn_speed_preview_m` / `turn_speed_hold_m` | 转弯前预览和转弯后低速保持距离 |
-| `lqr_target_v` | 无有效分段类型或关闭分段速度时的回退目标速度 |
+| `max_speed_m_s` | 最大线速度，默认 1.0 m/s，且不得超过 CAN 协议上限 1.4 m/s |
 | `lqr_Q_*` / `lqr_R_steer` | 见上方"语义差异"，不能照抄履带项目的值 |
 
-建议调参顺序：先仿真（`sim_demo` 那套思路可复用）验证收敛 → 低速直线（0.3 m/s）验证符号与增益 → 弓字形全覆盖路径验证弯道减速 → 逐步提速。
+建议调参顺序：先仿真（`sim_demo` 那套思路可复用）验证收敛 → 低速直线（0.3 m/s）验证符号与增益 → 弓字形全覆盖路径验证 WORK/TURN 速度切换 → 逐步提速。
 
 MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
 经验对 LQR 不直接适用。全覆盖路径默认由 WORK/TURN 分段决定速度和模式；
-原有的曲率/航向降速可通过 `lqr_enable_speed_shaping` 作为附加安全限制启用。
+曲率只用于转角前馈，不参与速度判断；航向和横向误差降速始终启用。
 
 ---
 
@@ -272,13 +300,13 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
 
 | 文件 | 覆盖 |
 |---|---|
-| `test_lqr_kinematics.cpp` | 精确阿克曼前馈、运行时等效轴距、WORK/TURN 速度区、直线与对称阿克曼圆弧闭环、左右偏差符号、转角/速度限幅、小位移弧长累计、沿路径盲区和前向吸附 |
-| `test_path_profile.cpp` | 少于两点拒绝、空指针拒绝、直线零曲率、弧长累加、左/右转弯曲率符号、端点继承内点曲率、重复点不产生 NaN、四分之一圆曲率量级 |
+| `test_lqr_kinematics.cpp` | 精确阿克曼前馈、运行时等效轴距、WORK/TURN 速度区、曲率不参与降速、直线与对称阿克曼圆弧闭环、左右偏差符号、转角/速度限幅、小位移弧长累计、沿路径盲区和前向吸附 |
+| `test_path_profile.cpp` | 少于三点拒绝、空指针拒绝、直线零曲率、弧长累加、左/右转弯曲率符号、端点单边差分、相邻重合点与航向退化检查、四分之一圆曲率量级 |
 | `test_obstacle_gate.cpp` | 避停关闭、状态缺失、状态超时、感知无效、停车请求和正常放行 |
 
 闭环测试同时覆盖直线横向误差收敛和 `L_eff=L/2` 的对称阿克曼圆弧跟踪。
 后者能同时检查精确前馈、等效轴距和路径目标推进是否一致。
 
-`LqrAlongTrackBlindSpot.RunningPastGoalReportsZeroError` 是**特意写成"记录盲区存在"**的回归测试：它断言车在目标点前方 200 m 处时横向/航向误差**都是 0**、转向指令为 0、但速度仍大于 0，同时 `distToGoal() > 199`。这条测试的价值在于——如果将来有人认为 `e_lat`/`e_head` 已经足够而删掉偏离距离门，`distToGoal()` 断言会失败，从而暴露那次删除的风险。
+`LqrAlongTrackBlindSpot.RunningPastGoalReportsZeroError` 是**特意写成"记录盲区存在"**的回归测试：它断言车在目标点前方 200 m 处时横向/航向误差**都是 0**、转向指令为 0、但速度仍大于 0，同时 `distance_to_goal > 199`。这条测试的价值在于——如果将来有人认为 `e_lat`/`e_head` 已经足够而删掉偏离距离门，距离断言会失败，从而暴露那次删除的风险。
 
 `LqrSnap.GoalNeverSnapsBackward` 断言目标索引单调不减：车被"传送"回后方时目标点不许跟着倒退，否则弓字形作业会重跑已经除过草的垄。

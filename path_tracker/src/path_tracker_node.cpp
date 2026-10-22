@@ -1,37 +1,36 @@
 // 版权所有 2026。四轮转向 LQR 的 ROS 2 节点实现。
 #include "path_tracker/path_tracker_node.hpp"
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <utility>
+
+#include "path_tracker/logging.hpp"
 
 namespace path_tracker {
 
 namespace {
-/// 限制重复告警频率，避免 10 Hz 控制日志占满输出。
-constexpr int kWarnIntervalMs = 3000;
-constexpr double kRad2Deg     = 57.29577951308232;
+constexpr double kRad2Deg = 57.29577951308232;
 
 /// 日志中使用的节点名称。
 constexpr const char* kNodeName = "path_tracker";
 
-// 计算路径段类型指纹。
-uint64_t HashWaypointTypes(const std::vector<uint8_t>& types) {
-  uint64_t hash = 1469598103934665603ULL;
-  for (const uint8_t type : types) {
-    hash ^= type;
-    hash *= 1099511628211ULL;
-  }
-  return hash;
-}
-
-// 根据转向模式返回等效轴距。
-double EffectiveWheelbase(double wheelbase, int mode) {
-  return mode == 1 ? wheelbase * 0.5 : wheelbase;
-}
 }   // namespace
 
 PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNodeName, options) {
+  loadLogParameters();
+  LogConfig log_config;
+  log_config.log_dir             = log_dir_;
+  log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb_) * 1024U * 1024U;
+  log_config.max_file_count      = static_cast<std::size_t>(log_file_count_);
+  log_config.enable_console      = log_enable_console_;
+  log_config.log_level           = log_level_;
+  ConfigureLogging(log_config);
+  SPDLOG_INFO("日志配置成功");
+
   // 必须先在 loadParameters() 之前创建 LQR 对象，否则配置时会访问空指针。
   lqr_ = std::make_unique<LQR>();
   loadParameters();
@@ -43,53 +42,52 @@ PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNod
     controlTick();
   });
 
-  RCLCPP_INFO(get_logger(), "LQR 控制器已启动: 轴距=%.3fm 等效轴距=%.3fm 最大转角=%.1fdeg 最大速度=%.2fm/s 频率=%.1fHz", wheelbase_, effective_wheelbase_, max_steer_deg_, max_speed_, control_hz_);
-  RCLCPP_INFO(
-    get_logger(),
-    "订阅 位姿=%s 路径=%s 工作模式=%s 避停状态=%s | 发布 %s | 避停门控=%s",
-    pose_topic_.c_str(),
-    path_topic_.c_str(),
-    work_mode_topic_.c_str(),
-    velocity_planner_status_topic_.c_str(),
-    cmd_topic_.c_str(),
-    require_velocity_planner_ ? "enabled" : "disabled");
+  SPDLOG_INFO(
+    "LQR 控制器已启动: 轴距={:.3f}m "
+    "最大转角={:.1f}deg 最大速度={:.2f}m/s 频率={:.1f}Hz",
+    wheelbase_,
+    max_steer_deg_,
+    max_speed_,
+    control_hz_);
+  SPDLOG_INFO(
+    "订阅 位姿={} 路径={} 工作模式={} 避停状态={} | 发布 {} | 避停门控={}",
+    pose_topic_,
+    path_topic_,
+    work_mode_topic_,
+    velocity_planner_status_topic_,
+    cmd_topic_,
+    require_velocity_planner_ ? "开启" : "关闭");
+}
+
+void PathTrackerNode::loadLogParameters() {
+  declare_parameter("log_dir", "~/.ros/logs");
+  declare_parameter("log_file_size_mb", 50);
+  declare_parameter("log_file_count", 10);
+  declare_parameter("log_enable_console", true);
+  declare_parameter("log_level", "info");
+
+  log_dir_            = get_parameter("log_dir").as_string();
+  log_file_size_mb_   = static_cast<int>(get_parameter("log_file_size_mb").as_int());
+  log_file_count_     = static_cast<int>(get_parameter("log_file_count").as_int());
+  log_enable_console_ = get_parameter("log_enable_console").as_bool();
+  log_level_          = get_parameter("log_level").as_string();
 }
 
 void PathTrackerNode::loadParameters() {
-  control_hz_          = declare_parameter<double>("control_hz", 10.0);
-  wheelbase_           = declare_parameter<double>("wheelbase", 1.0);
-  fallback_steer_mode_ = declare_parameter<int>("steer_mode", 0);
-  if (fallback_steer_mode_ < 0 || fallback_steer_mode_ > 3) {
-    RCLCPP_WARN(get_logger(), "steer_mode=%d 非法, 回退为 0 (单阿克曼)", fallback_steer_mode_);
-    fallback_steer_mode_ = 0;
-  }
-  work_steer_mode_               = declare_parameter<int>("work_steer_mode", 0);
-  turn_steer_mode_               = declare_parameter<int>("turn_steer_mode", 1);
-  enable_turn_steer_mode_switch_ = declare_parameter<bool>("enable_turn_steer_mode_switch", true);
-  turn_mode_enter_m_             = declare_parameter<double>("turn_mode_enter_m", 0.6);
-  turn_mode_exit_m_              = declare_parameter<double>("turn_mode_exit_m", 0.6);
-  max_steer_deg_                 = declare_parameter<double>("max_steer_deg", 90.0);
-  max_speed_                     = declare_parameter<double>("max_speed_m_s", 1.4);
-  target_v_                      = declare_parameter<double>("lqr_target_v", 0.5);
-  work_speed_                    = declare_parameter<double>("work_speed_m_s", 0.6);
-  turn_speed_                    = declare_parameter<double>("turn_speed_m_s", 0.3);
-  turn_speed_preview_m_          = declare_parameter<double>("turn_speed_preview_m", 1.0);
-  turn_speed_hold_m_             = declare_parameter<double>("turn_speed_hold_m", 0.5);
-  speed_ramp_mps2_               = declare_parameter<double>("speed_ramp_mps2", 0.5);
-  enable_segment_speed_profile_  = declare_parameter<bool>("enable_segment_speed_profile", true);
-  lqr_speed_shaping_enabled_     = declare_parameter<bool>("lqr_enable_speed_shaping", false);
-  max_track_error_m_             = declare_parameter<double>("max_track_error_m", 3.0);
-  // rclcpp 将所有整数参数保存为 int64_t，因此这里显式按 int64_t 声明。
-  // 使用普通比较完成限幅，避免 std::max 的模板类型推导失败。
-  // 取值范围限制为 [0, 1000]，防止过大的吸附窗口拖慢每拍计算。
-  int64_t snap_window_raw = declare_parameter<int64_t>("snap_window", 25);
-  if (snap_window_raw < 0) {
-    snap_window_raw = 0;
-  }
-  if (snap_window_raw > 1000) {
-    snap_window_raw = 1000;
-  }
-  snap_window_                       = static_cast<size_t>(snap_window_raw);
+  control_hz_                        = declare_parameter<double>("control_hz", 10.0);
+  wheelbase_                         = declare_parameter<double>("wheelbase", 1.0);
+  turn_mode_enter_m_                 = declare_parameter<double>("turn_mode_enter_m", 0.6);
+  turn_mode_exit_m_                  = declare_parameter<double>("turn_mode_exit_m", 0.6);
+  max_steer_deg_                     = declare_parameter<double>("max_steer_deg", 90.0);
+  max_speed_                         = declare_parameter<double>("max_speed_m_s", 1.0);
+  work_speed_                        = declare_parameter<double>("work_speed_m_s", 0.6);
+  turn_speed_                        = declare_parameter<double>("turn_speed_m_s", 0.3);
+  turn_speed_preview_m_              = declare_parameter<double>("turn_speed_preview_m", 1.0);
+  turn_speed_hold_m_                 = declare_parameter<double>("turn_speed_hold_m", 0.5);
+  speed_ramp_mps2_                   = declare_parameter<double>("speed_ramp_mps2", 0.5);
+  max_lateral_error_m_               = declare_parameter<double>("max_lateral_error_m", 0.3);
+  max_track_error_m_                 = declare_parameter<double>("max_track_error_m", 3.0);
+  snap_forward_points_               = static_cast<size_t>(declare_parameter<int64_t>("snap_forward_points", 20));
   pose_timeout_s_                    = declare_parameter<double>("pose_timeout_s", 1.0);
   path_timeout_s_                    = declare_parameter<double>("path_timeout_s", 5.0);
   work_mode_timeout_s_               = declare_parameter<double>("work_mode_timeout_s", 3.0);
@@ -105,72 +103,44 @@ void PathTrackerNode::loadParameters() {
   cmd_topic_                         = declare_parameter<std::string>("cmd_topic", "/chassis/cmd");
   viz_                               = declare_parameter<bool>("viz", true);
 
-  // 参数保护：非正轴距会使 B_d 除零，非正控制频率会生成无效定时器周期。
-  control_hz_           = std::clamp(control_hz_, 1.0, 200.0);
-  wheelbase_            = std::max(wheelbase_, 0.05);
-  max_speed_            = std::clamp(max_speed_, 0.1, 1.4);        // 协议速度上限 1400 毫米/秒
-  max_steer_deg_        = std::clamp(max_steer_deg_, 1.0, 90.0);   // 协议转角范围 ±90 度
-  target_v_             = std::clamp(target_v_, 0.0, max_speed_);
-  work_speed_           = std::clamp(work_speed_, 0.0, max_speed_);
-  turn_speed_           = std::clamp(turn_speed_, 0.0, max_speed_);
-  turn_speed_preview_m_ = std::max(turn_speed_preview_m_, 0.0);
-  turn_speed_hold_m_    = std::max(turn_speed_hold_m_, 0.0);
-  speed_ramp_mps2_      = std::max(speed_ramp_mps2_, 0.01);
-  turn_mode_enter_m_    = std::max(turn_mode_enter_m_, 0.0);
-  turn_mode_exit_m_     = std::max(turn_mode_exit_m_, 0.0);
-  // 即使配置为 0 也强制使用正数下限，防止误配置关闭 LQR 缺失沿路径误差时
-  // 唯一可用的安全保护。
-  max_track_error_m_                 = std::max(max_track_error_m_, 0.1);
-  snap_window_                       = std::min(snap_window_, static_cast<size_t>(1000));
-  velocity_planner_status_timeout_s_ = std::max(velocity_planner_status_timeout_s_, 0.1);
-  if (velocity_planner_status_topic_.empty()) {
-    velocity_planner_status_topic_ = "/velocity_planner/status";
-  }
+  const double lqr_eps              = declare_parameter<double>("lqr_eps", 1e-6);
+  const int lqr_max_iteration       = static_cast<int>(declare_parameter<int64_t>("lqr_max_iteration", 1000));
+  const double lqr_q_lateral        = declare_parameter<double>("lqr_Q_lateral", 50.0);
+  const double lqr_q_heading        = declare_parameter<double>("lqr_Q_heading", 25.0);
+  const double lqr_r_steer          = declare_parameter<double>("lqr_R_steer", 25.0);
+  const double lqr_min_speed_factor = declare_parameter<double>("lqr_min_speed_factor", 0.3);
+  const double lqr_heading_deadband = declare_parameter<double>("lqr_heading_deadband", 0.1);
+  const double lqr_heading_max      = declare_parameter<double>("lqr_heading_max", 1.0);
+  const double lqr_lateral_deadband = declare_parameter<double>("lqr_lateral_speed_deadband", 0.05);
+  const double lqr_lateral_max      = declare_parameter<double>("lqr_lateral_speed_max", 0.25);
+  const double lqr_min_vel          = declare_parameter<double>("lqr_min_vel", 0.1);
 
-  if (work_steer_mode_ < 0 || work_steer_mode_ > 1) {
-    RCLCPP_WARN(get_logger(), "work_steer_mode=%d 非法, 回退为 0 (单阿克曼)", work_steer_mode_);
-    work_steer_mode_ = 0;
-  }
-  if (turn_steer_mode_ < 0 || turn_steer_mode_ > 1) {
-    RCLCPP_WARN(get_logger(), "turn_steer_mode=%d 非法, 回退为 1 (对称阿克曼)", turn_steer_mode_);
-    turn_steer_mode_ = 1;
-  }
-  if (fallback_steer_mode_ > 1) {
-    RCLCPP_ERROR(get_logger(), "steer_mode=%d 不支持；无路径类型时只允许 0 或 1", fallback_steer_mode_);
-    fallback_steer_mode_ = 0;
-  }
-  steer_mode_          = fallback_steer_mode_;
-  effective_wheelbase_ = EffectiveWheelbase(wheelbase_, steer_mode_);
-  effective_wheelbase_ = std::max(effective_wheelbase_, 0.05);
+  steer_mode_ = 0;
 
-  lqr_->configure(
-    1.0 / control_hz_,
-    declare_parameter<double>("lqr_eps", 1e-6),
-    declare_parameter<int>("lqr_max_iteration", 1000),
-    declare_parameter<double>("lqr_Q_lateral", 50.0),
-    declare_parameter<double>("lqr_Q_heading", 25.0),
-    declare_parameter<double>("lqr_R_steer", 25.0),
-    effective_wheelbase_,
-    max_steer_deg_ / kRad2Deg,
-    max_speed_,
-    declare_parameter<double>("lqr_min_speed_factor", 0.3),
-    declare_parameter<double>("lqr_heading_deadband", 0.1),
-    declare_parameter<double>("lqr_heading_max", 1.0),
-    target_v_,
-    declare_parameter<double>("lqr_min_vel", 0.1));
-
-  lqr_->setSpeedShaping(
-    declare_parameter<double>("lqr_curvature_threshold", 0.2),
-    declare_parameter<double>("lqr_curvature_span", 0.5),
-    declare_parameter<double>("lqr_speed_scale", 0.4),
-    declare_parameter<int>("lqr_lookahead_index", 30),
-    declare_parameter<int>("lqr_lookback_start", 20));
-  lqr_->SetSpeedShapingEnabled(lqr_speed_shaping_enabled_);
-  lqr_->SetSegmentSpeedProfile(work_speed_, turn_speed_, turn_speed_preview_m_, turn_speed_hold_m_, enable_segment_speed_profile_);
-
-  // 在弧长累计之外，将目标点重新锚定到窗口内最近的路径点。
-  // 否则目标点会完全依赖里程计，打滑或跳变后无法自动纠正。
-  lqr_->setSnapWindow(snap_window_);
+  LQRConfig lqr_config;
+  lqr_config.dt                            = 1.0 / control_hz_;
+  lqr_config.eps                           = lqr_eps;
+  lqr_config.max_iteration                 = lqr_max_iteration;
+  lqr_config.q_lateral                     = lqr_q_lateral;
+  lqr_config.q_heading                     = lqr_q_heading;
+  lqr_config.r_steer                       = lqr_r_steer;
+  lqr_config.wheelbase                     = wheelbase_;
+  lqr_config.turn_mode_enter_m             = turn_mode_enter_m_;
+  lqr_config.turn_mode_exit_m              = turn_mode_exit_m_;
+  lqr_config.max_steer_rad                 = max_steer_deg_ / kRad2Deg;
+  lqr_config.max_speed                     = max_speed_;
+  lqr_config.min_speed_factor              = lqr_min_speed_factor;
+  lqr_config.heading_deadband              = lqr_heading_deadband;
+  lqr_config.heading_max                   = lqr_heading_max;
+  lqr_config.lateral_speed_deadband        = lqr_lateral_deadband;
+  lqr_config.lateral_speed_max             = lqr_lateral_max;
+  lqr_config.min_vel                       = lqr_min_vel;
+  lqr_config.snap_forward_points           = snap_forward_points_;
+  lqr_config.work_speed                    = work_speed_;
+  lqr_config.turn_speed                    = turn_speed_;
+  lqr_config.turn_speed_preview_m          = turn_speed_preview_m_;
+  lqr_config.turn_speed_hold_m             = turn_speed_hold_m_;
+  lqr_->Configure(lqr_config);
 }
 
 void PathTrackerNode::setupInterfaces() {
@@ -213,7 +183,6 @@ void PathTrackerNode::setupInterfaces() {
 }
 
 void PathTrackerNode::poseCallback(const weeder_msgs::msg::Pose::SharedPtr msg) {
-  std::lock_guard<std::mutex> lock(mutex_);
   last_pose_time_       = now();
   has_pose_             = true;
   pose_valid_           = msg->valid;
@@ -224,8 +193,14 @@ void PathTrackerNode::poseCallback(const weeder_msgs::msg::Pose::SharedPtr msg) 
 }
 
 void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) {
-  if (msg->x.size() < 2 || msg->x.size() != msg->y.size()) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs, "收到的路径无效：x=%zu y=%zu (需要 x==y 且 >= 2)", msg->x.size(), msg->y.size());
+  if (msg->x.size() < 3 || msg->x.size() != msg->y.size()) {
+    SPDLOG_WARN("收到的路径无效：x={} y={}（需要 x==y 且不少于 3 点）", msg->x.size(), msg->y.size());
+    return;
+  }
+
+  // 即使内容被忽略，也必须刷新路径心跳，避免规划器仍在运行时触发路径超时。
+  last_path_time_ = now();
+  if (!accept_path_message_) {
     return;
   }
 
@@ -235,92 +210,32 @@ void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) 
     xy.emplace_back(msg->x[i], msg->y[i]);
   }
 
-  bool has_waypoint_types = !msg->waypoint_types.empty() && msg->waypoint_types.size() == msg->x.size();
-  if (!msg->waypoint_types.empty() && !has_waypoint_types) {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      kWarnIntervalMs,
-      "waypoint_types 长度=%zu 与路径点数=%zu 不一致，"
-      "将回退到固定速度/模式",
-      msg->waypoint_types.size(),
-      msg->x.size());
-  }
-
-  std::vector<uint8_t> waypoint_types(msg->x.size(), 0);
-  if (has_waypoint_types) {
-    for (size_t i = 0; i < msg->waypoint_types.size(); ++i) {
-      if (msg->waypoint_types[i] > 1) {
-        has_waypoint_types = false;
-        break;
-      }
-      waypoint_types[i] = msg->waypoint_types[i];
-    }
-  }
-  if (!has_waypoint_types) {
-    std::fill(waypoint_types.begin(), waypoint_types.end(), 0);
-  }
-  const uint64_t waypoint_type_hash = HashWaypointTypes(waypoint_types);
-
-  std::lock_guard<std::mutex> lock(mutex_);
-  // 每次回调都必须刷新时间戳，确保 path_timeout_s 能看到规划器的周期重发；
-  // 否则规划器仍在运行时也会被误判为路径超时。
-  last_path_time_ = now();
-  has_path_       = true;
-
-  // 在锁内检查路径指纹，读取 path_fp_* 成员。
-  //
-  // global_path_planner 每 100 毫秒重发相同路径。如果每次重发都重新加载轨迹，
-  // 目标索引会反复重置为 0，车辆会被固定在路径起点，表现为
-  // “橙色目标点始终不动”。只有路径点数、首尾点或分段类型真正变化时才重置跟踪。
-  // 原始 x/y 可直接用于指纹比较，避免在数千点路径上重复计算路径剖面。
-  const double tol     = 1e-6;
-  const bool same_path = (path_fp_count_ == xy.size()) && (path_fp_type_hash_ == waypoint_type_hash) && (std::fabs(xy.front().first - path_fp_x0_) < tol) && (std::fabs(xy.front().second - path_fp_y0_) < tol) &&
-                         (std::fabs(xy.back().first - path_fp_xn_) < tol) && (std::fabs(xy.back().second - path_fp_yn_) < tol);
-  if (same_path) {
-    return;   // 相同路径重发，保留当前目标索引
-  }
-
   std::vector<TrajectoryPoint> traj;
-  // 规划器路径默认不带速度信息，因此先写入节点配置的回退速度。
-  if (!computePathProfile(xy, target_v_, &traj)) {
-    RCLCPP_ERROR(get_logger(), "路径剖面计算失败，忽略这条路径");
+  if (!computePathProfile(xy, &traj)) {
+    SPDLOG_ERROR("路径剖面计算失败，忽略这条路径");
     return;
   }
   for (size_t i = 0; i < traj.size(); ++i) {
-    traj[i].waypoint_type = waypoint_types[i];
-    if (has_waypoint_types && enable_segment_speed_profile_) {
-      traj[i].v = traj[i].waypoint_type == 1 ? turn_speed_ : work_speed_;
-    }
+    traj[i].waypoint_type = msg->waypoint_types[i];
   }
 
-  path_fp_count_           = traj.size();
-  path_fp_x0_              = traj.front().x;
-  path_fp_y0_              = traj.front().y;
-  path_fp_xn_              = traj.back().x;
-  path_fp_yn_              = traj.back().y;
-  path_fp_type_hash_       = waypoint_type_hash;
+  has_path_                = true;
+  accept_path_message_     = false;
   path_point_count_        = traj.size();
-  path_has_waypoint_types_ = has_waypoint_types;
-  turn_mode_active_        = false;
   last_speed_cmd_          = 0.0;
-  lqr_->setTrajectory(traj);
-  first_tick_ = true;   // 重置行驶距离累计器
+  lqr_->SetTrajectory(traj);
 
-  RCLCPP_INFO(
-    get_logger(),
-    "已载入新路径: %zu 个点, 起点 (%.2f, %.2f), "
-    "终点 (%.2f, %.2f), 分段类型=%s",
+  SPDLOG_INFO(
+    "已载入新路径: {} 个点, 起点 ({:.2f}, {:.2f}), "
+    "终点 ({:.2f}, {:.2f})",
     traj.size(),
     traj.front().x,
     traj.front().y,
     traj.back().x,
-    traj.back().y,
-    has_waypoint_types ? "enabled" : "fallback");
+    traj.back().y);
 }
 
 void PathTrackerNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg) {
-  std::lock_guard<std::mutex> lock(mutex_);
   last_work_mode_time_  = now();
   const bool first_mode = !ever_got_work_mode_;
   ever_got_work_mode_   = true;
@@ -329,19 +244,13 @@ void PathTrackerNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedP
   // 仅在模式变化时记录日志，避免 1 Hz 重发刷屏。
   // last_mode_ 同时用于变化检测；首条消息时其初值为 0。
   if (first_mode || msg->mode != last_mode_) {
-    RCLCPP_INFO(
-      get_logger(),
-      "工作模式切换: %u -> %u (%s) -> %s",
-      static_cast<unsigned>(last_mode_),
-      static_cast<unsigned>(msg->mode),
-      msg->mode_name.c_str(),
-      unmanned_ ? "无人(接管底盘)" : "非无人(输出停车)");
-    last_mode_ = msg->mode;
+    SPDLOG_INFO("工作模式切换: {} -> {} ({}) -> {}", static_cast<unsigned>(last_mode_), static_cast<unsigned>(msg->mode), msg->mode_name, unmanned_ ? "无人(接管底盘)" : "非无人(输出停车)");
+    last_mode_           = msg->mode;
+    accept_path_message_ = true;
   }
 }
 
 void PathTrackerNode::ObstacleStatusCallback(const weeder_msgs::msg::ObstacleStatus::SharedPtr msg) {
-  std::lock_guard<std::mutex> lock(mutex_);
   last_obstacle_status_time_ = now();
   has_obstacle_status_       = true;
   obstacle_sensor_valid_     = msg->sensor_valid;
@@ -349,19 +258,17 @@ void PathTrackerNode::ObstacleStatusCallback(const weeder_msgs::msg::ObstacleSta
   obstacle_points_           = msg->obstacle_points;
 }
 
-void PathTrackerNode::ApplySteerMode(int mode) {
+bool PathTrackerNode::ApplySteerMode(int mode, double effective_wheelbase) {
   if (mode != 0 && mode != 1) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs, "拒绝不支持的转向模式 %d，输出停车", mode);
-    publishStop();
-    return;
+    SPDLOG_ERROR("拒绝不支持的转向模式 {}，输出停车", mode);
+    return false;
   }
   if (steer_mode_ == mode) {
-    return;
+    return true;
   }
-  steer_mode_          = mode;
-  effective_wheelbase_ = std::max(EffectiveWheelbase(wheelbase_, steer_mode_), 0.05);
-  lqr_->SetWheelbase(effective_wheelbase_);
-  RCLCPP_INFO(get_logger(), "转向模式切换为 %d (%s)，等效轴距 %.3f m", steer_mode_, steer_mode_ == 1 ? "对称阿克曼" : "单阿克曼", effective_wheelbase_);
+  steer_mode_ = mode;
+  SPDLOG_INFO("转向模式切换为 {}（{}），等效轴距 {:.3f} m", steer_mode_, steer_mode_ == 1 ? "对称阿克曼" : "单阿克曼", effective_wheelbase);
+  return true;
 }
 
 void PathTrackerNode::publishStop() {
@@ -378,7 +285,6 @@ void PathTrackerNode::publishStop() {
 }
 
 void PathTrackerNode::controlTick() {
-  std::lock_guard<std::mutex> lock(mutex_);
   const auto t            = now();
   const double since_boot = (t - boot_time_).seconds();
 
@@ -393,7 +299,11 @@ void PathTrackerNode::controlTick() {
     const bool fresh = ever_got_work_mode_ && (t - last_work_mode_time_).seconds() <= work_mode_timeout_s_;
     if (!fresh || !unmanned_) {
       if (!in_grace) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs, "未使能：需在 %s 上以 >= %.2fHz 持续发布 MODE_UNMANNED，输出停车", work_mode_topic_.c_str(), 1.0 / work_mode_timeout_s_);
+        SPDLOG_WARN(
+          "未使能：需在 {} 上以不低于 {:.2f} Hz 持续发布 MODE_UNMANNED，"
+          "输出停车",
+          work_mode_topic_,
+          1.0 / work_mode_timeout_s_);
       }
       publishStop();
       return;
@@ -403,19 +313,19 @@ void PathTrackerNode::controlTick() {
   // ---- 门控 2：RTK 位姿存在、新鲜且为固定解 ----
   if (!has_pose_) {
     if (!in_grace) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs, "等待定位数据 (%s)，输出停车", pose_topic_.c_str());
+      SPDLOG_WARN("等待定位数据（{}），输出停车", pose_topic_);
     }
     publishStop();
     return;
   }
   if ((t - last_pose_time_).seconds() > pose_timeout_s_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs, "定位数据超时 (%.2fs > %.2fs)，输出停车", (t - last_pose_time_).seconds(), pose_timeout_s_);
+    SPDLOG_WARN("定位数据超时（{:.2f}s > {:.2f}s），输出停车", (t - last_pose_time_).seconds(), pose_timeout_s_);
     publishStop();
     return;
   }
 
   if (!pose_valid_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs, "定位位姿无效（非 RTK 固定解），输出停车");
+    SPDLOG_WARN("定位位姿无效（非 RTK 固定解），输出停车");
     publishStop();
     return;
   }
@@ -423,13 +333,13 @@ void PathTrackerNode::controlTick() {
   // ---- 门控 3：存在可跟踪且未超时的路径 ----
   if (!has_path_) {
     if (!in_grace) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs, "等待路径 (%s)，输出停车", path_topic_.c_str());
+      SPDLOG_WARN("等待路径（{}），输出停车", path_topic_);
     }
     publishStop();
     return;
   }
   if ((t - last_path_time_).seconds() > path_timeout_s_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs, "路径超时 (%.2fs > %.2fs)，输出停车", (t - last_path_time_).seconds(), path_timeout_s_);
+    SPDLOG_WARN("路径超时（{:.2f}s > {:.2f}s），输出停车", (t - last_path_time_).seconds(), path_timeout_s_);
     publishStop();
     return;
   }
@@ -447,20 +357,17 @@ void PathTrackerNode::controlTick() {
   if (obstacle_decision != ObstacleGateDecision::kAllow) {
     switch (obstacle_decision) {
       case ObstacleGateDecision::kUnavailable:
-        RCLCPP_WARN_THROTTLE(
-          get_logger(),
-          *get_clock(),
-          kWarnIntervalMs,
-          "避停状态不可用或超时 (%.2fs > %.2fs)，故障码 %u，输出停车",
+        SPDLOG_WARN(
+          "避停状态不可用或超时（{:.2f}s > {:.2f}s），"
+          "输出停车",
           obstacle_status_age_s,
-          velocity_planner_status_timeout_s_,
-          fault::kVelocityPlannerUnavailable);
+          velocity_planner_status_timeout_s_);
         break;
       case ObstacleGateDecision::kSensorInvalid:
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs, "避停感知数据无效，故障码 %u，输出停车", fault::kVelocityPlannerUnavailable);
+        SPDLOG_WARN("避停感知数据无效，输出停车");
         break;
       case ObstacleGateDecision::kStopRequired:
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs, "ROI 内检测到 %u 个障碍点，故障码 %u，输出停车", obstacle_points_, fault::kObstacleInRoi);
+        SPDLOG_WARN("ROI 内检测到 {} 个障碍点，输出停车", obstacle_points_);
         break;
       case ObstacleGateDecision::kAllow:
         break;
@@ -471,36 +378,27 @@ void PathTrackerNode::controlTick() {
 
   // ---- 所有门控通过，开始运行控制器 ----
 
-  lqr_->setRobotState(robot_state_);
+  LQRInput lqr_input;
+  lqr_input.robot_state = robot_state_;
 
-  // 按上一控制周期以来的实际位移推进目标点，方式与 MegaTrak 的纯追踪一致。
-  if (first_tick_) {
-    first_tick_ = false;
-    last_x_     = robot_state_.x;
-    last_y_     = robot_state_.y;
-  } else {
-    const double travelled = std::hypot(robot_state_.x - last_x_, robot_state_.y - last_y_);
-    last_x_                = robot_state_.x;
-    last_y_                = robot_state_.y;
-    if (!lqr_->advanceGoal(travelled)) {
-      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs, "已到达路径末端，输出停车");
-      publishStop();
-      return;
-    }
+  LQROutput out;
+  if (!lqr_->ComputeCommand(lqr_input, out)) {
+    SPDLOG_INFO("已到达路径末端，输出停车");
+    publishStop();
+    return;
   }
 
-  // 根据路径段类型选择转向模式。进入和退出使用不同搜索方向，
-  // 通过 turn_mode_active_ 保持滞回，避免边界反复切换。
-  int desired_steer_mode = fallback_steer_mode_;
-  if (enable_turn_steer_mode_switch_ && path_has_waypoint_types_) {
-    if (!turn_mode_active_ && lqr_->HasTurnNear(turn_mode_enter_m_, 0.0)) {
-      turn_mode_active_ = true;
-    } else if (turn_mode_active_ && !lqr_->HasTurnNear(turn_mode_enter_m_, turn_mode_exit_m_)) {
-      turn_mode_active_ = false;
-    }
-    desired_steer_mode = turn_mode_active_ ? turn_steer_mode_ : work_steer_mode_;
+  const double lateral_error_abs = std::fabs(out.lateral_error);
+  if (lateral_error_abs > max_lateral_error_m_) {
+    SPDLOG_ERROR("横向误差 {:.3f} m > {:.3f} m，输出停车", lateral_error_abs, max_lateral_error_m_);
+    publishStop();
+    return;
   }
-  ApplySteerMode(desired_steer_mode);
+
+  if (!ApplySteerMode(out.steer_mode, out.effective_wheelbase)) {
+    publishStop();
+    return;
+  }
 
   // ---- 门控 6：车辆必须仍在跟踪目标点附近 ----
   //
@@ -511,25 +409,22 @@ void PathTrackerNode::controlTick() {
   // 2026-10-15 仿真中曾出现目标点冻结在路径起点、车辆驶出 238 米，
   // 转角为 2.4e-14 且没有任何告警的情况，所有误差指标仍显示正常。
   //
-  // 本检查放在 advanceGoal() 之后，使前向吸附先完成重新锚定；
+  // 本检查放在 ComputeCommand() 之后，使前向吸附先完成重新锚定；
   // 只有真正丢失跟踪时才会触发停车。
-  const double dist_to_goal = lqr_->distToGoal();
+  const double dist_to_goal = out.distance_to_goal;
   if (dist_to_goal > max_track_error_m_) {
-    RCLCPP_ERROR_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      kWarnIntervalMs,
-      "偏离目标 %.2f m > %.2f m（横向/航向误差可能同时为 0 —— LQR 无沿路径误差项），"
-      "输出停车。idx=%zu/%zu",
+    SPDLOG_ERROR(
+      "偏离目标 {:.2f} m > {:.2f} m"
+      "（横向/航向误差可能同时为 0，LQR 无沿路径误差项），"
+      "输出停车。idx={}/{}",
       dist_to_goal,
       max_track_error_m_,
-      lqr_->nearestIndex(),
+      out.target_index,
       path_point_count_);
     publishStop();
     return;
   }
 
-  const LQROutput out         = lqr_->getControlOutput();
   const double target_v       = out.vel_cmd.linear_v;
   const double max_speed_step = speed_ramp_mps2_ / control_hz_;
   double v                    = last_speed_cmd_;
@@ -553,11 +448,10 @@ void PathTrackerNode::controlTick() {
   cmd.steer_angle_rad = delta;
   cmd_pub_->publish(cmd);
 
-  RCLCPP_DEBUG(
-    get_logger(),
-    "mode=%d type=%u v=%.3f/%.3f m/s delta=%+.2f deg "
-    "(fb=%+.2f ff=%+.2f) e_lat=%+.3f m e_head=%+.3f rad "
-    "d_goal=%.2f m idx=%zu/%zu",
+  SPDLOG_DEBUG(
+    "mode={} type={} v={:.3f}/{:.3f} m/s delta={:+.2f} deg "
+    "(fb={:+.2f} ff={:+.2f}) e_lat={:+.3f} m "
+    "e_head={:+.3f} rad d_goal={:.2f} m idx={}/{}",
     steer_mode_,
     static_cast<unsigned>(out.target_pt.waypoint_type),
     v,
@@ -568,7 +462,7 @@ void PathTrackerNode::controlTick() {
     out.lateral_error,
     out.heading_error,
     dist_to_goal,
-    lqr_->nearestIndex(),
+    out.target_index,
     path_point_count_);
 
   if (viz_) {

@@ -1,19 +1,11 @@
 // 版权所有 2026。点云避停门控的纯逻辑判定实现。
 #include "path_tracker/obstacle_gate.hpp"
 
-namespace path_tracker
-{
+namespace path_tracker {
 
 // 根据避停状态的新鲜度、感知有效性和节点请求
 // 决定是否允许运动。
-ObstacleGateDecision EvaluateObstacleGate(
-  bool required,
-  bool has_status,
-  double status_age_s,
-  double timeout_s,
-  bool sensor_valid,
-  bool stop_required)
-{
+ObstacleGateDecision EvaluateObstacleGate(bool required, bool has_status, double status_age_s, double timeout_s, bool sensor_valid, bool stop_required) {
   if (!required) {
     return ObstacleGateDecision::kAllow;
   }
@@ -29,4 +21,4 @@ ObstacleGateDecision EvaluateObstacleGate(
   return ObstacleGateDecision::kAllow;
 }
 
-}  // 命名空间 path_tracker
+}   // namespace path_tracker

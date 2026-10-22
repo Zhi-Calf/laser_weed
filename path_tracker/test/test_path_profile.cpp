@@ -24,32 +24,35 @@ std::vector<std::pair<double, double>> makeXY(
 }
 }  // 匿名命名空间
 
-TEST(PathProfile, RejectsFewerThanTwoPoints)
+TEST(PathProfile, RejectsFewerThanThreePoints)
 {
   std::vector<TrajectoryPoint> out;
-  EXPECT_FALSE(computePathProfile({}, 0.5, &out));
+  EXPECT_FALSE(computePathProfile({}, &out));
   EXPECT_TRUE(out.empty());
-  EXPECT_FALSE(computePathProfile({{0.0, 0.0}}, 0.5, &out));
+  EXPECT_FALSE(computePathProfile({{0.0, 0.0}}, &out));
+  EXPECT_TRUE(out.empty());
+  EXPECT_FALSE(
+    computePathProfile({{0.0, 0.0}, {1.0, 0.0}}, &out));
   EXPECT_TRUE(out.empty());
 }
 
 TEST(PathProfile, RejectsNullOutput)
 {
-  const auto xy = makeXY({0.0, 1.0}, {0.0, 0.0});
-  EXPECT_FALSE(computePathProfile(xy, 0.5, nullptr));
+  const auto xy = makeXY({0.0, 1.0, 2.0}, {0.0, 0.0, 0.0});
+  EXPECT_FALSE(computePathProfile(xy, nullptr));
 }
 
 TEST(PathProfile, StraightLineHasZeroCurvatureAndHeading)
 {
-  const auto xy = makeXY({0.0, 1.0, 2.0, 3.0, 4.0}, {0.0, 0.0, 0.0, 0.0, 0.0});
+  const auto xy =
+    makeXY({0.0, 1.0, 2.0, 3.0, 4.0}, {0.0, 0.0, 0.0, 0.0, 0.0});
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(xy, 0.7, &out));
+  ASSERT_TRUE(computePathProfile(xy, &out));
   ASSERT_EQ(out.size(), 5u);
 
   for (const auto & p : out) {
     EXPECT_NEAR(p.heading, 0.0, 1e-9);
     EXPECT_NEAR(p.kappa, 0.0, 1e-9);
-    EXPECT_DOUBLE_EQ(p.v, 0.7) << "desired speed must be written into every point";
   }
 }
 
@@ -58,7 +61,7 @@ TEST(PathProfile, ArcLengthAccumulates)
   // 三段各 1 米，总弧长应为 3 米。
   const auto xy = makeXY({0.0, 1.0, 2.0, 3.0}, {0.0, 0.0, 0.0, 0.0});
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(xy, 0.5, &out));
+  ASSERT_TRUE(computePathProfile(xy, &out));
 
   EXPECT_NEAR(out.front().s, 0.0, 1e-9);
   EXPECT_NEAR(out[1].s, 1.0, 1e-9);
@@ -72,11 +75,12 @@ TEST(PathProfile, LeftTurnHasPositiveCurvature)
   // 因此计算出的曲率必须为正。
   const auto xy = makeXY({0.0, 1.0, 1.0, 1.0}, {0.0, 0.0, 1.0, 2.0});
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(xy, 0.5, &out));
+  ASSERT_TRUE(computePathProfile(xy, &out));
 
   EXPECT_GT(out[1].kappa, 0.0) << "left turn must yield positive curvature";
   EXPECT_NEAR(out[0].heading, 0.0, 1e-9);
-  EXPECT_NEAR(out[1].heading, M_PI / 2.0, 1e-9);
+  EXPECT_NEAR(out[1].heading, M_PI / 4.0, 1e-9);
+  EXPECT_NEAR(out[2].heading, M_PI / 2.0, 1e-9);
 }
 
 TEST(PathProfile, RightTurnHasNegativeCurvature)
@@ -84,44 +88,37 @@ TEST(PathProfile, RightTurnHasNegativeCurvature)
   // 先沿 +x 再沿 -y 是右转（顺时针），曲率应为负。
   const auto xy = makeXY({0.0, 1.0, 1.0, 1.0}, {0.0, 0.0, -1.0, -2.0});
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(xy, 0.5, &out));
+  ASSERT_TRUE(computePathProfile(xy, &out));
 
   EXPECT_LT(out[1].kappa, 0.0) << "right turn must yield negative curvature";
 }
 
-TEST(PathProfile, EndpointsInheritInteriorCurvature)
+TEST(PathProfile, EndpointsUseOneSidedDifferences)
 {
-  // 端点没有双侧差分模板，因此继承最近的内点值，
-  // 避免路径首尾被前瞻误判为零曲率。
   const auto xy = makeXY({0.0, 1.0, 1.0, 1.0}, {0.0, 0.0, 1.0, 2.0});
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(xy, 0.5, &out));
+  ASSERT_TRUE(computePathProfile(xy, &out));
 
-  EXPECT_DOUBLE_EQ(out.front().kappa, out[1].kappa);
-  EXPECT_DOUBLE_EQ(out.back().kappa, out[out.size() - 2].kappa);
+  EXPECT_NEAR(out.front().heading, 0.0, 1e-9);
+  EXPECT_NEAR(out.back().heading, M_PI / 2.0, 1e-9);
+  EXPECT_TRUE(std::isfinite(out.front().kappa));
+  EXPECT_TRUE(std::isfinite(out.back().kappa));
 }
 
-TEST(PathProfile, DuplicatePointsDoNotProduceNaN)
+TEST(PathProfile, RejectsDuplicatePoints)
 {
-  // 零长度线段会使曲率公式除零。
   const auto xy = makeXY({0.0, 0.0, 1.0, 2.0}, {0.0, 0.0, 0.0, 0.0});
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(xy, 0.5, &out));
-
-  for (const auto & p : out) {
-    EXPECT_TRUE(std::isfinite(p.kappa)) << "duplicate points must not yield inf/nan";
-    EXPECT_TRUE(std::isfinite(p.heading));
-    EXPECT_TRUE(std::isfinite(p.s));
-  }
+  EXPECT_FALSE(computePathProfile(xy, &out));
+  EXPECT_TRUE(out.empty());
 }
 
-TEST(PathProfile, ArcLengthIgnoresDuplicateSegments)
+TEST(PathProfile, RejectsNonAdjacentRepeatedNeighbor)
 {
-  // 重复点贡献的弧长为零。
-  const auto xy = makeXY({0.0, 0.0, 1.0, 2.0}, {0.0, 0.0, 0.0, 0.0});
+  const auto xy = makeXY({0.0, 1.0, 0.0}, {0.0, 0.0, 0.0});
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(xy, 0.5, &out));
-  EXPECT_NEAR(out.back().s, 2.0, 1e-9);
+  EXPECT_FALSE(computePathProfile(xy, &out));
+  EXPECT_TRUE(out.empty());
 }
 
 TEST(PathProfile, QuarterCircleCurvatureApproximatesTrueValue)
@@ -136,10 +133,11 @@ TEST(PathProfile, QuarterCircleCurvatureApproximatesTrueValue)
     ys.push_back(r * std::sin(th));
   }
   std::vector<TrajectoryPoint> out;
-  ASSERT_TRUE(computePathProfile(makeXY(xs, ys), 0.5, &out));
+  ASSERT_TRUE(computePathProfile(makeXY(xs, ys), &out));
 
   // 真实曲率为 1/r = 0.5，逆时针圆弧的曲率为正。
   EXPECT_GT(out[1].kappa, 0.0);
-  EXPECT_GT(out[1].kappa, 0.5 * 0.5) << "coarse sampling underestimates, allow 50%";
+  EXPECT_GT(out[1].kappa, 0.5 * 0.5)
+    << "coarse sampling underestimates, allow 50%";
   EXPECT_LT(out[1].kappa, 0.5 * 2.0);
 }

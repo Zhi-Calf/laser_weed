@@ -99,9 +99,9 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 |---|---|---|---|
 | `wheelbase` | `1.2` | **除草机真实前后轴距(m)** | 🔴 |
 | `steer_mode` | `0` | 无有效 `waypoint_types` 时的回退模式 | 🔴 |
-| `work_steer_mode` / `turn_steer_mode` | `0/1` | WORK 单阿克曼，TURN 对称阿克曼 | 🔴 |
 | `work_speed_m_s` / `turn_speed_m_s` | `0.6/0.3` | 按路径段固定基础速度 | 🟡 |
 | `lqr_target_v` | `0.6` | 无有效分段类型时的回退速度 | 🟡 |
+| `log_dir` | `~/.ros/logs` | spdlog 滚动日志目录，实车可按部署改 | 🟡 |
 | `lqr_Q_lateral/heading`、`lqr_R_steer` | 50/25/25 | **不能照抄履带调参值**：R 的语义从角速度代价变成了转向角代价，量纲不同，需重标 | 🟡 |
 
 `wheelbase` 填错会直接导致横向跟踪振荡或收敛过慢，是最关键的参数。
@@ -155,7 +155,7 @@ rosdep 装不了或想手动确认，这几个是硬依赖（对应 rosdep 键�
 | `geographiclib` | 经纬度↔ENU 投影 | ⚠️ **Jammy/Humble 是 `libgeographic-dev`；Noble/Jazzy 是 `libgeographiclib-dev`** | 两个模块 |
 | `boost` | 多边形几何适配 | `libboost-dev` | global_path_planner |
 | `yaml-cpp` | 参数写回 | `libyaml-cpp-dev` | gnss_localization |
-| `spdlog_vendor` | 滚动日志 | ROS 包，`apt install ros-humble-spdlog-vendor` | 两个模块 |
+| `spdlog_vendor` | 滚动日志 | ROS 包，`apt install ros-humble-spdlog-vendor` | global_path_planner、path_tracker |
 
 ⚠️ **geographiclib 的包名随 Ubuntu/ROS 版本变**（表里那行），装错名字会报找不到。
 先确认你的系统：`lsb_release -a` 看 Ubuntu 版本，Humble→Jammy 用 `libgeographic-dev`。
