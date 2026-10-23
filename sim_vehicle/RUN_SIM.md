@@ -137,11 +137,12 @@ ros2 topic pub --once /sim/unmanned std_msgs/msg/Bool "{data: true}"
 | 田块边界 | `/global_path_planner/boundary_points` |
 | 内缩边界 | `/global_path_planner/inner_boundary_points` |
 | 掉头关键点 | `/global_path_planner/key_points` |
-| 全覆盖路径 | `/global_path_planner/path` |
+| 全覆盖路径 | `/global_path_planner/path_points` |
 | 仿真车 | `/sim_vehicle/marker` |
 | 跟踪目标点 | `/path_tracker/target_point` |
 
-`/gnss_driver/pose` 使用 SensorDataQoS（Best Effort）。手动添加显示时
+`/gnss_driver/pose_stamped` 使用 SensorDataQoS（Best Effort），可在 RViz
+中直接添加 Pose 显示。手动订阅自定义 `/gnss_driver/pose` 时
 必须把 RViz 的 Reliability 改成 **Best Effort**。
 
 ## 六、判断成功

@@ -106,13 +106,13 @@ path_tracker:
     path_timeout_s: 1.0
 
     # 工作模式门控：与 global_path_planner、gnss_driver 共用同一条系统级
-    # /work_mode 总线（weeder_msgs/WorkMode，由 APP 或模式管理方以 latched QoS
-    # 发布）。只有 MODE_UNMANNED(1) 才接管底盘；手动(0)/标定(2) 或信号超时都停车。
+    # /work_mode 总线（weeder_msgs/WorkMode，由 APP 或模式管理方持续发布）。
+    # path_tracker 使用普通订阅 QoS。只有 MODE_UNMANNED(1) 才接管底盘；
+    # 手动(0)/标定(2) 或信号超时都停车。
     # 发布端必须以 >= 1/work_mode_timeout_s Hz 持续发布；用 --once 发一次会在
     # work_mode_timeout_s 后被判超时并停车。台架调试用：
     #   ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
     #       "{mode: 1, mode_name: unmanned}"
-    require_unmanned: true
     work_mode_timeout_s: 1.0
 
     # 点云避停门控。实车默认启用：无避停状态、状态超时或 sensor_valid=false

@@ -14,7 +14,6 @@
 
 #include "path_tracker/discrete_points_math.hpp"
 #include "path_tracker/lqr.hpp"
-#include "path_tracker/obstacle_gate.hpp"
 
 namespace path_tracker {
 
@@ -68,7 +67,6 @@ private:
   double path_timeout_s_ = 1.0;
   double work_mode_timeout_s_ = 1.0;
   double velocity_planner_status_timeout_s_ = 1.0;
-  bool require_unmanned_ = true;
   bool require_velocity_planner_ = true;
   std::string frame_id_ = "odom";
   std::string pose_topic_ = "/gnss_driver/pose";
@@ -107,7 +105,7 @@ private:
   bool obstacle_sensor_valid_ = false;
   bool obstacle_stop_required_ = true;
   uint32_t obstacle_points_ = 0;
-  bool unmanned_ = false;
+  bool autonomous_driving_mode_active_ = false;  // 自动驾驶模式是否处于激活状态
   uint8_t last_mode_ = 0;
   bool has_path_ = false;
   size_t path_point_count_ = 0;

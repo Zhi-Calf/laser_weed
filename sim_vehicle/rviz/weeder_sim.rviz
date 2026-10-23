@@ -67,6 +67,27 @@ Visualization Manager:
         Value: /global_path_planner/boundary_points
       Value: true
 
+    # ---- GNSS 标准位姿（与 gnss_driver 的 /pose_stamped 同接口）----
+    - Alpha: 1
+      Axes Length: 1.5
+      Axes Radius: 0.15
+      Class: rviz_default_plugins/Pose
+      Color: 255; 140; 0
+      Enabled: true
+      Head Length: 0.3
+      Head Radius: 0.12
+      Name: GNSS 位姿
+      Shaft Length: 1
+      Shaft Radius: 0.06
+      Shape: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /gnss_driver/pose_stamped
+      Value: true
+
     # ---- 内缩后的作业边界（field_margin 内缩量，实际作业范围）----
     - Class: rviz_default_plugins/Marker
       Enabled: true

@@ -90,7 +90,6 @@ void PathTrackerNode::loadParameters() {
   path_timeout_s_                    = declare_parameter<double>("path_timeout_s", 1.0);
   work_mode_timeout_s_               = declare_parameter<double>("work_mode_timeout_s", 1.0);
   velocity_planner_status_timeout_s_ = declare_parameter<double>("velocity_planner_status_timeout_s", 1.0);
-  require_unmanned_                  = declare_parameter<bool>("require_unmanned", true);
   require_velocity_planner_          = declare_parameter<bool>("require_velocity_planner", true);
   frame_id_                          = declare_parameter<std::string>("frame_id", "odom");
   pose_topic_                        = declare_parameter<std::string>("pose_topic", "/gnss_driver/pose");
@@ -123,6 +122,54 @@ void PathTrackerNode::loadParameters() {
   lqr_config.turn_speed_preview_m = turn_speed_preview_m_;
   lqr_config.turn_speed_hold_m    = turn_speed_hold_m_;
   lqr_->Configure(lqr_config);
+
+  SPDLOG_INFO(
+    "控制参数加载完成: control_hz={:.1f}Hz wheelbase={:.3f}m "
+    "max_steer={:.1f}° snap_forward_points={}",
+    control_hz_,
+    wheelbase_,
+    max_steer_deg_,
+    snap_forward_points_);
+  SPDLOG_INFO(
+    "速度参数: work={:.3f}m/s turn={:.3f}m/s ramp={:.3f}m/s² "
+    "preview={:.3f}m hold={:.3f}m enter={:.3f}m exit={:.3f}m",
+    work_speed_,
+    turn_speed_,
+    speed_ramp_mps2_,
+    turn_speed_preview_m_,
+    turn_speed_hold_m_,
+    turn_mode_enter_m_,
+    turn_mode_exit_m_);
+  SPDLOG_INFO(
+    "安全参数: max_lateral_error={:.3f}m max_track_error={:.3f}m "
+    "超时 pose={:.2f}s path={:.2f}s work_mode={:.2f}s "
+    "obstacle={:.2f}s 避停门控={}",
+    max_lateral_error_m_,
+    max_track_error_m_,
+    pose_timeout_s_,
+    path_timeout_s_,
+    work_mode_timeout_s_,
+    velocity_planner_status_timeout_s_,
+    require_velocity_planner_ ? "开启" : "关闭");
+  SPDLOG_INFO(
+    "话题参数: frame={} pose={} path={} work_mode={} obstacle={} cmd={} "
+    "viz={}",
+    frame_id_,
+    pose_topic_,
+    path_topic_,
+    work_mode_topic_,
+    velocity_planner_status_topic_,
+    cmd_topic_,
+    viz_);
+  SPDLOG_INFO(
+    "LQR 参数: dt={:.3f}s eps={:g} max_iter={} "
+    "Q_lateral={:.1f} Q_heading={:.1f} R_steer={:.1f}",
+    lqr_config.dt,
+    lqr_config.eps,
+    lqr_config.max_iteration,
+    lqr_config.q_lateral,
+    lqr_config.q_heading,
+    lqr_config.r_steer);
 }
 
 void PathTrackerNode::setupInterfaces() {
@@ -132,25 +179,25 @@ void PathTrackerNode::setupInterfaces() {
     poseCallback(msg);
   });
 
-  // global_path_planner 使用 transient_local（瞬态本地持久化）发布路径，
+  // global_path_planner 使用 transient_local（瞬态本地持久化）发布路径
   // 晚加入的订阅端必须使用相同持久性才能收到最后一条路径。
   const auto path_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   path_sub_           = create_subscription<weeder_msgs::msg::Path>(path_topic_, path_qos, [this](const weeder_msgs::msg::Path::SharedPtr msg) {
     pathCallback(msg);
   });
 
-  // /work_mode 是系统级底盘控制权总线，由模式管理器以锁存方式发布，
-  // 晚加入的订阅端可立即获得当前模式。QoS 与路径话题保持一致。
-  const auto mode_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
-  work_mode_sub_      = create_subscription<weeder_msgs::msg::WorkMode>(work_mode_topic_, mode_qos, [this](const weeder_msgs::msg::WorkMode::SharedPtr msg) {
+  // work_mode 使用普通订阅即可，无需额外配置 QoS。
+  work_mode_sub_ = create_subscription<weeder_msgs::msg::WorkMode>(work_mode_topic_, 10, [this](const weeder_msgs::msg::WorkMode::SharedPtr msg) {
     workModeCallback(msg);
   });
 
+  // 障碍物数据
   const auto obstacle_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable();
   obstacle_status_sub_    = create_subscription<weeder_msgs::msg::ObstacleStatus>(velocity_planner_status_topic_, obstacle_qos, [this](const weeder_msgs::msg::ObstacleStatus::SharedPtr msg) {
     ObstacleStatusCallback(msg);
   });
 
+  // 发布控制指令
   cmd_pub_ = create_publisher<weeder_msgs::msg::ChassisCmd>(cmd_topic_, 10);
   if (viz_) {
     viz_pub_ = create_publisher<visualization_msgs::msg::Marker>("/path_tracker/target_point", 10);
@@ -171,6 +218,17 @@ void PathTrackerNode::poseCallback(const weeder_msgs::msg::Pose::SharedPtr msg) 
   robot_state_.y        = msg->y;
   robot_state_.heading  = msg->yaw;
   robot_state_.linear_v = msg->speed_m_s;
+
+  SPDLOG_INFO(
+    "收到位姿: x={:.3f} y={:.3f} z={:.3f} yaw={:.2f}° "
+    "speed={:.3f}m/s sats={} valid={}",
+    msg->x,
+    msg->y,
+    msg->z,
+    msg->yaw * kRad2Deg,
+    msg->speed_m_s,
+    msg->satellites,
+    msg->valid);
 }
 
 void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) {
@@ -217,15 +275,20 @@ void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) 
 }
 
 void PathTrackerNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg) {
-  last_work_mode_time_  = now();
-  const bool first_mode = !ever_got_work_mode_;
-  ever_got_work_mode_   = true;
-  unmanned_             = (msg->mode == weeder_msgs::msg::WorkMode::MODE_UNMANNED);
+  last_work_mode_time_            = now();
+  const bool first_mode           = !ever_got_work_mode_;
+  ever_got_work_mode_             = true;
+  autonomous_driving_mode_active_ = (msg->mode == weeder_msgs::msg::WorkMode::MODE_UNMANNED);
 
   // 仅在模式变化时记录日志，避免 1 Hz 重发刷屏。
   // last_mode_ 同时用于变化检测；首条消息时其初值为 0。
   if (first_mode || msg->mode != last_mode_) {
-    SPDLOG_INFO("工作模式切换: {} -> {} ({}) -> {}", static_cast<unsigned>(last_mode_), static_cast<unsigned>(msg->mode), msg->mode_name, unmanned_ ? "无人(接管底盘)" : "非无人(输出停车)");
+    SPDLOG_INFO(
+      "工作模式切换: {} -> {} ({}) -> {}",
+      static_cast<unsigned>(last_mode_),
+      static_cast<unsigned>(msg->mode),
+      msg->mode_name,
+      autonomous_driving_mode_active_ ? "自动驾驶(接管底盘)" : "非自动驾驶(输出停车)");
     last_mode_           = msg->mode;
     accept_path_message_ = true;
   }
@@ -237,6 +300,16 @@ void PathTrackerNode::ObstacleStatusCallback(const weeder_msgs::msg::ObstacleSta
   obstacle_sensor_valid_     = msg->sensor_valid;
   obstacle_stop_required_    = msg->stop_required;
   obstacle_points_           = msg->obstacle_points;
+
+  if (obstacle_stop_required_) {
+    SPDLOG_WARN(
+      "收到避停状态: sensor_valid={} stop_required={} points={} "
+      "nearest={:.2f}m",
+      msg->sensor_valid,
+      msg->stop_required,
+      msg->obstacle_points,
+      msg->nearest_distance_m);
+  }
 }
 
 void PathTrackerNode::publishStop() {
@@ -244,7 +317,7 @@ void PathTrackerNode::publishStop() {
   zero.gear            = 0;
   zero.steer_mode      = 0;
   zero.release_brake   = false;
-  zero.estop           = true;
+  zero.estop           = false;
   zero.ctrl_mode       = false;
   zero.speed_m_s       = 0.0;
   zero.steer_angle_rad = 0.0;
@@ -256,19 +329,15 @@ void PathTrackerNode::controlTick() {
   const auto t = now();
 
   // ---- 门控 1：工作模式，也就是系统级使能信号 ----
-  // 只有 MODE_UNMANNED 才允许运动。过期的 /work_mode 按非无人模式处理：
-  // 模式管理器以 1 Hz 发布，超过 work_mode_timeout_s 未更新说明 APP 或链路失效。
-  if (require_unmanned_) {
-    const bool fresh = ever_got_work_mode_ && (t - last_work_mode_time_).seconds() <= work_mode_timeout_s_;
-    if (!fresh || !unmanned_) {
-      SPDLOG_WARN(
-        "未使能：需在 {} 上以不低于 {:.2f} Hz 持续发布 MODE_UNMANNED，"
-        "输出停车",
-        work_mode_topic_,
-        1.0 / work_mode_timeout_s_);
-      publishStop();
-      return;
-    }
+  const bool mode_fresh = ever_got_work_mode_ && (t - last_work_mode_time_).seconds() <= work_mode_timeout_s_;
+  if (!mode_fresh || !autonomous_driving_mode_active_) {
+    SPDLOG_WARN(
+      "未使能：需在 {} 上以不低于 {:.2f} Hz 持续发布 MODE_UNMANNED，"
+      "输出停车",
+      work_mode_topic_,
+      1.0 / work_mode_timeout_s_);
+    publishStop();
+    return;
   }
 
   // ---- 门控 2：RTK 位姿存在、新鲜且为固定解 ----
@@ -282,7 +351,6 @@ void PathTrackerNode::controlTick() {
     publishStop();
     return;
   }
-
   if (!pose_valid_) {
     SPDLOG_WARN("定位位姿无效（非 RTK 固定解），输出停车");
     publishStop();
@@ -302,36 +370,33 @@ void PathTrackerNode::controlTick() {
   }
 
   // ---- 门控 4：点云避停安全门控 ----
-  const double obstacle_status_age_s = has_obstacle_status_ ? (t - last_obstacle_status_time_).seconds() : 0.0;
-  const ObstacleGateDecision obstacle_decision =
-    EvaluateObstacleGate(require_velocity_planner_, has_obstacle_status_, obstacle_status_age_s, velocity_planner_status_timeout_s_, obstacle_sensor_valid_, obstacle_stop_required_);
-  if (obstacle_decision != ObstacleGateDecision::kAllow) {
-    switch (obstacle_decision) {
-      case ObstacleGateDecision::kUnavailable:
-        SPDLOG_WARN(
-          "避停状态不可用或超时（{:.2f}s > {:.2f}s），"
-          "输出停车",
-          obstacle_status_age_s,
-          velocity_planner_status_timeout_s_);
-        break;
-      case ObstacleGateDecision::kSensorInvalid:
-        SPDLOG_WARN("避停感知数据无效，输出停车");
-        break;
-      case ObstacleGateDecision::kStopRequired:
-        SPDLOG_WARN("ROI 内检测到 {} 个障碍点，输出停车", obstacle_points_);
-        break;
-      case ObstacleGateDecision::kAllow:
-        break;
+  if (require_velocity_planner_) {
+    const double obstacle_status_age_s = has_obstacle_status_ ? (t - last_obstacle_status_time_).seconds() : 0.0;
+    if (!has_obstacle_status_ || obstacle_status_age_s > velocity_planner_status_timeout_s_) {
+      SPDLOG_WARN(
+        "避停状态不可用或超时（{:.2f}s > {:.2f}s），"
+        "输出停车",
+        obstacle_status_age_s,
+        velocity_planner_status_timeout_s_);
+      publishStop();
+      return;
     }
-    publishStop();
-    return;
+    if (!obstacle_sensor_valid_) {
+      SPDLOG_WARN("避停感知数据无效，输出停车");
+      publishStop();
+      return;
+    }
+    if (obstacle_stop_required_) {
+      SPDLOG_WARN("ROI 内检测到 {} 个障碍点，输出停车", obstacle_points_);
+      publishStop();
+      return;
+    }
   }
 
   // ---- 所有门控通过，开始运行控制器 ----
 
   LQRInput lqr_input;
   lqr_input.robot_state = robot_state_;
-
   LQROutput out;
   if (!lqr_->ComputeCommand(lqr_input, out)) {
     SPDLOG_INFO("已到达路径末端，输出停车");
@@ -339,6 +404,7 @@ void PathTrackerNode::controlTick() {
     return;
   }
 
+  // 超横差保护
   const double lateral_error_abs = std::fabs(out.lateral_error);
   if (lateral_error_abs > max_lateral_error_m_) {
     SPDLOG_ERROR("横向误差 {:.3f} m > {:.3f} m，输出停车", lateral_error_abs, max_lateral_error_m_);
@@ -371,6 +437,7 @@ void PathTrackerNode::controlTick() {
     return;
   }
 
+  // 速度平滑
   const double target_v       = out.vel_cmd.linear_v;
   const double max_speed_step = speed_ramp_mps2_ / control_hz_;
   double v                    = last_speed_cmd_;

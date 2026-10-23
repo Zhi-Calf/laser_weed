@@ -3,6 +3,7 @@
 #include <tf2_ros/transform_broadcaster.h>
 
 #include <GeographicLib/LocalCartesian.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
 #include <chrono>
 #include <cstdint>
@@ -31,6 +32,7 @@ constexpr int kStatusRtkFixed = 4;   // RTK 固定解
 /// /gnss_driver/<topic>):
 ///   ~/fix            原始经纬度 (设备 INS 解算, NavSatFix)
 ///   ~/pose           修正 ENU 位姿 (weeder_msgs/Pose, 含姿态/卫星数/有效性/速度)
+///   ~/pose_stamped   修正 ENU 位姿 (geometry_msgs/PoseStamped, 供 RViz 显示)
 ///   ~/odom_raw       原始里程计 (设备中心 gnss_link + 原始测向航向, 无任何修正), **仅供标定**
 ///   ~/imu            IMU 姿态 (含 ENU yaw), sensor_msgs/Imu
 ///   ~/vel            车体系速度 (TwistWithCovarianceStamped, x 前 y 左 z 上)
@@ -82,6 +84,8 @@ private:
 private:
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr fix_pub_;
   rclcpp::Publisher<weeder_msgs::msg::Pose>::SharedPtr pose_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr
+    pose_stamped_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_raw_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   rclcpp::Publisher<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr vel_pub_;

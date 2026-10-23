@@ -2,7 +2,8 @@
 
 双天线 MEMS 惯性-卫星组合导航系统作为 GNSS 定位备选方案。
 驱动节点 `gnss_driver` 解析 `$GIAVP` 语句，发布话题
-（`/gnss_driver/fix`、`/gnss_driver/pose`、`/gnss_driver/odom_raw`、
+（`/gnss_driver/fix`、`/gnss_driver/pose`、`/gnss_driver/pose_stamped`、
+`/gnss_driver/odom_raw`、
 `/gnss_driver/imu`、`/gnss_driver/vel`、
 `/gnss_driver/origin`）。修正位姿
 `/gnss_driver/pose` 已是 ENU

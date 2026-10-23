@@ -140,8 +140,7 @@ TEST(PathTrackerObstacleIntegration, GatesChassisCommandFromStatus)
     rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   publishers.path = tester->create_publisher<Path>(
     "/global_path_planner/path", latched_qos);
-  publishers.mode = tester->create_publisher<WorkMode>(
-    "/work_mode", latched_qos);
+  publishers.mode = tester->create_publisher<WorkMode>("/work_mode", 10);
   publishers.obstacle = tester->create_publisher<ObstacleStatus>(
     "/velocity_planner/status",
     rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
@@ -212,7 +211,6 @@ TEST(PathTrackerSegmentIntegration, SwitchesSpeedAndSteerModeByPathType)
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
     rclcpp::Parameter("require_velocity_planner", false),
-    rclcpp::Parameter("require_unmanned", false),
     rclcpp::Parameter("viz", false),
     rclcpp::Parameter("wheelbase", 1.2),
     rclcpp::Parameter("work_speed_m_s", 0.6),
@@ -245,8 +243,7 @@ TEST(PathTrackerSegmentIntegration, SwitchesSpeedAndSteerModeByPathType)
     rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   publishers.path = tester->create_publisher<Path>(
     "/global_path_planner/path", latched_qos);
-  publishers.mode = tester->create_publisher<WorkMode>(
-    "/work_mode", latched_qos);
+  publishers.mode = tester->create_publisher<WorkMode>("/work_mode", 10);
   publishers.obstacle = tester->create_publisher<ObstacleStatus>(
     "/velocity_planner/status",
     rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
@@ -294,7 +291,6 @@ TEST(PathTrackerSegmentIntegration, IgnoresPathUntilWorkModeChanges)
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
     rclcpp::Parameter("require_velocity_planner", false),
-    rclcpp::Parameter("require_unmanned", false),
     rclcpp::Parameter("viz", false),
     rclcpp::Parameter("speed_ramp_mps2", 10.0),
   });
@@ -321,8 +317,7 @@ TEST(PathTrackerSegmentIntegration, IgnoresPathUntilWorkModeChanges)
     rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   publishers.path = tester->create_publisher<Path>(
     "/global_path_planner/path", latched_qos);
-  publishers.mode = tester->create_publisher<WorkMode>(
-    "/work_mode", latched_qos);
+  publishers.mode = tester->create_publisher<WorkMode>("/work_mode", 10);
   publishers.obstacle = tester->create_publisher<ObstacleStatus>(
     "/velocity_planner/status",
     rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
@@ -349,6 +344,12 @@ TEST(PathTrackerSegmentIntegration, IgnoresPathUntilWorkModeChanges)
 
   mode.mode = WorkMode::MODE_MANUAL;
   mode.mode_name = "manual";
+  SpinFor(
+    executor, publishers, pose, second_path, mode, nullptr, 0.2);
+  EXPECT_DOUBLE_EQ(last_command.speed_m_s, 0.0);
+  EXPECT_FALSE(last_command.ctrl_mode);
+
+  mode = MakeUnmannedMode();
   SpinFor(
     executor, publishers, pose, second_path, mode, nullptr, 0.3);
   EXPECT_EQ(last_command.steer_mode, 1U);

@@ -65,7 +65,7 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker
 ## 路径消息
 
 `/global_path_planner/path` 使用自定义消息 `weeder_msgs/msg/Path`，
-不再发布 `nav_msgs/Path` 和逐点 `geometry_msgs/PoseStamped`：
+供 `path_tracker` 跟踪：
 
 ```text
 std_msgs/Header header
@@ -82,6 +82,13 @@ uint8[] waypoint_types
 规划器以 `transient_local` QoS 按 10Hz 重发该消息；LQR 控制器根据
 `x/y` 计算曲率、航向和跟踪目标，并按 `waypoint_types` 在 WORK 段使用
 0.6 m/s + 单阿克曼，在 TURN 段及过渡区使用 0.3 m/s + 对称阿克曼。
+首次接收有效路径后，后续重发只刷新路径心跳；只有 `/work_mode` 实际变化
+才会重新接收路径。
+
+规划器使用 `~/path_points` 等 Marker 话题在 RViz 中显示路径。
+`gnss_driver` 同时发布标准 `/gnss_driver/pose_stamped`
+（`geometry_msgs/msg/PoseStamped`，Best Effort）供 RViz 显示姿态；
+自定义位姿消息仍是控制链路的主接口。
 
 ## 激光雷达与点云接口
 
@@ -380,19 +387,17 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 ## 安全机制
 
 `path_tracker` 任一安全门控失败都会输出零速、零转角并停车。
-下表故障码定义在 `path_tracker/include/path_tracker/fault_codes.hpp`；当前
-故障码写入节点日志，尚未通过独立 ROS 话题发布：
 
-| 门控 | 参数 | 故障码 |
-|---|---|---|
-| 工作模式必须是 UNMANNED | `work_mode_timeout_s` | 10101 |
-| RTK 位姿存在、新鲜且 `Pose.valid=true` | `pose_timeout_s` | 10102 |
-| 路径存在且新鲜 | `path_timeout_s` | 10103 |
-| 转向模式兼容阿克曼模型 | `steer_mode` | 10104 |
-| 路径未走完 | — | 10105 |
-| 未偏离跟踪目标过远 | `max_track_error_m` | 10106 |
-| ROI 内检测到障碍 | `min_obstacle_points` | 10107 |
-| 避停状态不可用、超时或感知无效 | `require_velocity_planner` / `velocity_planner_status_timeout_s` | 10108 |
+| 门控 | 参数 |
+|---|---|
+| 工作模式必须是 UNMANNED | `work_mode_timeout_s` |
+| RTK 位姿存在、新鲜且 `Pose.valid=true` | `pose_timeout_s` |
+| 路径存在且新鲜 | `path_timeout_s` |
+| 转向模式兼容阿克曼模型 | `steer_mode` |
+| 路径未走完 | — |
+| 未偏离跟踪目标过远 | `max_track_error_m` |
+| ROI 内检测到障碍 | `min_obstacle_points` |
+| 避停状态不可用、超时或感知无效 | `require_velocity_planner` / `velocity_planner_status_timeout_s` |
 
 `weeder_base` 另有：
 

@@ -103,7 +103,7 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 |---|---|---|---|
 | 订阅 | `/gnss_driver/pose` | `weeder_msgs/Pose` | `gnss_localization`（SensorDataQoS） |
 | 订阅 | `/global_path_planner/path` | `weeder_msgs/Path` | `global_path_planner`（transient_local） |
-| 订阅 | `/work_mode` | `weeder_msgs/WorkMode` | 模式管理方/APP（transient_local） |
+| 订阅 | `/work_mode` | `weeder_msgs/WorkMode` | 模式管理方/APP（普通订阅） |
 | 订阅 | `/velocity_planner/status` | `weeder_msgs/ObstacleStatus` | `velocity_planner`（reliable） |
 | 发布 | `/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
 | 发布 | `/path_tracker/target_point` | `visualization_msgs/Marker` | RViz |
@@ -136,7 +136,7 @@ LQR 根据分段类型选择速度：WORK 段默认 `0.6 m/s`，TURN 段及前�
 目录不可写时会回退到 `$ROS_HOME/logs` 或 `~/.ros/logs`；
 若仍不可写则仅保留控制台日志。
 
-**QoS 匹配是硬要求**：`gnss_driver` 用 `SensorDataQoS`（best effort）发 pose，订阅端必须是 best effort，否则一条都收不到；规划器的 path 和 `/work_mode` 都是 `transient_local`（latched），订阅端必须匹配 durability 才能让晚加入的订阅者立刻收到最后一条。本节点已按此配置。
+**QoS 配置说明**：`gnss_driver` 用 `SensorDataQoS`（best effort）发 pose，订阅端必须是 best effort，否则一条都收不到；规划器的 path 是 `transient_local`（latched），订阅端必须匹配 durability 才能让晚加入的订阅者立刻收到最后一条。`/work_mode` 使用普通订阅 QoS，不要求锁存，模式发布端需持续发送模式。
 
 ### 工作模式门控（/work_mode）
 
@@ -147,8 +147,6 @@ LQR 根据分段类型选择速度：WORK 段默认 `0.6 m/s`，TURN 段及前�
 ```bash
 ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: unmanned}"
 ```
-
-不想启用门控就把 `require_unmanned` 设为 `false`（仅台架调试用，实车务必开着）。
 
 安全门控失败时只在节点日志中告警并输出停车，不再发布心跳消息。
 
@@ -298,7 +296,6 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
 |---|---|
 | `test_lqr_kinematics.cpp` | 精确阿克曼前馈、运行时等效轴距、WORK/TURN 速度区、跟踪误差和曲率不参与降速、直线与对称阿克曼圆弧闭环、左右偏差符号、转角限幅、小位移弧长累计、沿路径盲区和前向吸附 |
 | `test_discrete_points_math.cpp` | 少于三点拒绝、空指针拒绝、直线零曲率、弧长累加、左/右转弯曲率符号、端点单边差分、相邻重合点与航向退化检查、四分之一圆曲率量级 |
-| `test_obstacle_gate.cpp` | 避停关闭、状态缺失、状态超时、感知无效、停车请求和正常放行 |
 
 闭环测试同时覆盖直线横向误差收敛和 `L_eff=L/2` 的对称阿克曼圆弧跟踪。
 后者能同时检查精确前馈、等效轴距和路径目标推进是否一致。

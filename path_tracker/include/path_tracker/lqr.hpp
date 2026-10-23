@@ -97,17 +97,17 @@ private:
 
   double ScaleSpeed() const;
 
-  // 配置与派生的权重矩阵
+private:
   LQRConfig config_;   // LQR 完整配置
   Eigen::Matrix2d Q_{Eigen::Matrix2d::Identity()};
   Eigen::MatrixXd R_{Eigen::MatrixXd::Identity(1, 1)};
 
-  // 运行时状态
+private:
   std::vector<TrajectoryPoint> path_;
   TrajectoryPoint goal_;
-  size_t target_idx_{0};   // 当前跟踪目标点索引，只前进不回退
+  size_t target_idx_{0};
   RobotState robot_state_;
-  bool turn_mode_active_{false};   // TURN 转向模式滞回状态
+  bool turn_mode_active_{false};
 };
 
 }   // namespace path_tracker

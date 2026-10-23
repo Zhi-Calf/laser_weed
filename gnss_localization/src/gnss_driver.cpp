@@ -165,6 +165,8 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   rclcpp::QoS qos_sensor = rclcpp::SensorDataQoS(rclcpp::KeepLast(5));
   fix_pub_               = create_publisher<sensor_msgs::msg::NavSatFix>("~/fix", qos_sensor);
   pose_pub_              = create_publisher<weeder_msgs::msg::Pose>("~/pose", qos_sensor);
+  pose_stamped_pub_      = create_publisher<geometry_msgs::msg::PoseStamped>(
+    "~/pose_stamped", qos_sensor);
   odom_raw_pub_          = create_publisher<nav_msgs::msg::Odometry>("~/odom_raw", qos_sensor);
   imu_pub_               = create_publisher<sensor_msgs::msg::Imu>("~/imu", qos_sensor);
   vel_pub_               = create_publisher<geometry_msgs::msg::TwistWithCovarianceStamped>("~/vel", qos_sensor);
@@ -749,6 +751,16 @@ void GnssDriver::publishPose(const GiavpData& d) {
     pose.speed_m_s       = forward_speed;
 
     pose_pub_->publish(pose);
+
+    geometry_msgs::msg::PoseStamped pose_stamped;
+    pose_stamped.header = pose.header;
+    pose_stamped.pose.position.x = base_x;
+    pose_stamped.pose.position.y = base_y;
+    pose_stamped.pose.position.z = base_z;
+    tf2::Quaternion pose_quaternion;
+    pose_quaternion.setRPY(pose.roll, pose.pitch, pose.yaw);
+    pose_stamped.pose.orientation = tf2::toMsg(pose_quaternion);
+    pose_stamped_pub_->publish(pose_stamped);
 
     if (++pose_log_counter_ >= pose_log_interval_) {
       pose_log_counter_ = 0;

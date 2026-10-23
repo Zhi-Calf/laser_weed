@@ -26,7 +26,7 @@
 import math
 
 import rclpy
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import PoseStamped, TransformStamped
 from rclpy.node import Node
 from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy,
                        qos_profile_sensor_data)
@@ -132,6 +132,8 @@ class SimVehicleNode(Node):
         # ---- 发布（模拟 gnss_driver 的输出）----
         self.pose_pub = self.create_publisher(
             Pose, "/gnss_driver/pose", self.qos_sensor)
+        self.pose_stamped_pub = self.create_publisher(
+            PoseStamped, "/gnss_driver/pose_stamped", self.qos_sensor)
         self.origin_pub = self.create_publisher(
             NavSatFix, "/gnss_driver/origin", self.qos_latched)
         self.work_mode_pub = self.create_publisher(
@@ -273,6 +275,16 @@ class SimVehicleNode(Node):
         m.valid = True
         m.speed_m_s = self.v
         self.pose_pub.publish(m)
+
+        pose_stamped = PoseStamped()
+        pose_stamped.header = m.header
+        pose_stamped.pose.position.x = m.x
+        pose_stamped.pose.position.y = m.y
+        pose_stamped.pose.position.z = m.z
+        half = m.yaw * 0.5
+        pose_stamped.pose.orientation.z = math.sin(half)
+        pose_stamped.pose.orientation.w = math.cos(half)
+        self.pose_stamped_pub.publish(pose_stamped)
 
     def publish_tf(self):
         """odom -> base_link，与 gnss_driver 广播的同一条 TF。"""
