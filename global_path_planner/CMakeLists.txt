@@ -188,9 +188,7 @@ if(BUILD_TESTING)
             --yaml ${CMAKE_CURRENT_SOURCE_DIR}/config/global_path_planner.yaml
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO)
 
-  # (这里曾经有 test_yaml_persist: "参数写回 yaml"的契约测试。它随"运行期可改的参数全删 + 参数持久化
-  #  (src/yaml_persist.hpp 与 planner_config_path) 一并删除"而移除 —— 本包不再写任何 yaml 文件。
-  #  ⚠ gnss_localization / tractor_calibration 各自那份同名实现与它们的测试不受影响。)
+  # 本包在运行期不写任何 YAML 文件。
 
   # YAML 配置契约测试: poly 顶点数量/长度/经纬度, 以及 ridge_width /
   # field_margin / first_row_margin 的取值域。

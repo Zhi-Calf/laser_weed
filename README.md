@@ -249,7 +249,7 @@ bool ctrl_mode
 ```bash
 sudo apt update
 sudo apt install -y libeigen3-dev libgeographic-dev libboost-dev \
-                    libyaml-cpp-dev libpcap-dev ros-humble-spdlog-vendor \
+                    libpcap-dev ros-humble-spdlog-vendor \
                     ros-humble-rviz2
 ```
 
@@ -417,7 +417,7 @@ colcon test-result --verbose
 `weeder_base` 覆盖协议编码、位域、有符号数、范围检查和 BMS 第二版修布局；
 `path_tracker` 覆盖四轮转向运动学、前馈、符号、闭环收敛和协议限幅；
 `global_path_planner` 覆盖弓字形规划、覆盖率、凸性校验、YAML 配置契约、严格线段相交和节点 `/path` 发布契约；
-`gnss_localization` 覆盖 GIAVP 解析、参数写回和 YAML 参数一致性。
+`gnss_localization` 覆盖 GIAVP 解析、串口组帧和 YAML 参数一致性。
 `velocity_planner` 覆盖 ROI 边界、NaN 点、障碍点数阈值、点云字段校验和停车保持；
 `path_tracker` 额外覆盖避停状态缺失、超时、无效、停车请求和正常放行。
 `rslidar_msg` 提供 `RslidarPacket` 接口生成；`rslidar_sdk` 当前没有自动化硬件

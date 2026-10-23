@@ -14,8 +14,6 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <string>
-#include <utility>
-#include <vector>
 
 #include "gnss_localization/giavp_parser.hpp"
 #include "gnss_localization/serial_port.hpp"
@@ -69,17 +67,12 @@ private:
   void publishVelocity(const GiavpData& d);
   void publishPose(const GiavpData& d);
   void publishOriginLlh();
-  rcl_interfaces::msg::SetParametersResult onSetParameters(const std::vector<rclcpp::Parameter>& parameters);
 
 private:
   double headingToEnuYaw(double heading_deg) const;
   double positionAccuracyForStatus(int status) const;
   rclcpp::Time timestampFor(const GiavpData& data) const;
   static int statusRank(int status);
-
-private:
-  enum class PersistOutcome { kPersisted, kSkippedNoPath, kFailed };
-  PersistOutcome persistParamsToYaml(const std::vector<std::pair<std::string, double>>& updates);
 
 private:
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr fix_pub_;
@@ -91,7 +84,6 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr origin_llh_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::TimerBase::SharedPtr timer_;
-  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr params_cb_handle_;
 
 private:
   SerialPort serial_;
@@ -103,7 +95,6 @@ private:
   std::string serial_port_path_;           // 串口设备号
   int baud_rate_{115200};                  // 串口波特率
   std::string frame_id_;                   // 发布的坐标系
-  std::string gnss_config_path_;           // 配置文件路径
   double heading_std_deg_{0.2};            // 航向标准差 (deg)
   double acc_rtk_fixed_{0.02};             // rtk 固定解
   double acc_rtk_float_{0.3};              // rtk 浮点解
@@ -112,9 +103,6 @@ private:
   double calib_offset_x_{0.0};             // 杆臂 x (m, 车体系: 前 +x)
   double calib_offset_y_{0.0};             // 杆臂 y (m, 车体系: 左 +y)
   double calib_offset_heading_{0.0};       // 航向安装偏角 (rad)
-  double calib_offset_max_xy_{2.5};        // calib_offset_x/y 范围上限 (m, 绝对杆臂长度)
-  double calib_offset_max_heading_{0.6};   // calib_offset_heading 范围上限 (rad, ≈34°)
-  mutable std::mutex calib_mutex_;         // 保护 calib_offset_* (参数回调 vs 定时器线程)
   bool debug_giavp_{false};                // 是否打印 giavp 数据到日志
   int gnss_log_interval_{500};             // GNSS 状态日志条数间隔
   int pose_log_interval_{10};              // 位姿日志条数间隔

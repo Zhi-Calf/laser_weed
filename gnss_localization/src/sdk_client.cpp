@@ -462,7 +462,7 @@ void SdkClient::clearRtcmQueue() {
 bool SdkClient::openSerial() {
   std::lock_guard<std::mutex> lock(serial_mutex_);
   if (!serial_->open(serial_port_, serial_baud_)) {
-    SPDLOG_WARN("打开串口 {} 失败", serial_port_);
+    SPDLOG_WARN("打开串口 {} 失败: {}", serial_port_, serial_->last_error());
     return false;
   }
   SPDLOG_INFO("串口已打开: {}", serial_port_);

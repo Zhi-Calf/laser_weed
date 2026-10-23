@@ -248,6 +248,7 @@ bool NtripClient::checkGga(const std::string& line) const {
 // 打开串口 (失败不记日志, 由调用方按节奏记录)。每次都重新打开, 确保干净的重连状态。
 bool NtripClient::openSerial() {
   if (!serial_->open(serial_port_, serial_baud_)) {
+    SPDLOG_WARN("打开串口 {} 失败: {}", serial_port_, serial_->last_error());
     return false;
   }
   SPDLOG_INFO("串口已打开: {}", serial_port_);

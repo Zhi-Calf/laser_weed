@@ -16,7 +16,7 @@
 启动方式：
 
 ```bash
-# 单独启动定位 (杆臂/航向偏角由标定写回, 无需 launch 参数)
+# 单独启动定位（杆臂/航向偏角从 YAML 读取）
 ros2 launch gnss_localization localization.launch.py
 
 # 全栈（双天线 GNSS 为唯一驱动，无需切换参数）
@@ -82,8 +82,8 @@ ros2 launch tractor_bringup bringup.launch.py
 
 - `calib_offset_x`：纵向 (X 向前为正)，出厂初值 ≈ 前方 0.5 m
 - `calib_offset_y`：横向 (Y 向左为正；主机不在纵向中轴线上时非零)
-- 两者是**绝对杆臂**，由 `tractor_calibration` 的原地旋转标定测出后写回
-  `config/gnss_driver.yaml` 并立即生效 —— 不需要现场手工填数，也不再有"名义杆臂"这一层。
+- 两者是**绝对杆臂**，由 `tractor_calibration` 的原地旋转标定测出后写入
+  `config/gnss_driver.yaml`，重启 `gnss_driver` 后生效。
 - 垂向高度不参与杆臂换算（标定只有 x/y/heading 三个量）：`pose` 的 z 即设备中心高程，
   `base_link -> gnss_link` 静态 TF 也不再发布。
 

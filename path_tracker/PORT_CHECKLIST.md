@@ -44,7 +44,7 @@
 | `log_dir` | `/opt/agri/logs` | 除草机日志目录（如 `~/logs`） | 🟡 |
 | `frame_id` | `gnss_link` | 保持 `gnss_link` 即可（除非除草机 TF 树另有约定） | 🟢 |
 
-**为什么杆臂 🔴 必须重标**：`calib_offset_*` 是天线安装位置的物理量，履带车 x=0.5m 是它的天线装在前部 0.5m 处。除草机天线装在别的位置，这个值就不一样。GNSS 用它做杆臂补偿把天线坐标换算到 base_link（`gnss_driver.cpp:651`）——**填错会让 `/gnss_driver/pose` 整体偏移**，下游规划和控制全跟着错，激光打偏。必须按除草机实际安装测量填入，或用 `tractor_calibration` 标定后写回。
+**为什么杆臂 🔴 必须重标**：`calib_offset_*` 是天线安装位置的物理量，履带车 x=0.5m 是它的天线装在前部 0.5m 处。除草机天线装在别的位置，这个值就不一样。GNSS 用它做杆臂补偿把天线坐标换算到 base_link（`gnss_driver.cpp:651`）——**填错会让 `/gnss_driver/pose` 整体偏移**，下游规划和控制全跟着错，激光打偏。必须按除草机实际安装测量后写入 YAML，或由 `tractor_calibration` 标定后更新 YAML，再重启节点。
 
 文件：`~/ros2_ws/src/gnss_localization/config/ntrip_client.yaml`（方案 A）
 
@@ -154,7 +154,6 @@ rosdep 装不了或想手动确认，这几个是硬依赖（对应 rosdep 键�
 | `eigen` | 矩阵/几何 | `libeigen3-dev` | 两个模块 + path_tracker |
 | `geographiclib` | 经纬度↔ENU 投影 | ⚠️ **Jammy/Humble 是 `libgeographic-dev`；Noble/Jazzy 是 `libgeographiclib-dev`** | 两个模块 |
 | `boost` | 多边形几何适配 | `libboost-dev` | global_path_planner |
-| `yaml-cpp` | 参数写回 | `libyaml-cpp-dev` | gnss_localization |
 | `spdlog_vendor` | 滚动日志 | ROS 包，`apt install ros-humble-spdlog-vendor` | global_path_planner、path_tracker |
 
 ⚠️ **geographiclib 的包名随 Ubuntu/ROS 版本变**（表里那行），装错名字会报找不到。
@@ -163,7 +162,7 @@ rosdep 装不了或想手动确认，这几个是硬依赖（对应 rosdep 键�
 装完验证一下关键库在不在：
 
 ```bash
-dpkg -l | grep -E 'libeigen3|libgeographic|libboost-dev|libyaml-cpp'
+dpkg -l | grep -E 'libeigen3|libgeographic|libboost-dev'
 ros2 pkg prefix spdlog_vendor   # 能打印路径说明 spdlog_vendor 就位
 ```
 

@@ -32,7 +32,6 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(weeder_msgs REQUIRED)
 find_package(spdlog_vendor REQUIRED)
 find_package(spdlog REQUIRED)
-find_package(yaml REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 # GeographicLib (provides LocalCartesian geodetic projection).
@@ -94,6 +93,7 @@ target_compile_definitions(gnss_logging PRIVATE
 add_executable(gnss_driver_node
   src/gnss_driver_main.cpp
   src/serial_port.cpp
+  src/nmea_line_assembler.cpp
   src/giavp_parser.cpp
   src/gnss_driver.cpp
 )
@@ -119,7 +119,6 @@ target_link_libraries(gnss_driver_node
   gnss_logging
   ${GEOGRAPHIC_LIBRARY}
   spdlog::spdlog
-  ${yaml_LIBRARIES}
 )
 
 # 让 SPDLOG_* 宏携带源码文件名与行号（source location）
@@ -130,6 +129,7 @@ target_compile_definitions(gnss_driver_node PRIVATE
 add_executable(ntrip_client_node
   src/ntrip_client_main.cpp
   src/serial_port.cpp
+  src/nmea_line_assembler.cpp
   src/ntrip_client.cpp
 )
 
@@ -156,6 +156,7 @@ if(QXWZ_SDK_AVAILABLE)
   add_executable(sdk_client_node
     src/sdk_client_main.cpp
     src/serial_port.cpp
+    src/nmea_line_assembler.cpp
     src/sdk_client.cpp
   )
 
@@ -223,7 +224,7 @@ install(PROGRAMS
 if(BUILD_TESTING)
   # 参数与 yaml 一致性检查 (脚本在仓库根 scripts/, 各包共用同一份): 代码里 declare_parameter
   # 了但 yaml 漏写的键, 现场只表现为"这个参数改了没用", 用构建期测试拦住
-  # (calib_offset_max_xy / calib_offset_max_heading 就这样漏过)。
+  # (参数名拼写不一致或 YAML 漏键会在这里暴露)。
   # 三个 yaml 一起比: 脚本按"并集"判据, 键写在哪个节点的 yaml 里都算已配置。
   find_package(ament_cmake_test REQUIRED)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -242,15 +243,16 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/config
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO)
 
-  # 参数写回 yaml 的契约 (src/yaml_persist.hpp):
-  # 只改目标节点、保留注释与缩进、写后解析校验、保持文件权限、支持软链与并发锁。
   find_package(ament_cmake_gtest REQUIRED)
-  ament_add_gtest(test_yaml_persist test/test_yaml_persist.cpp)
-  target_include_directories(test_yaml_persist PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(test_yaml_persist
-    ${yaml_LIBRARIES}
-    Threads::Threads
+  ament_add_gtest(test_serial_port
+    test/test_serial_port.cpp
+    src/serial_port.cpp
+    src/nmea_line_assembler.cpp
   )
+  target_include_directories(test_serial_port PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_link_libraries(test_serial_port Threads::Threads)
 
   # $GIAVP 解析器的有效性校验: 数值字段出现 nan/inf -> 整句判无效
   # (不给下游发带 NaN 的 fix/pose/imu/vel)。
