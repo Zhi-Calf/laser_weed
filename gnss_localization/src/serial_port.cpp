@@ -2,22 +2,20 @@
 
 #include <fcntl.h>
 #include <poll.h>
-#include <sys/ioctl.h>
+#include <spdlog/spdlog.h>
 #include <termios.h>
 #include <unistd.h>
 
-#include <algorithm>
 #include <cerrno>
 #include <system_error>
-#include <vector>
 
 namespace gnss_localization {
 
 namespace {
 
-// 生成带系统错误码的可读错误信息。
-std::string ErrnoMessage(const std::string& action) {
-  return action + ": " + std::error_code(errno, std::generic_category()).message();
+// 生成包含系统错误码的可读信息。
+std::string ErrnoMessage(int error_code, const std::string& action) {
+  return action + ": " + std::error_code(error_code, std::generic_category()).message();
 }
 
 }   // namespace
@@ -28,233 +26,251 @@ SerialPort::~SerialPort() {
   close();
 }
 
-// 打开串口并配置为 8N1 原始模式；同时申请进程级独占。
+// 打开串口并配置为 8N1 原始模式。
 bool SerialPort::open(const std::string& device, int baud_rate) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  CloseUnlocked();
-
   const std::optional<speed_t> speed = BaudToSpeed(baud_rate);
   if (!speed.has_value()) {
-    SetErrorUnlocked("不支持的串口波特率 " + std::to_string(baud_rate) + "（支持 9600/19200/38400/57600/115200/230400/460800/921600）");
+    SPDLOG_ERROR(
+      "不支持的串口波特率 {}（支持 "
+      "9600/19200/38400/57600/115200/230400/460800/921600）",
+      baud_rate);
     return false;
   }
+
+  close();
 
   fd_ = ::open(device.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
   if (fd_ < 0) {
-    SetErrorUnlocked(ErrnoMessage("打开串口 " + device + " 失败"));
-    return false;
-  }
-
-  if (::ioctl(fd_, TIOCEXCL) != 0) {
-    SetErrorUnlocked(ErrnoMessage("设置串口独占失败"));
-    CloseUnlocked();
+    const int error_code = errno;
+    SPDLOG_ERROR("{}", ErrnoMessage(error_code, "打开串口 " + device + " 失败"));
     return false;
   }
 
   termios tty{};
   if (tcgetattr(fd_, &tty) != 0) {
-    SetErrorUnlocked(ErrnoMessage("读取串口参数失败"));
-    CloseUnlocked();
+    const int error_code = errno;
+    SPDLOG_ERROR("{}", ErrnoMessage(error_code, "读取串口 " + device + " 参数失败"));
+    close();
     return false;
   }
 
   if (cfsetispeed(&tty, *speed) != 0 || cfsetospeed(&tty, *speed) != 0) {
-    SetErrorUnlocked(ErrnoMessage("设置串口波特率失败"));
-    CloseUnlocked();
+    const int error_code = errno;
+    SPDLOG_ERROR("{}", ErrnoMessage(error_code, "设置串口 " + device + " 波特率失败"));
+    close();
     return false;
   }
 
-  // 8N1、无软硬件流控，并禁止关闭时拉低 DTR。
+  // 8N1: 8 数据位、无校验、1 停止位。
   tty.c_cflag &= ~CSTOPB;
   tty.c_cflag &= ~CSIZE;
   tty.c_cflag &= ~CRTSCTS;
   tty.c_cflag &= ~PARENB;
   tty.c_cflag |= CLOCAL | CREAD | CS8;
+
+  // 关闭时禁止拉低 DTR，避免接收机复位。
   tty.c_cflag &= ~HUPCL;
 
-  tty.c_iflag &= ~(IXON | IXOFF | IXANY | IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
+  // 原始输入，不做流控或转义。
+  tty.c_iflag &= ~(IXON | IXOFF | IXANY);
+  tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
+
+  // 原始输出，不做后处理。
   tty.c_oflag &= ~OPOST;
+
+  // 关闭规范模式、回显和信号。
   tty.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
   tty.c_cc[VMIN]  = 0;
   tty.c_cc[VTIME] = 0;
 
   if (tcsetattr(fd_, TCSANOW, &tty) != 0) {
-    SetErrorUnlocked(ErrnoMessage("应用串口参数失败"));
-    CloseUnlocked();
+    const int error_code = errno;
+    SPDLOG_ERROR("{}", ErrnoMessage(error_code, "应用串口 " + device + " 参数失败"));
+    close();
     return false;
   }
   if (tcflush(fd_, TCIOFLUSH) != 0) {
-    SetErrorUnlocked(ErrnoMessage("清空串口缓冲失败"));
-    CloseUnlocked();
+    const int error_code = errno;
+    SPDLOG_ERROR("{}", ErrnoMessage(error_code, "清空串口 " + device + " 缓冲失败"));
+    close();
     return false;
   }
 
-  line_assembler_.Reset();
-  last_error_.clear();
+  line_pos_ = 0;
   return true;
 }
 
-// 关闭串口并清空当前组帧状态。
+// 关闭串口并清空当前行缓冲。
 void SerialPort::close() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  CloseUnlocked();
+  if (fd_ >= 0) {
+    const int fd = fd_;
+    fd_          = -1;
+    if (::close(fd) != 0) {
+      const int error_code = errno;
+      SPDLOG_ERROR("关闭串口失败: {}", ErrnoMessage(error_code, "close"));
+    }
+  }
+  line_pos_ = 0;
 }
 
-// 返回当前串口是否仍处于打开状态。
+// 返回串口是否已打开。
 bool SerialPort::is_open() const {
-  std::lock_guard<std::mutex> lock(mutex_);
   return fd_ >= 0;
 }
 
-// 在整次写入共享的总超时内发送全部字节；
-// 致命错误会关闭串口。
-bool SerialPort::write_raw(const char* data, std::size_t size, std::chrono::milliseconds timeout) {
-  std::lock_guard<std::mutex> lock(mutex_);
+// 写入原始字节，缓冲区满时最多等待 1 秒。
+bool SerialPort::write_raw(const char* data, std::size_t size) {
   if (fd_ < 0) {
-    SetErrorUnlocked("串口未打开");
+    SPDLOG_ERROR("串口写入失败: 串口未打开");
     return false;
   }
-  if (data == nullptr && size > 0) {
-    SetErrorUnlocked("串口写入数据为空");
+  if (data == nullptr) {
+    if (size == 0) {
+      return true;
+    }
+    SPDLOG_ERROR("串口写入失败: 数据为空");
     return false;
-  }
-  if (size == 0) {
-    return true;
   }
 
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
   std::size_t written = 0;
   while (written < size) {
-    if (std::chrono::steady_clock::now() >= deadline) {
-      SetErrorUnlocked("串口写入超时");
-      CloseUnlocked();
-      return false;
-    }
     const ssize_t count = ::write(fd_, data + written, size - written);
     if (count > 0) {
       written += static_cast<std::size_t>(count);
       continue;
     }
     if (count == 0) {
-      SetErrorUnlocked("串口写入返回 0 字节");
-      CloseUnlocked();
+      SPDLOG_ERROR("串口写入失败: write 返回 0 字节");
+      close();
       return false;
     }
     if (errno == EINTR) {
       continue;
     }
-    if (errno != EAGAIN && errno != EWOULDBLOCK) {
-      SetErrorUnlocked(ErrnoMessage("串口写入失败"));
-      CloseUnlocked();
-      return false;
-    }
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now >= deadline) {
-      SetErrorUnlocked("串口写入超时");
-      CloseUnlocked();
-      return false;
-    }
-    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
-    const int wait_ms    = static_cast<int>(std::max<int64_t>(1, remaining.count()));
-
-    pollfd pfd{fd_, POLLOUT, 0};
-    const int poll_result = ::poll(&pfd, 1, wait_ms);
-    if (poll_result < 0) {
-      if (errno == EINTR) {
-        continue;
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      pollfd pfd{fd_, POLLOUT, 0};
+      const int poll_result = ::poll(&pfd, 1, 1000);
+      if (poll_result < 0) {
+        const int error_code = errno;
+        if (error_code == EINTR) {
+          continue;
+        }
+        SPDLOG_ERROR("{}", ErrnoMessage(error_code, "等待串口可写失败"));
+        close();
+        return false;
       }
-      SetErrorUnlocked(ErrnoMessage("等待串口可写失败"));
-      CloseUnlocked();
-      return false;
+      if (poll_result == 0) {
+        SPDLOG_ERROR("串口写入超时");
+        close();
+        return false;
+      }
+      if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+        SPDLOG_ERROR("串口写通道已失效");
+        close();
+        return false;
+      }
+      continue;
     }
-    if (poll_result == 0) {
-      SetErrorUnlocked("串口写入超时");
-      CloseUnlocked();
-      return false;
-    }
-    if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
-      SetErrorUnlocked("串口写通道已失效");
-      CloseUnlocked();
-      return false;
-    }
+    const int error_code = errno;
+    SPDLOG_ERROR("{}", ErrnoMessage(error_code, "串口写入失败"));
+    close();
+    return false;
   }
   return true;
 }
 
-// 非阻塞读取当前所有可用字节，
-// 并在锁外回调完整 NMEA 行。
+// 非阻塞读取完整行，返回本次处理的行数。
 int SerialPort::read_lines(const std::function<void(const std::string&)>& line_callback) {
-  std::vector<std::string> lines;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (fd_ < 0) {
-      SetErrorUnlocked("串口未打开");
-      return 0;
-    }
-
-    while (true) {
-      pollfd pfd{fd_, POLLIN, 0};
-      const int poll_result = ::poll(&pfd, 1, 0);
-      if (poll_result < 0) {
-        if (errno == EINTR) {
-          continue;
-        }
-        SetErrorUnlocked(ErrnoMessage("串口读取轮询失败"));
-        CloseUnlocked();
-        break;
-      }
-      if (poll_result == 0) {
-        break;
-      }
-      if ((pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0) {
-        SetErrorUnlocked("串口读通道已失效");
-        CloseUnlocked();
-        break;
-      }
-      if ((pfd.revents & POLLIN) == 0) {
-        break;
-      }
-
-      const ssize_t count = ::read(fd_, read_buf_, kReadBufSize);
-      if (count < 0) {
-        if (errno == EINTR) {
-          continue;
-        }
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-          break;
-        }
-        SetErrorUnlocked(ErrnoMessage("串口读取失败"));
-        CloseUnlocked();
-        break;
-      }
-      if (count == 0) {
-        SetErrorUnlocked("串口读取返回 0 字节");
-        CloseUnlocked();
-        break;
-      }
-
-      line_assembler_.Push(read_buf_, static_cast<std::size_t>(count), [&lines](const std::string& line) {
-        lines.push_back(line);
-      });
-    }
+  if (fd_ < 0) {
+    return 0;
   }
 
-  if (line_callback) {
-    for (const std::string& line : lines) {
-      line_callback(line);
+  int lines_processed = 0;
+  while (true) {
+    pollfd pfd{fd_, POLLIN, 0};
+    const int poll_result = ::poll(&pfd, 1, 0);
+    if (poll_result < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      const int error_code = errno;
+      SPDLOG_ERROR("{}", ErrnoMessage(error_code, "串口读取轮询失败"));
+      close();
+      break;
+    }
+    if (poll_result == 0) {
+      break;
+    }
+    if ((pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0) {
+      SPDLOG_ERROR("串口读通道已失效");
+      close();
+      break;
+    }
+    if ((pfd.revents & POLLIN) == 0) {
+      break;
+    }
+
+    const ssize_t count = ::read(fd_, read_buf_, kReadBufSize);
+    if (count < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        break;
+      }
+      const int error_code = errno;
+      SPDLOG_ERROR("{}", ErrnoMessage(error_code, "串口读取失败"));
+      close();
+      break;
+    }
+    if (count == 0) {
+      break;
+    }
+
+    for (ssize_t i = 0; i < count; ++i) {
+      const unsigned char byte = static_cast<unsigned char>(read_buf_[i]);
+      if (byte == '\n' || byte == '\r') {
+        std::size_t length = line_pos_;
+        if (length > 0 && line_buf_[length - 1] == '\r') {
+          --length;
+        }
+        if (length > 0) {
+          line_callback(std::string(line_buf_, length));
+          ++lines_processed;
+        }
+        line_pos_ = 0;
+        continue;
+      }
+      if (byte == '$') {
+        if (line_pos_ > 0) {
+          if (line_buf_[0] != '$' || line_pos_ > 1) {
+            line_callback(std::string(line_buf_, line_pos_));
+            ++lines_processed;
+          }
+          line_pos_ = 0;
+        }
+        line_buf_[line_pos_++] = static_cast<char>(byte);
+        continue;
+      }
+      if (byte < 0x20 || byte > 0x7e) {
+        if (line_pos_ > 0 && line_buf_[0] == '$') {
+          line_callback(std::string(line_buf_, line_pos_));
+          ++lines_processed;
+        }
+        line_pos_ = 0;
+        continue;
+      }
+      if (line_pos_ < kLineBufSize - 1) {
+        line_buf_[line_pos_++] = static_cast<char>(byte);
+      } else {
+        line_pos_ = 0;
+      }
     }
   }
-  return static_cast<int>(lines.size());
+  return lines_processed;
 }
 
-// 返回最近一次串口操作的错误描述。
-std::string SerialPort::last_error() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return last_error_;
-}
-
-// 将标准波特率映射为 termios 常量；不支持时返回空。
+// 将标准波特率映射为 termios 常量。
 std::optional<speed_t> SerialPort::BaudToSpeed(int baud_rate) {
   switch (baud_rate) {
     case 9600:
@@ -276,20 +292,6 @@ std::optional<speed_t> SerialPort::BaudToSpeed(int baud_rate) {
     default:
       return std::nullopt;
   }
-}
-
-// 在已持有互斥锁时关闭 fd 并清空组帧状态。
-void SerialPort::CloseUnlocked() {
-  if (fd_ >= 0) {
-    ::close(fd_);
-    fd_ = -1;
-  }
-  line_assembler_.Reset();
-}
-
-// 在已持有互斥锁时保存错误信息。
-void SerialPort::SetErrorUnlocked(const std::string& message) {
-  last_error_ = message;
 }
 
 }   // namespace gnss_localization

@@ -16,6 +16,7 @@
 #include <iomanip>
 #include <sstream>
 
+#include "gnss_localization/gga_parser.hpp"
 #include "gnss_localization/logging.hpp"
 #include "gnss_localization/serial_port.hpp"
 
@@ -194,61 +195,9 @@ std::string NtripClient::buildRequest() const {
   return request.str();
 }
 
-// GGA 校验: 语句类型必须为 $xxGGA、异或校验和正确, 且定位状态 (Fix Quality) 有效。
-bool NtripClient::checkGga(const std::string& line) const {
-  if (line.size() < 6 || line[0] != '$' || line.compare(3, 3, "GGA") != 0) {
-    return false;
-  }
-  const size_t star = line.find('*');
-  if (star == std::string::npos || star + 3 > line.size()) {
-    return false;
-  }
-  unsigned char cs = 0;
-  for (size_t i = 1; i < star; ++i) {
-    cs ^= static_cast<unsigned char>(line[i]);
-  }
-  char hex[3]                    = {line[star + 1], line[star + 2], 0};
-  char* end                      = nullptr;
-  const unsigned long parsed_val = std::strtoul(hex, &end, 16);
-  if (end != hex + 2) {
-    return false;   // 校验和字段不是合法的 2 位十六进制
-  }
-  const unsigned int expected = static_cast<unsigned int>(parsed_val);
-  if (cs != expected) {
-    return false;
-  }
-
-  // 校验定位状态 (Fix Quality): 过滤掉无效定位 (0) 的 GGA,
-  // 避免把接收机尚未定位的位置上传给 NTRIP caster, 导致选错差分源。
-  // 字段序 (逗号分隔): 1=类型,2=时间,3=纬度,4=纬度半球,5=经度,6=经度半球,7=FixQuality,8=卫星数,...
-  // 故 Fix Quality 是第 7 个字段 = 第 6 个逗号之后。
-  size_t comma_count = 0;
-  size_t field_start = 0;
-  for (size_t i = 1; i < star; ++i) {
-    if (line[i] == ',') {
-      ++comma_count;
-      if (comma_count == 6) {
-        field_start = i + 1;   // 第 7 个字段 (Fix Quality) 起始位置
-        break;
-      }
-    }
-  }
-  if (comma_count != 6) {
-    return false;   // 字段不足, 无法判断定位状态
-  }
-  const size_t field_end        = line.find(',', field_start);
-  const std::string fix_quality = (field_end == std::string::npos || field_end > star) ? line.substr(field_start, star - field_start) : line.substr(field_start, field_end - field_start);
-  if (fix_quality.empty()) {
-    return false;
-  }
-  const int quality = std::atoi(fix_quality.c_str());
-  return quality > 0;   // 0 = 无效定位, 其余 (1/2/4/5/6...) 均可用于差分请求
-}
-
-// 打开串口 (失败不记日志, 由调用方按节奏记录)。每次都重新打开, 确保干净的重连状态。
+// 打开串口；失败详情由 SerialPort 记录。每次都重新打开, 确保干净的重连状态。
 bool NtripClient::openSerial() {
   if (!serial_->open(serial_port_, serial_baud_)) {
-    SPDLOG_WARN("打开串口 {} 失败: {}", serial_port_, serial_->last_error());
     return false;
   }
   SPDLOG_INFO("串口已打开: {}", serial_port_);
@@ -260,7 +209,7 @@ bool NtripClient::openSerial() {
 std::optional<std::string> NtripClient::tryReadGga() {
   std::optional<std::string> result;
   serial_->read_lines([&](const std::string& line) {
-    if (checkGga(line)) {
+    if (IsValidGga(line)) {
       result = line + "\r\n";   // 多次命中时后帧覆盖前帧, 正好取最新
     }
   });
@@ -274,6 +223,9 @@ std::optional<std::pair<std::string, std::chrono::steady_clock::time_point>> Ntr
   while (running_ && std::chrono::steady_clock::now() < deadline) {
     if (auto gga = tryReadGga()) {
       return std::make_pair(std::move(*gga), std::chrono::steady_clock::now());
+    }
+    if (!serial_->is_open()) {
+      return std::nullopt;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
@@ -480,6 +432,10 @@ NtripClient::SessionEnd NtripClient::runSession(int socket_fd, const std::string
   while (running_) {
     // 更新 GGA: 每次循环都尝试读取最新的 GGA (非阻塞)。
     auto gga = tryReadGga();
+    if (!serial_->is_open()) {
+      SPDLOG_WARN("串口 {} 读取失败, 重建链路", serial_port_);
+      return SessionEnd::kDisconnected;
+    }
     if (gga) {
       latest_gga = *gga;
     }
@@ -580,7 +536,11 @@ void NtripClient::workerLoop() {
     SPDLOG_INFO("等待串口 GGA ...");
     const auto first_gga = waitForGga(first_gga_timeout_sec_);
     if (!first_gga) {
-      SPDLOG_WARN("等待首个 GGA 超时, 200ms 后重试");
+      if (!serial_->is_open()) {
+        SPDLOG_WARN("串口 {} 读取失败, 200ms 后重连", serial_port_);
+      } else {
+        SPDLOG_WARN("等待首个 GGA 超时, 200ms 后重试");
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
       continue;
     }
@@ -603,7 +563,11 @@ void NtripClient::workerLoop() {
     // ---- 4. 数据交互 (内层)。 ----
     const auto fresh_gga = waitForGga(gga_refresh_timeout_sec_);
     if (!fresh_gga) {
-      SPDLOG_WARN("NTRIP 连接成功后未取得新 GGA, 重建链路");
+      if (!serial_->is_open()) {
+        SPDLOG_WARN("串口 {} 读取失败, 重建链路", serial_port_);
+      } else {
+        SPDLOG_WARN("NTRIP 连接成功后未取得新 GGA, 重建链路");
+      }
       ::close(socket_fd);
       continue;
     }

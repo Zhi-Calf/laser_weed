@@ -1,5 +1,4 @@
-#ifndef GNSS_LOCALIZATION_LOGGING_H_
-#define GNSS_LOCALIZATION_LOGGING_H_
+#pragma once
 
 #include <cstddef>
 #include <string>
@@ -19,5 +18,3 @@ struct LogConfig {
 void ConfigureLogging(const LogConfig& config);
 
 }   // namespace gnss_localization
-
-#endif   // GNSS_LOCALIZATION_LOGGING_H_

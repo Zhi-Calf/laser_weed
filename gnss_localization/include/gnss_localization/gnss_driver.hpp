@@ -92,23 +92,23 @@ private:
   mutable std::mutex datum_mutex_;   // 保护 datum_proj_ (防御性: 当前读写均在 timer 回调线程, 无跨线程竞争)
 
 private:
-  std::string serial_port_path_;           // 串口设备号
-  int baud_rate_{115200};                  // 串口波特率
-  std::string frame_id_;                   // 发布的坐标系
-  double heading_std_deg_{0.2};            // 航向标准差 (deg)
-  double acc_rtk_fixed_{0.02};             // rtk 固定解
-  double acc_rtk_float_{0.3};              // rtk 浮点解
-  double acc_rtd_{1.0};                    // rtk 动态解
-  double acc_spp_{1.5};                    // spp 解
-  double calib_offset_x_{0.0};             // 杆臂 x (m, 车体系: 前 +x)
-  double calib_offset_y_{0.0};             // 杆臂 y (m, 车体系: 左 +y)
-  double calib_offset_heading_{0.0};       // 航向安装偏角 (rad)
-  bool debug_giavp_{false};                // 是否打印 giavp 数据到日志
-  int gnss_log_interval_{500};             // GNSS 状态日志条数间隔
-  int pose_log_interval_{10};              // 位姿日志条数间隔
-  double giavp_timeout_sec_{1.0};          // 无有效 GIAVP 数据超时
-  bool use_gps_timestamp_{true};           // 是否使用 GIAVP GPS 时间戳
-  int gps_utc_leap_seconds_{18};           // GPS 与 UTC 当前闰秒差
+  std::string serial_port_path_;       // 串口设备号
+  int baud_rate_{115200};              // 串口波特率
+  std::string frame_id_;               // 发布的坐标系
+  double heading_std_deg_{0.2};        // 航向标准差 (deg)
+  double acc_rtk_fixed_{0.02};         // rtk 固定解
+  double acc_rtk_float_{0.3};          // rtk 浮点解
+  double acc_rtd_{1.0};                // rtk 动态解
+  double acc_spp_{1.5};                // spp 解
+  double calib_offset_x_{0.0};         // 杆臂 x (m, 车体系: 前 +x)
+  double calib_offset_y_{0.0};         // 杆臂 y (m, 车体系: 左 +y)
+  double calib_offset_heading_{0.0};   // 航向安装偏角 (rad)
+  bool debug_giavp_{false};            // 是否打印 giavp 数据到日志
+  int gnss_log_interval_{500};         // GNSS 状态日志条数间隔
+  int pose_log_interval_{10};          // 位姿日志条数间隔
+  double giavp_timeout_sec_{1.0};      // 无有效 GIAVP 数据超时
+  bool use_gps_timestamp_{true};       // 是否使用 GIAVP GPS 时间戳
+  int gps_utc_leap_seconds_{18};       // GPS 与 UTC 当前闰秒差
 
 private:
   std::string log_dir_     = "/opt/agri/logs";   // 日志目录

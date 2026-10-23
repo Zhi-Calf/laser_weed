@@ -66,7 +66,6 @@ private:
   bool openSerial();
   std::optional<std::string> tryReadGga();
   std::optional<std::pair<std::string, std::chrono::steady_clock::time_point>> waitForGga(double timeout_seconds);
-  bool checkGga(const std::string& line) const;
   bool initSdk();
   bool startNosr();
   void rtcmWriterLoop();
@@ -90,7 +89,7 @@ private:
   std::thread worker_thread_;
   std::thread rtcm_writer_thread_;
   std::atomic<bool> running_{false};
-  std::mutex serial_mutex_;
+  std::mutex serial_mutex_;   // 保护串口读写
   std::mutex rtcm_queue_mutex_;
   std::condition_variable rtcm_queue_cv_;
   std::deque<std::vector<uint8_t>> rtcm_queue_;

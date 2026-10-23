@@ -1,21 +1,23 @@
 #include <gtest/gtest.h>
+#include <spdlog/sinks/ostream_sink.h>
+#include <spdlog/spdlog.h>
 
 #include <fcntl.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 #include <cerrno>
-#include <chrono>
+#include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
-#include "gnss_localization/nmea_line_assembler.hpp"
 #include "gnss_localization/serial_port.hpp"
 
 namespace {
 
 class PtyPair {
-public:
+ public:
   PtyPair() {
     master_fd_ = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (master_fd_ < 0) {
@@ -50,16 +52,16 @@ public:
     return slave_path_;
   }
 
-private:
-  int master_fd_ = -1;
-  std::string slave_path_;
+ private:
+  int master_fd_ = -1;  // PTY 主端
+  std::string slave_path_;  // PTY 从端路径
 };
 
 bool WriteAll(int fd, const std::string& data) {
   std::size_t written = 0;
   while (written < data.size()) {
     const ssize_t count =
-      write(fd, data.data() + written, data.size() - written);
+        write(fd, data.data() + written, data.size() - written);
     if (count > 0) {
       written += static_cast<std::size_t>(count);
       continue;
@@ -72,96 +74,162 @@ bool WriteAll(int fd, const std::string& data) {
   return true;
 }
 
-}   // namespace
+class ScopedLogCapture {
+ public:
+  ScopedLogCapture()
+      : sink_(std::make_shared<spdlog::sinks::ostream_sink_mt>(stream_)),
+        logger_(std::make_shared<spdlog::logger>(
+            "serial_port_test", sink_)),
+        previous_(spdlog::default_logger()) {
+    logger_->set_pattern("%l|%v");
+    logger_->set_level(spdlog::level::trace);
+    spdlog::set_default_logger(logger_);
+  }
 
-TEST(NmeaLineAssembler, ReassemblesSplitCrLfLine) {
-  gnss_localization::NmeaLineAssembler assembler;
-  std::vector<std::string> lines;
-  const auto callback = [&lines](const std::string& line) {
-    lines.push_back(line);
-  };
+  ~ScopedLogCapture() {
+    spdlog::set_default_logger(previous_);
+  }
 
-  assembler.Push("$GPG", 4, callback);
-  EXPECT_TRUE(lines.empty());
-  assembler.Push("GA,1,2,3*00", 11, callback);
-  EXPECT_TRUE(lines.empty());
-  assembler.Push("\r\n", 2, callback);
+  std::string Text() {
+    logger_->flush();
+    return stream_.str();
+  }
 
-  ASSERT_EQ(lines.size(), 1u);
-  EXPECT_EQ(lines[0], "$GPGGA,1,2,3*00");
-}
+ private:
+  std::ostringstream stream_;  // 日志文本
+  std::shared_ptr<spdlog::sinks::ostream_sink_mt> sink_;  // 测试 sink
+  std::shared_ptr<spdlog::logger> logger_;  // 测试日志器
+  std::shared_ptr<spdlog::logger> previous_;  // 原默认日志器
+};
 
-TEST(NmeaLineAssembler, DiscardsOverlongAndBinaryFragments) {
-  gnss_localization::NmeaLineAssembler assembler;
-  std::vector<std::string> lines;
-  const auto callback = [&lines](const std::string& line) {
-    lines.push_back(line);
-  };
-
-  std::string overlong(1100, 'A');
-  assembler.Push("$", 1, callback);
-  assembler.Push(overlong.data(), overlong.size(), callback);
-  assembler.Push("\r$PART", 6, callback);
-  const char binary = static_cast<char>(0x01);
-  assembler.Push(&binary, 1, callback);
-  assembler.Push("$GOOD\r", 6, callback);
-
-  ASSERT_EQ(lines.size(), 1u);
-  EXPECT_EQ(lines[0], "$GOOD");
-}
+}  // namespace
 
 TEST(SerialPort, RejectsUnsupportedBaudRate) {
   PtyPair pty;
   ASSERT_TRUE(pty.ok());
 
+  ScopedLogCapture logs;
   gnss_localization::SerialPort port;
   EXPECT_FALSE(port.open(pty.slave_path(), 12345));
   EXPECT_FALSE(port.is_open());
-  EXPECT_NE(port.last_error().find("不支持"), std::string::npos);
-  EXPECT_FALSE(port.open(pty.slave_path(), 256000));
-  EXPECT_FALSE(port.is_open());
-  EXPECT_NE(port.last_error().find("不支持"), std::string::npos);
+  EXPECT_NE(
+      logs.Text().find("不支持的串口波特率 12345"), std::string::npos);
 }
 
-TEST(SerialPort, OpensExclusivelyAndReadsAvailableLines) {
+TEST(SerialPort, InvalidBaudRateKeepsExistingConnection) {
   PtyPair pty;
   ASSERT_TRUE(pty.ok());
 
   gnss_localization::SerialPort port;
-  ASSERT_TRUE(port.open(pty.slave_path(), 115200))
-    << port.last_error();
+  ASSERT_TRUE(port.open(pty.slave_path(), 115200));
 
-  const int second_fd =
-    open(pty.slave_path().c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
-  EXPECT_LT(second_fd, 0);
-  if (second_fd >= 0) {
-    close(second_fd);
-  }
+  EXPECT_FALSE(port.open(pty.slave_path(), 12345));
+  EXPECT_TRUE(port.is_open());
+}
+
+TEST(SerialPort, ReadsLineSplitAcrossReads) {
+  PtyPair pty;
+  ASSERT_TRUE(pty.ok());
+
+  gnss_localization::SerialPort port;
+  ASSERT_TRUE(port.open(pty.slave_path(), 115200));
 
   std::vector<std::string> lines;
   const auto collect = [&lines](const std::string& line) {
     lines.push_back(line);
   };
-  ASSERT_TRUE(WriteAll(pty.master_fd(), "$GPGG"));
+  ASSERT_TRUE(WriteAll(pty.master_fd(), "$GPG"));
   EXPECT_EQ(port.read_lines(collect), 0);
-  ASSERT_TRUE(WriteAll(pty.master_fd(), "A,1,2,3*00\r\n"));
+  ASSERT_TRUE(WriteAll(pty.master_fd(), "GA,1,2,3*00\r\n"));
   EXPECT_EQ(port.read_lines(collect), 1);
 
   ASSERT_EQ(lines.size(), 1u);
   EXPECT_EQ(lines[0], "$GPGGA,1,2,3*00");
 }
 
-TEST(SerialPort, WriteTimesOutAndClosesWhenPeerDoesNotDrain) {
+TEST(SerialPort, FlushesCachedLineAtNextDollar) {
   PtyPair pty;
   ASSERT_TRUE(pty.ok());
 
   gnss_localization::SerialPort port;
-  ASSERT_TRUE(port.open(pty.slave_path(), 115200))
-    << port.last_error();
+  ASSERT_TRUE(port.open(pty.slave_path(), 115200));
+
+  std::vector<std::string> lines;
+  ASSERT_TRUE(WriteAll(pty.master_fd(), "$PART$GOOD\r\n"));
+  EXPECT_EQ(
+      port.read_lines(
+          [&lines](const std::string& line) { lines.push_back(line); }),
+      2);
+
+  ASSERT_EQ(lines.size(), 2u);
+  EXPECT_EQ(lines[0], "$PART");
+  EXPECT_EQ(lines[1], "$GOOD");
+}
+
+TEST(SerialPort, ClosedPortReturnsNoLines) {
+  PtyPair pty;
+  ASSERT_TRUE(pty.ok());
+
+  gnss_localization::SerialPort port;
+  ASSERT_TRUE(port.open(pty.slave_path(), 115200));
+  port.close();
+
+  EXPECT_FALSE(port.is_open());
+  EXPECT_EQ(
+      port.read_lines([](const std::string&) {}),
+      0);
+}
+
+TEST(SerialPort, WritesRawBytes) {
+  PtyPair pty;
+  ASSERT_TRUE(pty.ok());
+
+  gnss_localization::SerialPort port;
+  ASSERT_TRUE(port.open(pty.slave_path(), 115200));
+
+  const std::string data = "\x01\x02\x03";
+  EXPECT_TRUE(port.write_raw(data.data(), data.size()));
+}
+
+TEST(SerialPort, RejectsNullWriteData) {
+  PtyPair pty;
+  ASSERT_TRUE(pty.ok());
+
+  gnss_localization::SerialPort port;
+  ASSERT_TRUE(port.open(pty.slave_path(), 115200));
+
+  EXPECT_FALSE(port.write_raw(nullptr, 1));
+  EXPECT_TRUE(port.is_open());
+  EXPECT_TRUE(port.write_raw(nullptr, 0));
+}
+
+TEST(SerialPort, WriteFailureClosesPort) {
+  PtyPair pty;
+  ASSERT_TRUE(pty.ok());
+
+  gnss_localization::SerialPort port;
+  ASSERT_TRUE(port.open(pty.slave_path(), 115200));
 
   std::vector<char> payload(1024U * 1024U, 'x');
-  EXPECT_FALSE(port.write_raw(
-    payload.data(), payload.size(), std::chrono::milliseconds(20)));
+  EXPECT_FALSE(port.write_raw(payload.data(), payload.size()));
   EXPECT_FALSE(port.is_open());
-  EXPECT_FALSE(port.last_error().empty());
+}
+
+TEST(SerialPort, InvalidDeviceLeavesPortClosed) {
+  ScopedLogCapture logs;
+  gnss_localization::SerialPort port;
+  EXPECT_FALSE(port.open("/dev/does-not-exist", 115200));
+  EXPECT_FALSE(port.is_open());
+  EXPECT_NE(
+      logs.Text().find("/dev/does-not-exist"), std::string::npos);
+}
+
+TEST(SerialPort, InvalidTerminalLeavesPortClosed) {
+  ScopedLogCapture logs;
+  gnss_localization::SerialPort port;
+  EXPECT_FALSE(port.open("/dev/null", 115200));
+  EXPECT_FALSE(port.is_open());
+  EXPECT_NE(
+      logs.Text().find("读取串口 /dev/null 参数失败"),
+      std::string::npos);
 }

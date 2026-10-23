@@ -66,7 +66,6 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   loadParameters();
 
   if (!serial_.open(serial_port_path_, baud_rate_)) {
-    SPDLOG_ERROR("串口 {} 打开失败: {}", serial_port_path_, serial_.last_error());
     throw std::runtime_error("无法打开 GNSS 串口: " + serial_port_path_);
   }
   has_giavp_       = false;
@@ -77,7 +76,8 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   rclcpp::QoS qos_sensor = rclcpp::SensorDataQoS(rclcpp::KeepLast(5));
   fix_pub_               = create_publisher<sensor_msgs::msg::NavSatFix>("~/fix", qos_sensor);
   pose_pub_              = create_publisher<weeder_msgs::msg::Pose>("~/pose", qos_sensor);
-  pose_stamped_pub_      = create_publisher<geometry_msgs::msg::PoseStamped>("~/pose_stamped", qos_sensor);
+  pose_stamped_pub_      = create_publisher<geometry_msgs::msg::PoseStamped>(
+      "~/pose_stamped", 10);
   odom_raw_pub_          = create_publisher<nav_msgs::msg::Odometry>("~/odom_raw", qos_sensor);
   imu_pub_               = create_publisher<sensor_msgs::msg::Imu>("~/imu", qos_sensor);
   vel_pub_               = create_publisher<geometry_msgs::msg::TwistWithCovarianceStamped>("~/vel", qos_sensor);
@@ -159,9 +159,9 @@ void GnssDriver::loadParameters() {
   declare_parameter("acc_rtk_float", 0.3);
   declare_parameter("acc_rtd", 1.0);
   declare_parameter("acc_spp", 1.5);
-  declare_parameter("calib_offset_x", 0.0);             // 杆臂 x (m, 车体系: 前 +x)
-  declare_parameter("calib_offset_y", 0.0);             // 杆臂 y (m, 车体系: 左 +y)
-  declare_parameter("calib_offset_heading", 0.0);       // 航向安装偏角 (rad)
+  declare_parameter("calib_offset_x", 0.0);         // 杆臂 x (m, 车体系: 前 +x)
+  declare_parameter("calib_offset_y", 0.0);         // 杆臂 y (m, 车体系: 左 +y)
+  declare_parameter("calib_offset_heading", 0.0);   // 航向安装偏角 (rad)
   declare_parameter("debug_giavp", false);
   declare_parameter("gnss_log_interval", 500);
   declare_parameter("pose_log_interval", 10);
@@ -169,26 +169,26 @@ void GnssDriver::loadParameters() {
   declare_parameter("use_gps_timestamp", true);
   declare_parameter("gps_utc_leap_seconds", 18);
 
-  serial_port_path_         = get_parameter("serial_port").as_string();
-  baud_rate_                = get_parameter("baud_rate").as_int();
-  frame_id_                 = get_parameter("frame_id").as_string();
-  const double origin_lat   = get_parameter("origin_lat").as_double();
-  const double origin_lon   = get_parameter("origin_lon").as_double();
-  const double origin_alt   = get_parameter("origin_alt").as_double();
-  heading_std_deg_          = get_parameter("heading_std_deg").as_double();
-  acc_rtk_fixed_            = get_parameter("acc_rtk_fixed").as_double();
-  acc_rtk_float_            = get_parameter("acc_rtk_float").as_double();
-  acc_rtd_                  = get_parameter("acc_rtd").as_double();
-  acc_spp_                  = get_parameter("acc_spp").as_double();
-  calib_offset_x_           = SanitizeFiniteCalib("calib_offset_x", get_parameter("calib_offset_x").as_double());
-  calib_offset_y_           = SanitizeFiniteCalib("calib_offset_y", get_parameter("calib_offset_y").as_double());
-  calib_offset_heading_     = SanitizeFiniteCalib("calib_offset_heading", get_parameter("calib_offset_heading").as_double());
-  debug_giavp_              = get_parameter("debug_giavp").as_bool();
-  gnss_log_interval_        = static_cast<int>(std::max<int64_t>(1, get_parameter("gnss_log_interval").as_int()));
-  pose_log_interval_        = static_cast<int>(std::max<int64_t>(1, get_parameter("pose_log_interval").as_int()));
-  giavp_timeout_sec_        = PositiveOr("giavp_timeout_sec", get_parameter("giavp_timeout_sec").as_double(), 1.0);
-  use_gps_timestamp_        = get_parameter("use_gps_timestamp").as_bool();
-  gps_utc_leap_seconds_     = static_cast<int>(std::max<int64_t>(0, get_parameter("gps_utc_leap_seconds").as_int()));
+  serial_port_path_       = get_parameter("serial_port").as_string();
+  baud_rate_              = get_parameter("baud_rate").as_int();
+  frame_id_               = get_parameter("frame_id").as_string();
+  const double origin_lat = get_parameter("origin_lat").as_double();
+  const double origin_lon = get_parameter("origin_lon").as_double();
+  const double origin_alt = get_parameter("origin_alt").as_double();
+  heading_std_deg_        = get_parameter("heading_std_deg").as_double();
+  acc_rtk_fixed_          = get_parameter("acc_rtk_fixed").as_double();
+  acc_rtk_float_          = get_parameter("acc_rtk_float").as_double();
+  acc_rtd_                = get_parameter("acc_rtd").as_double();
+  acc_spp_                = get_parameter("acc_spp").as_double();
+  calib_offset_x_         = SanitizeFiniteCalib("calib_offset_x", get_parameter("calib_offset_x").as_double());
+  calib_offset_y_         = SanitizeFiniteCalib("calib_offset_y", get_parameter("calib_offset_y").as_double());
+  calib_offset_heading_   = SanitizeFiniteCalib("calib_offset_heading", get_parameter("calib_offset_heading").as_double());
+  debug_giavp_            = get_parameter("debug_giavp").as_bool();
+  gnss_log_interval_      = static_cast<int>(std::max<int64_t>(1, get_parameter("gnss_log_interval").as_int()));
+  pose_log_interval_      = static_cast<int>(std::max<int64_t>(1, get_parameter("pose_log_interval").as_int()));
+  giavp_timeout_sec_      = PositiveOr("giavp_timeout_sec", get_parameter("giavp_timeout_sec").as_double(), 1.0);
+  use_gps_timestamp_      = get_parameter("use_gps_timestamp").as_bool();
+  gps_utc_leap_seconds_   = static_cast<int>(std::max<int64_t>(0, get_parameter("gps_utc_leap_seconds").as_int()));
 
   // ---- ENU 原点: 优先使用 YAML 配置；未配置时沿用首次 RTK 固定解 ----
   const bool origin_any   = !std::isnan(origin_lat) || !std::isnan(origin_lon) || !std::isnan(origin_alt);

@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "gnss_localization/gga_parser.hpp"
 #include "gnss_localization/logging.hpp"
 #include "gnss_localization/serial_port.hpp"
 #include "qxwz_sdk.h"
@@ -34,12 +35,12 @@ void sdkAuthCallback(qxwz_int32_t status_code, qxwz_sdk_cap_info_t* cap_info) {
   if (instance == nullptr) {
     return;
   }
-  if (status_code == QXWZ_SDK_STAT_AUTH_SUCC || status_code == QXWZ_SDK_STAT_LOCAL_AUTH_SUCC) {
+  if (status_code == QXWZ_SDK_STAT_AUTH_SUCC) {
     instance->sdk_auth_ready_.store(true);
     SPDLOG_INFO("千寻 SDK 认证成功, 能力数: {}", cap_info ? cap_info->caps_num : 0);
-  } else if (status_code == QXWZ_SDK_ERR_LOCAL_AUTH_FAIL) {
-    // 未使用 LSSR 时 SDK 每次鉴权都会上报该码，继续等待在线鉴权结果。
-    SPDLOG_DEBUG("忽略未启用 LSSR 时的离线鉴权结果: code={}", status_code);
+  } else if (status_code == QXWZ_SDK_STAT_LOCAL_AUTH_SUCC || status_code == QXWZ_SDK_ERR_LOCAL_AUTH_FAIL) {
+    // 当前节点未启用 LSSR，本地鉴权状态不影响在线鉴权结果。
+    SPDLOG_DEBUG("忽略未启用 LSSR 的本地鉴权状态: code={}", status_code);
   } else {
     // 认证失败是致命错误: 写入错误码, 由主循环结束会话并重连。
     SPDLOG_ERROR("千寻 SDK 认证失败, code: {}", status_code);
@@ -66,28 +67,46 @@ void sdkStartCallback(qxwz_int32_t status_code, qxwz_uint32_t cap_id) {
   }
 }
 
-// SDK 能力状态回调: 1.29 SDK 新增。能力级错误不一定走 status_cb,
-// 这里把能力服务端异常和长时间无差分数据纳入现有会话健康判定。
+// SDK 能力状态回调: 1.29 SDK 新增。
+// 仅处理 NOSR，并将能力异常纳入会话健康判定。
 void sdkCapStatusCallback(qxwz_uint32_t cap_id, qxwz_int32_t status_code) {
   SdkClient* instance = g_sdk_instance.load();
   if (instance == nullptr) {
     return;
   }
-  if (status_code == QXWZ_SDK_ERR_CAP_DIFF_DATA_TIME_OUT || status_code == QXWZ_SDK_ERR_CAP_DATA_PENDING || status_code == QXWZ_SDK_ERR_RTCM_DATA_EXCEPTION) {
-    const int n = instance->transient_error_count_.fetch_add(1) + 1;
-    SPDLOG_WARN("千寻 SDK 能力 {} 一分钟无差分数据 (code={}), 累计 {}", cap_id, status_code, n);
+  if (cap_id != QXWZ_SDK_CAP_ID_NOSR) {
+    SPDLOG_DEBUG("忽略未使用能力状态: cap_id={} code={}", cap_id, status_code);
     return;
   }
-  if (status_code == QXWZ_SDK_NOSR_UPLOAD_GGA) {
-    instance->sdk_nosr_ready_.store(true);
-    return;
+
+  switch (status_code) {
+    case QXWZ_SDK_NOSR_UPLOAD_GGA:
+      instance->sdk_nosr_ready_.store(true);
+      return;
+    case QXWZ_SDK_ERR_CAP_DATA_PENDING:
+      SPDLOG_DEBUG("NOSR 差分数据准备中");
+      return;
+    case QXWZ_SDK_ERR_CAP_DIFF_DATA_TIME_OUT:
+      instance->transient_error_count_.fetch_add(1);
+      SPDLOG_WARN("NOSR 一分钟内无差分数据");
+      return;
+    case QXWZ_SDK_ERR_RTCM_DATA_EXCEPTION:
+      instance->transient_error_count_.fetch_add(1);
+      SPDLOG_WARN("NOSR CMSM 差分数据异常");
+      return;
+    case QXWZ_SDK_ERR_CAP_SERVER_ERROR:
+      SPDLOG_ERROR("NOSR 服务端异常，结束会话并重建");
+      instance->sdk_error_code_.store(status_code);
+      return;
+    default:
+      if (status_code < 0) {
+        SPDLOG_ERROR("NOSR 能力异常: code={}", status_code);
+        instance->sdk_error_code_.store(status_code);
+      } else {
+        SPDLOG_DEBUG("NOSR 能力状态: code={}", status_code);
+      }
+      return;
   }
-  if (status_code < 0) {
-    SPDLOG_ERROR("千寻 SDK 能力 {} 异常: code={}", cap_id, status_code);
-    instance->sdk_error_code_.store(status_code);
-    return;
-  }
-  SPDLOG_DEBUG("千寻 SDK 能力 {} 状态: code={}", cap_id, status_code);
 }
 
 // 判断 status 回调码是否为"进行中/非错误"的瞬时提示 (不应判为故障)。
@@ -458,90 +477,38 @@ void SdkClient::clearRtcmQueue() {
   dropped_rtcm_frames_.store(0);
 }
 
-// 打开串口 (失败不记日志, 由调用方按节奏记录)。每次都重新打开, 确保干净的重连状态。
+// 打开串口；失败详情由 SerialPort 记录。每次都重新打开, 确保干净的重连状态。
 bool SdkClient::openSerial() {
   std::lock_guard<std::mutex> lock(serial_mutex_);
   if (!serial_->open(serial_port_, serial_baud_)) {
-    SPDLOG_WARN("打开串口 {} 失败: {}", serial_port_, serial_->last_error());
     return false;
   }
   SPDLOG_INFO("串口已打开: {}", serial_port_);
   return true;
 }
 
-bool SdkClient::checkGga(const std::string& line) const {
-  // 语句类型: 必须是 $xxGGA 开头
-  if (line.size() < 6 || line[0] != '$' || line.compare(3, 3, "GGA") != 0) {
-    return false;
-  }
-  // 异或校验和
-  const size_t star = line.find('*');
-  if (star == std::string::npos || star + 3 > line.size()) {
-    return false;
-  }
-  unsigned char cs = 0;
-  for (size_t i = 1; i < star; ++i) {
-    cs ^= static_cast<unsigned char>(line[i]);
-  }
-  char hex[3]                    = {line[star + 1], line[star + 2], 0};
-  char* end                      = nullptr;
-  const unsigned long parsed_val = std::strtoul(hex, &end, 16);
-  if (end != hex + 2) {
-    return false;   // 校验和字段不是合法的 2 位十六进制
-  }
-  const unsigned int expected = static_cast<unsigned int>(parsed_val);
-  if (cs != expected) {
-    return false;
-  }
-
-  // 校验定位状态 (Fix Quality): 过滤掉无效定位 (0) 的 GGA,
-  // 避免把接收机尚未定位的位置上传给差分服务, 导致选错差分源。
-  // 字段序 (逗号分隔): 1=类型,2=时间,3=纬度,4=纬度半球,5=经度,6=经度半球,7=FixQuality,8=卫星数,...
-  // 故 Fix Quality 是第 7 个字段 = 第 6 个逗号之后。
-  size_t comma_count = 0;
-  size_t field_start = 0;
-  for (size_t i = 1; i < star; ++i) {
-    if (line[i] == ',') {
-      ++comma_count;
-      if (comma_count == 6) {
-        field_start = i + 1;   // 第 7 个字段 (Fix Quality) 起始位置
-        break;
-      }
-    }
-  }
-  if (comma_count != 6) {
-    return false;   // 字段不足, 无法判断定位状态
-  }
-  const size_t field_end        = line.find(',', field_start);
-  const std::string fix_quality = (field_end == std::string::npos || field_end > star) ? line.substr(field_start, star - field_start) : line.substr(field_start, field_end - field_start);
-  if (fix_quality.empty()) {
-    return false;
-  }
-  const int quality = std::atoi(fix_quality.c_str());
-  return quality > 0;   // 0 = 无效定位, 其余 (1/2/4/5/6...) 均可用于差分请求
-}
-
+// 读取GPGGA数据
 std::optional<std::string> SdkClient::tryReadGga() {
   std::optional<std::string> result;
-  // 与 SDK data 回调线程的 writeRtcm / openSerial 互斥: 避免读到/写到正被重建的 fd。
   std::lock_guard<std::mutex> lock(serial_mutex_);
   serial_->read_lines([&](const std::string& line) {
-    if (checkGga(line) && !result.has_value()) {
-      // 上传给 qxwz_sdk_upload_gga 的是纯 GGA 语句 (无行结束符), 与 SDK demo 的
-      // DEMO_GGA_STR (结尾 *xx, 无 \r\n) 保持一致; 不像 ntrip_client 需补 \r\n
-      // (后者直接写 NTRIP socket, 依赖 NMEA 的 CRLF 行尾)。
+    if (IsValidGga(line) && !result.has_value()) {
       result = line;
     }
   });
   return result;
 }
 
+// 读取第一帧的GPGGA数据
 std::optional<std::pair<std::string, std::chrono::steady_clock::time_point>> SdkClient::waitForGga(double timeout_seconds) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout_seconds);
   while (running_ && std::chrono::steady_clock::now() < deadline) {
     auto gga = tryReadGga();
     if (gga) {
       return std::make_pair(*gga, std::chrono::steady_clock::now());
+    }
+    if (!serial_->is_open()) {
+      return std::nullopt;
     }
     // GGA 为 1Hz, 轮询 50ms 足够 (数据在内核缓冲区不会丢, 只影响发现延迟)。
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -580,7 +547,7 @@ bool SdkClient::initSdk() {
   sdk_config.start_cb      = sdkStartCallback;
   sdk_config.cap_status_cb = sdkCapStatusCallback;
 
-  // 1.29 SDK 默认域名关闭，服务器域名/端口必须显式配置。
+  // SDK 默认域名关闭，服务器域名/端口必须显式配置。
   std::strncpy(sdk_config.serv_conf.openapi_host, sdk_openapi_host_.c_str(), sizeof(sdk_config.serv_conf.openapi_host) - 1);
   sdk_config.serv_conf.openapi_port = static_cast<qxwz_uint32_t>(sdk_openapi_port_);
   std::strncpy(sdk_config.serv_conf.oss_host, sdk_oss_host_.c_str(), sizeof(sdk_config.serv_conf.oss_host) - 1);
@@ -659,7 +626,11 @@ void SdkClient::workerLoop() {
     SPDLOG_INFO("等待串口 GGA ...");
     const auto first_gga = waitForGga(first_gga_timeout_sec_);
     if (!first_gga) {
-      SPDLOG_WARN("等待首个 GGA 超时, 200ms 后重试");
+      if (!serial_->is_open()) {
+        SPDLOG_WARN("串口 {} 读取失败, 200ms 后重连", serial_port_);
+      } else {
+        SPDLOG_WARN("等待首个 GGA 超时, 200ms 后重试");
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
       continue;
     }
@@ -827,6 +798,10 @@ SdkClient::SessionEnd SdkClient::runSession(const std::string& first_gga, std::c
 
   while (running_) {
     const auto gga = tryReadGga();
+    if (!serial_->is_open()) {
+      SPDLOG_WARN("串口 {} 读取失败, 重建会话", serial_port_);
+      return SessionEnd::kDisconnected;
+    }
     const auto now = std::chrono::steady_clock::now();
     if (now - transient_window_start_ >= std::chrono::seconds(60)) {
       transient_error_count_.store(0);

@@ -93,7 +93,6 @@ target_compile_definitions(gnss_logging PRIVATE
 add_executable(gnss_driver_node
   src/gnss_driver_main.cpp
   src/serial_port.cpp
-  src/nmea_line_assembler.cpp
   src/giavp_parser.cpp
   src/gnss_driver.cpp
 )
@@ -129,7 +128,7 @@ target_compile_definitions(gnss_driver_node PRIVATE
 add_executable(ntrip_client_node
   src/ntrip_client_main.cpp
   src/serial_port.cpp
-  src/nmea_line_assembler.cpp
+  src/gga_parser.cpp
   src/ntrip_client.cpp
 )
 
@@ -156,7 +155,7 @@ if(QXWZ_SDK_AVAILABLE)
   add_executable(sdk_client_node
     src/sdk_client_main.cpp
     src/serial_port.cpp
-    src/nmea_line_assembler.cpp
+    src/gga_parser.cpp
     src/sdk_client.cpp
   )
 
@@ -247,18 +246,22 @@ if(BUILD_TESTING)
   ament_add_gtest(test_serial_port
     test/test_serial_port.cpp
     src/serial_port.cpp
-    src/nmea_line_assembler.cpp
   )
   target_include_directories(test_serial_port PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
-  target_link_libraries(test_serial_port Threads::Threads)
+  target_link_libraries(test_serial_port spdlog::spdlog)
 
   # $GIAVP 解析器的有效性校验: 数值字段出现 nan/inf -> 整句判无效
   # (不给下游发带 NaN 的 fix/pose/imu/vel)。
   # 无接收机的台架上唯一能钉住这条的地方 (报文喂不进节点), 见 tmp/verify_gnss_param_nan.sh 的说明。
   ament_add_gtest(test_giavp_parser test/test_giavp_parser.cpp src/giavp_parser.cpp)
   target_include_directories(test_giavp_parser PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+  ament_add_gtest(test_gga_parser test/test_gga_parser.cpp src/gga_parser.cpp)
+  target_include_directories(test_gga_parser PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
 endif()
 
 ament_package()
