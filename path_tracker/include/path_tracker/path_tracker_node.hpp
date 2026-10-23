@@ -39,7 +39,7 @@ private:
   void publishStop();
 
   // 参数
-  std::string log_dir_ = "~/.ros/logs";  // 日志目录
+  std::string log_dir_ = "/opt/agri/logs";  // 日志目录
   int log_file_size_mb_ = 50;            // 单个日志文件大小上限
   int log_file_count_ = 10;              // 保留日志文件数量
   bool log_enable_console_ = true;       // 是否输出到控制台

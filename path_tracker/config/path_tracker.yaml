@@ -5,7 +5,7 @@ path_tracker:
     # ============================================================
     # 支持 ~ 和 $VAR 展开；目录不可写时回退到 $ROS_HOME/logs
     # 或 ~/.ros/logs。
-    log_dir: "~/.ros/logs"
+    log_dir: "/opt/agri/logs"
     log_file_size_mb: 50
     log_file_count: 10
     log_enable_console: true

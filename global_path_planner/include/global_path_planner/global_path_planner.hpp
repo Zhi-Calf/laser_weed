@@ -137,7 +137,7 @@ private:
   std::vector<std::array<double, 3>> raw_vertices_;   // YAML 配置的原始顶点 (经纬度)
 
 private:
-  std::string log_dir_     = "~/.ros/logs";   // 日志目录 (支持 ~ 与 $VAR 展开)
+  std::string log_dir_     = "/opt/agri/logs";   // 日志目录 (支持 ~ 与 $VAR 展开)
   std::string log_level_   = "info";          // 日志级别 (info/warn/error)
   int log_file_size_mb_    = 50;              // 单个日志文件最大大小 (MB)
   int log_file_count_      = 10;              // 保留的日志文件个数

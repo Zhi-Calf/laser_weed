@@ -78,7 +78,7 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 
 | 参数 | 履带车原值 | 除草机要改成 | 级别 |
 |---|---|---|---|
-| `log_dir` | `~/.ros/logs` | 默认用户目录可写；实车固定目录按部署改 | 🟢 |
+| `log_dir` | `/opt/agri/logs` | 统一部署日志目录；不可写时回退到 ROS 日志目录 | 🟢 |
 | `path_resolution` | `0.2` | 路径插值分辨率(m)，按除草机跟踪精度调；只读参数，改后重启 | 🟡 |
 | `first_row_margin` | `0.005` | 首行离内缩边界余量；**必须与 YAML 里的 ridge_width 相容**，落在 [0.001, ridge_width/2] | 🟡 |
 
@@ -101,7 +101,7 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 | `steer_mode` | `0` | 无有效 `waypoint_types` 时的回退模式 | 🔴 |
 | `work_speed_m_s` / `turn_speed_m_s` | `0.6/0.3` | 按路径段固定基础速度 | 🟡 |
 | `lqr_target_v` | `0.6` | 无有效分段类型时的回退速度 | 🟡 |
-| `log_dir` | `~/.ros/logs` | spdlog 滚动日志目录，实车可按部署改 | 🟡 |
+| `log_dir` | `/opt/agri/logs` | 统一 spdlog 滚动日志目录 | 🟡 |
 | `lqr_Q_lateral/heading`、`lqr_R_steer` | 50/25/25 | **不能照抄履带调参值**：R 的语义从角速度代价变成了转向角代价，量纲不同，需重标 | 🟡 |
 
 `wheelbase` 填错会直接导致横向跟踪振荡或收敛过慢，是最关键的参数。

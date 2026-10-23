@@ -44,7 +44,8 @@ path_tracker ──/chassis/cmd──► weeder_base
 ## 日志
 
 节点使用 spdlog 同时输出控制台和滚动文件，日志文件为
-`<log_dir>/velocity_planner.log`。`log_dir` 支持 `~` 与 `$VAR` 展开；
+`<log_dir>/velocity_planner.log`，`log_dir` 默认 `/opt/agri/logs`，
+支持 `~` 与 `$VAR` 展开；
 目录不可写时会回退到 `$ROS_HOME/logs` 或 `~/.ros/logs`。滚动文件大小、
 保留数量、控制台输出和日志级别可分别通过 `log_file_size_mb`、
 `log_file_count`、`log_enable_console` 和 `log_level` 配置。

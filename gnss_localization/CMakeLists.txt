@@ -78,6 +78,19 @@ endif()
 
 find_package(Threads REQUIRED)
 
+add_library(gnss_logging STATIC
+  src/logging.cpp
+)
+
+target_include_directories(gnss_logging PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(gnss_logging PUBLIC spdlog::spdlog)
+target_compile_definitions(gnss_logging PRIVATE
+  SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
+)
+
 add_executable(gnss_driver_node
   src/gnss_driver_main.cpp
   src/serial_port.cpp
@@ -103,6 +116,7 @@ ament_target_dependencies(gnss_driver_node
 )
 
 target_link_libraries(gnss_driver_node
+  gnss_logging
   ${GEOGRAPHIC_LIBRARY}
   spdlog::spdlog
   ${yaml_LIBRARIES}
@@ -128,7 +142,10 @@ ament_target_dependencies(ntrip_client_node
   rclcpp
 )
 
-target_link_libraries(ntrip_client_node spdlog::spdlog)
+target_link_libraries(ntrip_client_node
+  gnss_logging
+  spdlog::spdlog
+)
 
 # 让 SPDLOG_* 宏携带源码文件名与行号（source location）
 target_compile_definitions(ntrip_client_node PRIVATE
@@ -153,7 +170,14 @@ if(QXWZ_SDK_AVAILABLE)
   )
 
   # qxwz release 静态库需要 pthread / dl / libm。
-  target_link_libraries(sdk_client_node spdlog::spdlog ${QXWZ_SDK_LIB} Threads::Threads ${CMAKE_DL_LIBS} m)
+  target_link_libraries(sdk_client_node
+    gnss_logging
+    spdlog::spdlog
+    ${QXWZ_SDK_LIB}
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
+    m
+  )
 
   # 让 SPDLOG_* 宏携带源码文件名与行号（source location）
   target_compile_definitions(sdk_client_node PRIVATE

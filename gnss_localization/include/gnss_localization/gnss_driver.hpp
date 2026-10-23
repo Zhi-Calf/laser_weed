@@ -3,10 +3,10 @@
 #include <tf2_ros/transform_broadcaster.h>
 
 #include <GeographicLib/LocalCartesian.hpp>
-#include <geometry_msgs/msg/pose_stamped.hpp>
-#include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
 #include <chrono>
 #include <cstdint>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
 #include <memory>
 #include <mutex>
 #include <nav_msgs/msg/odometry.hpp>
@@ -84,8 +84,7 @@ private:
 private:
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr fix_pub_;
   rclcpp::Publisher<weeder_msgs::msg::Pose>::SharedPtr pose_pub_;
-  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr
-    pose_stamped_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_stamped_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_raw_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   rclcpp::Publisher<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr vel_pub_;
@@ -119,9 +118,9 @@ private:
   bool debug_giavp_{false};                // 是否打印 giavp 数据到日志
   int gnss_log_interval_{500};             // GNSS 状态日志条数间隔
   int pose_log_interval_{10};              // 位姿日志条数间隔
-  double giavp_timeout_sec_{1.0};           // 无有效 GIAVP 数据超时
-  bool use_gps_timestamp_{true};            // 是否使用 GIAVP GPS 时间戳
-  int gps_utc_leap_seconds_{18};            // GPS 与 UTC 当前闰秒差
+  double giavp_timeout_sec_{1.0};          // 无有效 GIAVP 数据超时
+  bool use_gps_timestamp_{true};           // 是否使用 GIAVP GPS 时间戳
+  int gps_utc_leap_seconds_{18};           // GPS 与 UTC 当前闰秒差
 
 private:
   std::string log_dir_     = "/opt/agri/logs";   // 日志目录

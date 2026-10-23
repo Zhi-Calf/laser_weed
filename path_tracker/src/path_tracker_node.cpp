@@ -23,6 +23,8 @@ constexpr const char* kNodeName = "path_tracker";
 PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNodeName, options) {
   loadLogParameters();
   LogConfig log_config;
+  log_config.logger_name         = "path_tracker";
+  log_config.log_file_name       = "path_tracker.log";
   log_config.log_dir             = log_dir_;
   log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb_) * 1024U * 1024U;
   log_config.max_file_count      = static_cast<std::size_t>(log_file_count_);
@@ -59,7 +61,7 @@ PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNod
 }
 
 void PathTrackerNode::loadLogParameters() {
-  declare_parameter("log_dir", "~/.ros/logs");
+  declare_parameter("log_dir", "/opt/agri/logs");
   declare_parameter("log_file_size_mb", 50);
   declare_parameter("log_file_count", 10);
   declare_parameter("log_enable_console", true);

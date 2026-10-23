@@ -66,6 +66,7 @@ set(dependencies
 add_library(${PROJECT_NAME}_lib SHARED
   src/bow.cpp
   src/global_path_planner.cpp
+  src/logging.cpp
 )
 
 target_include_directories(${PROJECT_NAME}_lib PUBLIC

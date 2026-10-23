@@ -11,7 +11,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
-#include <string>
 #include <system_error>
 #include <vector>
 
@@ -19,9 +18,7 @@ namespace path_tracker {
 
 namespace {
 
-constexpr const char* kLoggerName  = "path_tracker";
-constexpr const char* kLogFileName = "path_tracker.log";
-constexpr const char* kLogPattern  = "[%Y-%m-%d %H:%M:%S.%e] [%l] [%s:%#] %v";
+constexpr const char* kLogPattern = "[%Y-%m-%d %H:%M:%S.%e] [%l] [%s:%#] %v";
 
 // 展开路径中的 ~ 和环境变量。
 std::string ExpandPath(std::string path) {
@@ -92,14 +89,14 @@ void ConfigureLogging(const LogConfig& config) {
   const std::string resolved_dir = ResolveLogDir(config.log_dir);
   std::vector<spdlog::sink_ptr> sinks;
   if (!resolved_dir.empty()) {
-    const auto log_path = std::filesystem::path(resolved_dir) / kLogFileName;
+    const auto log_path = std::filesystem::path(resolved_dir) / config.log_file_name;
     sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(log_path.string(), config.max_file_size_bytes, config.max_file_count));
   }
   if (config.enable_console || sinks.empty()) {
     sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
   }
 
-  auto logger = std::make_shared<spdlog::logger>(kLoggerName, sinks.begin(), sinks.end());
+  auto logger = std::make_shared<spdlog::logger>(config.logger_name, sinks.begin(), sinks.end());
   logger->set_pattern(kLogPattern);
 
   const spdlog::level::level_enum level = spdlog::level::from_str(config.log_level);

@@ -1,23 +1,17 @@
 #include "gnss_localization/gnss_driver.hpp"
 
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <tf2/LinearMath/Quaternion.h>
-#include <unistd.h>
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <eigen3/Eigen/Core>
-#include <filesystem>
 #include <limits>
 #include <stdexcept>
-#include <system_error>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
+#include "gnss_localization/logging.hpp"
 #include "yaml_persist.hpp"
 
 namespace gnss_localization {
@@ -49,94 +43,6 @@ double PositiveOr(const char* name, double value, double fallback) {
   return fallback;
 }
 
-// 扩展路径中的环境变量
-std::string ExpandPath(std::string path) {
-  if (path.rfind("~/", 0) == 0) {
-    const char* home = std::getenv("HOME");
-    if (home) {
-      path = std::string(home) + path.substr(1);
-    }
-  }
-  std::string out;
-  for (size_t i = 0; i < path.size(); ++i) {
-    if (path[i] != '$') {
-      out += path[i];
-      continue;
-    }
-    size_t j = i + 1;
-    while (j < path.size() && (std::isalnum(static_cast<unsigned char>(path[j])) || path[j] == '_')) {
-      ++j;
-    }
-    const std::string name = path.substr(i + 1, j - i - 1);
-    const char* val        = name.empty() ? nullptr : std::getenv(name.c_str());
-    if (val) {
-      out += val;
-    }
-    i = j - 1;
-  }
-  return out;
-}
-
-// 解析日志目录
-std::string ResolveLogDir(const std::string& configured) {
-  std::error_code ec;
-  const std::string preferred = ExpandPath(configured);
-  if (!preferred.empty()) {
-    std::filesystem::create_directories(preferred, ec);
-    if (!ec && access(preferred.c_str(), W_OK) == 0) {
-      return preferred;
-    }
-  }
-
-  const char* ros_home = std::getenv("ROS_HOME");
-  const char* home     = std::getenv("HOME");
-  std::string fallback;
-  if (ros_home && *ros_home) {
-    fallback = std::string(ros_home) + "/logs";
-  } else if (home && *home) {
-    fallback = std::string(home) + "/.ros/logs";
-  } else {
-    return "";
-  }
-
-  std::filesystem::create_directories(fallback, ec);
-  if (ec || access(fallback.c_str(), W_OK) != 0) {
-    return "";
-  }
-  return fallback;
-}
-
-// 配置日志
-void ConfigureLogger(const std::string& log_dir, size_t max_file_size_bytes, size_t max_file_count, bool enable_console, const std::string& log_level) {
-  constexpr const char* kLogPattern = "[%Y-%m-%d %H:%M:%S.%e] [%l] [%s:%#] %v";
-  const std::string dir             = ResolveLogDir(log_dir);
-  if (dir.empty()) {
-    throw std::runtime_error("no writable log directory (tried \"" + log_dir + "\")");
-  }
-
-  std::vector<spdlog::sink_ptr> sinks;
-  sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>((std::filesystem::path(dir) / "gnss_localization.log").string(), max_file_size_bytes, max_file_count));
-  if (enable_console) {
-    sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
-  }
-
-  auto logger = std::make_shared<spdlog::logger>("gnss_localization", sinks.begin(), sinks.end());
-  logger->set_pattern(kLogPattern);
-  const spdlog::level::level_enum level = spdlog::level::from_str(log_level);
-  if (level == spdlog::level::off && log_level != "off") {
-    logger->set_level(spdlog::level::info);
-    SPDLOG_WARN("无法识别的日志级别 \"{}\", 已回退到 info", log_level);
-  } else {
-    logger->set_level(level);
-  }
-  spdlog::set_default_logger(logger);
-  if (dir != ExpandPath(log_dir)) {
-    SPDLOG_WARN("日志目录 \"{}\" 不可写，已回退到 \"{}\"", log_dir, dir);
-  }
-  spdlog::flush_on(spdlog::level::warn);
-  spdlog::flush_every(std::chrono::seconds(3));
-}
-
 }   // namespace
 
 GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver", options) {
@@ -144,8 +50,16 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   loadLogParameters();
 
   // 配置 spdlog 滚动文件输出
+  LogConfig log_config;
+  log_config.logger_name         = "gnss_localization";
+  log_config.log_file_name       = "gnss_localization.log";
+  log_config.log_dir             = log_dir_;
+  log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb_) * 1024U * 1024U;
+  log_config.max_file_count      = static_cast<std::size_t>(log_file_count_);
+  log_config.enable_console      = log_enable_console_;
+  log_config.log_level           = log_level_;
   try {
-    ConfigureLogger(log_dir_, static_cast<size_t>(log_file_size_mb_) * 1024U * 1024U, static_cast<size_t>(log_file_count_), log_enable_console_, log_level_);
+    ConfigureLogging(log_config);
     SPDLOG_INFO("日志配置成功");
   } catch (const std::exception& e) {
     SPDLOG_WARN("文件日志配置失败，使用默认日志器: {}", e.what());
@@ -165,8 +79,7 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   rclcpp::QoS qos_sensor = rclcpp::SensorDataQoS(rclcpp::KeepLast(5));
   fix_pub_               = create_publisher<sensor_msgs::msg::NavSatFix>("~/fix", qos_sensor);
   pose_pub_              = create_publisher<weeder_msgs::msg::Pose>("~/pose", qos_sensor);
-  pose_stamped_pub_      = create_publisher<geometry_msgs::msg::PoseStamped>(
-    "~/pose_stamped", qos_sensor);
+  pose_stamped_pub_      = create_publisher<geometry_msgs::msg::PoseStamped>("~/pose_stamped", qos_sensor);
   odom_raw_pub_          = create_publisher<nav_msgs::msg::Odometry>("~/odom_raw", qos_sensor);
   imu_pub_               = create_publisher<sensor_msgs::msg::Imu>("~/imu", qos_sensor);
   vel_pub_               = create_publisher<geometry_msgs::msg::TwistWithCovarianceStamped>("~/vel", qos_sensor);
@@ -753,7 +666,7 @@ void GnssDriver::publishPose(const GiavpData& d) {
     pose_pub_->publish(pose);
 
     geometry_msgs::msg::PoseStamped pose_stamped;
-    pose_stamped.header = pose.header;
+    pose_stamped.header          = pose.header;
     pose_stamped.pose.position.x = base_x;
     pose_stamped.pose.position.y = base_y;
     pose_stamped.pose.position.z = base_z;

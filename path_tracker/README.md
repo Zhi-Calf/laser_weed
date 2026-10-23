@@ -122,12 +122,12 @@ LQR 根据分段类型选择速度：WORK 段默认 `0.6 m/s`，TURN 段及前�
 节点使用与 `global_path_planner` 相同的 spdlog 滚动文件配置，默认写入：
 
 ```text
-~/.ros/logs/path_tracker.log
+/opt/agri/logs/path_tracker.log
 ```
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `log_dir` | `~/.ros/logs` | 日志目录，支持 `~` 和 `$VAR` |
+| `log_dir` | `/opt/agri/logs` | 日志目录，支持 `~` 和 `$VAR` |
 | `log_file_size_mb` | `50` | 单个文件大小上限 |
 | `log_file_count` | `10` | 保留文件数量 |
 | `log_enable_console` | `true` | 同时输出到控制台 |
@@ -276,7 +276,7 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
 
 **规划器必改配置**（`global_path_planner.yaml`）：
 
-- `log_dir`：默认 `~/.ros/logs`（可写）；实车要固定目录时按部署改
+- `log_dir`：默认 `/opt/agri/logs`；不可写时自动回退到 ROS 日志目录
 - `path_resolution`（默认 0.2m）：`/path` 插值分辨率
 - `poly` / `ridge_width` / `field_margin`：按除草机实际田块和机具宽度填写；
   `field_margin >= ridge_width/2` 是为了让机具半幅不越过田边（掉头弧本身切在内缩边界上）
