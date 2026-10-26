@@ -1,7 +1,7 @@
 velocity_planner:
   ros__parameters:
     # spdlog 滚动日志: 支持 ~ 与 $VAR 展开，目录不可写时回退到 ROS 日志目录。
-    log_dir: "~/.ros/logs"
+    log_dir: "/opt/agri/logs"
     log_file_size_mb: 50
     log_file_count: 10
     log_enable_console: true

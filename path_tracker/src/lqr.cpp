@@ -1,287 +1,225 @@
-// Copyright 2026. LQR lateral controller implementation for four-wheel steering.
+// 版权所有 2026。四轮转向 LQR 横向控制器实现。
 #include "path_tracker/lqr.hpp"
+
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
-namespace path_tracker
-{
+namespace path_tracker {
 
-namespace
-{
-constexpr double kPi = 3.14159265358979323846;
-}
+namespace {
 
-double LQR::normalizeAngle(double angle)
-{
-  while (angle > kPi) {
-    angle -= 2.0 * kPi;
+// 将角度归一化到 [-pi, pi]。
+double NormalizeAngle(double angle) {
+  while (angle > M_PI) {
+    angle -= 2.0 * M_PI;
   }
-  while (angle < -kPi) {
-    angle += 2.0 * kPi;
+  while (angle < -M_PI) {
+    angle += 2.0 * M_PI;
   }
   return angle;
 }
 
-void LQR::configure(
-  double dt, double eps, int max_iteration,
-  double q_lateral, double q_heading, double r_steer,
-  double wheelbase, double max_steer_rad, double max_speed,
-  double min_speed_factor, double heading_deadband, double heading_max,
-  double target_v, double min_vel)
-{
-  dt_ = (dt > 0.0) ? dt : 0.1;
-  eps_ = (eps > 0.0) ? eps : 1e-6;
-  max_iteration_ = (max_iteration > 0) ? max_iteration : 1000;
-
-  Q_ = Eigen::Matrix2d::Zero();
-  Q_(0, 0) = std::max(q_lateral, 0.0);
-  Q_(1, 1) = std::max(q_heading, 0.0);
-  R_ = Eigen::MatrixXd::Zero(1, 1);
-  R_(0, 0) = std::max(r_steer, 1e-6);  // guard against singular inverse
-
-  // Wheelbase must be strictly positive: B_d has v*dt/L, and a zero/negative L
-  // would produce inf/nan steering commands.
-  wheelbase_ = std::max(wheelbase, 0.05);
-  max_steer_rad_ = std::max(max_steer_rad, 0.01);
-  max_speed_ = std::max(max_speed, 0.1);
-
-  min_speed_factor_ = std::clamp(min_speed_factor, 0.0, 1.0);
-  heading_deadband_ = std::max(heading_deadband, 0.0);
-  heading_max_ = std::max(heading_max, heading_deadband_ + 1e-6);
-  target_vel_ = std::clamp(target_v, 0.0, max_speed_);
-  min_vel_ = std::clamp(min_vel, 0.0, max_speed_);
+// 对称阿克曼的等效轴距为物理轴距的一半。
+double EffectiveWheelbase(double wheelbase, bool symmetric_ackermann) {
+  const double effective = symmetric_ackermann ? wheelbase * 0.5 : wheelbase;
+  return std::max(effective, 0.05);
 }
 
-void LQR::setSpeedShaping(
-  double curvature_threshold, double curvature_span, double speed_scale,
-  int lookahead_index, int lookback_start)
-{
-  curvature_threshold_ = std::max(curvature_threshold, 0.0);
-  curvature_span_ = std::max(curvature_span, 0.0);
-  speed_scale_ = std::clamp(speed_scale, 0.0, 1.0);
-  lookahead_index_ = std::max(lookahead_index, 0);
-  lookback_start_ = std::max(lookback_start, 0);
+}   // namespace
+
+// 使用完整配置结构初始化 LQR。
+void LQR::Configure(const LQRConfig& config) {
+  config_  = config;
+  Q_       = Eigen::Matrix2d::Zero();
+  Q_(0, 0) = std::max(config_.q_lateral, 0.0);
+  Q_(1, 1) = std::max(config_.q_heading, 0.0);
+  R_       = Eigen::MatrixXd::Zero(1, 1);
+  R_(0, 0) = std::max(config_.r_steer, 1e-6);   // 防止矩阵不可逆
 }
 
-void LQR::setTrajectory(const std::vector<TrajectoryPoint> & points)
-{
-  path_ = points;
-  if (path_.empty()) {
-    max_pt_idx_ = 0;
-    return;
-  }
-  max_pt_idx_ = 0;
-  goal_ = path_[0];
+// 更新路径
+void LQR::SetTrajectory(const std::vector<TrajectoryPoint>& points) {
+  path_             = points;
+  turn_mode_active_ = false;
+  target_idx_       = 0;
+  goal_             = path_[0];
 }
 
-void LQR::setRobotState(const RobotState & state)
-{
-  robot_state_ = state;
-}
-
-void LQR::setSnapWindow(size_t window)
-{
-  snap_window_ = window;
-}
-
-double LQR::distToGoal() const
-{
-  return std::hypot(robot_state_.x - goal_.x, robot_state_.y - goal_.y);
-}
-
-bool LQR::advanceGoal(double travelled)
-{
-  if (path_.size() < 2) {
-    return false;
+// 将固定车体中心位姿转换为当前转向模型的控制参考点。
+RobotState LQR::ControlStateForMode(bool symmetric_ackermann) const {
+  RobotState control_state = robot_state_;
+  if (!config_.pose_at_vehicle_center || symmetric_ackermann) {
+    return control_state;
   }
 
-  // Step 1: advance along arc length by the distance actually travelled.
-  // Negative travel (a bad odometry jump) is clamped to zero so the goal can
-  // never be rewound.
-  const double ds = std::max(travelled, 0.0);
-  const double target_s = path_[max_pt_idx_].s + ds;
-  while (max_pt_idx_ + 1 < path_.size() && path_[max_pt_idx_ + 1].s <= target_s) {
-    ++max_pt_idx_;
-  }
-
-  // Step 2: snap forward to the nearest point within a bounded window.
-  //
-  // Arc-length accumulation alone trusts the odometry completely: if the robot
-  // slips, is pushed, or the odometry glitches, the goal drifts away from the
-  // robot and nothing ever pulls it back. The nearest-point search re-anchors it.
-  //
-  // The search starts AT max_pt_idx_, so the index is monotonically
-  // non-decreasing -- snapping can never walk the goal backwards, which would
-  // otherwise let a boustrophedon row re-trigger a previous row.
-  if (snap_window_ > 0) {
-    const size_t end = std::min(path_.size() - 1, max_pt_idx_ + snap_window_);
-    size_t best = max_pt_idx_;
-    double best_d2 = std::numeric_limits<double>::max();
-    for (size_t i = max_pt_idx_; i <= end; ++i) {
-      const double dx = path_[i].x - robot_state_.x;
-      const double dy = path_[i].y - robot_state_.y;
-      const double d2 = dx * dx + dy * dy;
-      if (d2 < best_d2) {
-        best_d2 = d2;
-        best = i;
-      }
-    }
-    max_pt_idx_ = best;
-  }
-
-  goal_ = path_[max_pt_idx_];
-  return max_pt_idx_ + 1 < path_.size();
+  const double half_wheelbase = config_.wheelbase * 0.5;
+  control_state.x -= half_wheelbase * std::cos(control_state.heading);
+  control_state.y -= half_wheelbase * std::sin(control_state.heading);
+  return control_state;
 }
 
-size_t LQR::nearestIndex() const
-{
-  if (path_.empty()) {
-    return 0;
-  }
-  size_t best = max_pt_idx_;
-  double best_d2 = std::numeric_limits<double>::max();
-  // Search only forward from the current goal to keep this O(n) over the tail;
-  // the robot should not drift far behind the goal in normal operation.
-  for (size_t i = max_pt_idx_; i < path_.size(); ++i) {
+// 更新最近点
+void LQR::UpdateTargetIndex() {
+  const size_t search_start_idx = target_idx_;
+  const size_t end              = std::min(path_.size() - 1, search_start_idx + config_.snap_forward_points);
+  size_t best                   = search_start_idx;
+  double best_d2                = std::numeric_limits<double>::max();
+  for (size_t i = search_start_idx; i <= end; ++i) {
     const double dx = path_[i].x - robot_state_.x;
     const double dy = path_[i].y - robot_state_.y;
     const double d2 = dx * dx + dy * dy;
     if (d2 < best_d2) {
       best_d2 = d2;
-      best = i;
+      best    = i;
     }
   }
-  return best;
+  target_idx_ = best;
+  goal_       = path_[target_idx_];
 }
 
-void LQR::calRicatti(
-  const Eigen::MatrixXd & A, const Eigen::MatrixXd & B, Eigen::MatrixXd & K)
-{
-  // Verbatim algorithm from MegaTrak control_node/path_controller/src/lqr.cpp:71-85.
-  // The fixed-point DARE iteration is independent of the plant model, so it is
-  // reused unchanged; only A/B fed into it differ for four-wheel steering.
+// 当前目标已经是路径最后一个点时，表示路径已结束。
+bool LQR::IsAtPathEnd() const {
+  return target_idx_ + 1 >= path_.size();
+}
+
+// 判断当前目标点前后给定弧长范围内是否存在掉头点。
+bool LQR::HasTurnNear(double before_m, double after_m) const {
+  const double current_s = path_[target_idx_].s;
+  const double lower_s   = current_s - std::max(after_m, 0.0);
+  const double upper_s   = current_s + std::max(before_m, 0.0);
+  for (const TrajectoryPoint& point : path_) {
+    if (point.s < lower_s) {
+      continue;
+    }
+    if (point.s > upper_s) {
+      break;
+    }
+    if (point.waypoint_type == 1) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// 更新里卡提方程
+void LQR::CalRicatti(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B, Eigen::MatrixXd& K) const {
   Eigen::MatrixXd AT = A.transpose();
   Eigen::MatrixXd BT = B.transpose();
-  Eigen::MatrixXd P = Q_;
-
-  int num_iter = 0;
-  double diff = std::numeric_limits<double>::max();
-  while (num_iter++ < max_iteration_ && diff > eps_) {
-    Eigen::MatrixXd P_next =
-      Q_ + AT * P * A - (AT * P * B) * (R_ + BT * P * B).inverse() * BT * P * A;
-    diff = std::fabs((P_next - P).maxCoeff());
-    P = P_next;
+  Eigen::MatrixXd P  = Q_;
+  int num_iter       = 0;
+  double diff        = std::numeric_limits<double>::max();
+  while (num_iter++ < config_.max_iteration && diff > config_.eps) {
+    Eigen::MatrixXd P_next = Q_ + AT * P * A - (AT * P * B) * (R_ + BT * P * B).inverse() * BT * P * A;
+    diff                   = std::fabs((P_next - P).maxCoeff());
+    P                      = P_next;
   }
-
   K = (R_ + BT * P * B).inverse() * BT * P * A;
 }
 
-double LQR::scaleSpeed(double base_v, double heading_error, size_t idx) const
-{
-  double v = base_v;
-
-  // Curvature look-ahead: slow down before entering a tight section, not after.
-  if (!path_.empty()) {
-    const size_t n = path_.size();
-    size_t start = (idx > static_cast<size_t>(lookback_start_)) ?
-      (idx - static_cast<size_t>(lookback_start_)) : 0;
-    size_t end = std::min(n - 1, idx + static_cast<size_t>(std::max(lookahead_index_, 0)));
-    double max_kappa = 0.0;
-    for (size_t i = start; i <= end; ++i) {
-      max_kappa = std::max(max_kappa, std::fabs(path_[i].kappa));
-    }
-    if (max_kappa > curvature_threshold_ && curvature_span_ > 0.0) {
-      const double ratio = (max_kappa - curvature_threshold_) / curvature_span_;
-      const double factor = 1.0 - std::clamp(ratio, 0.0, 1.0) * (1.0 - speed_scale_);
-      v = std::min(v, target_vel_ * factor);
-    }
+// 计算路径分段对应的基础速度。
+double LQR::ScaleSpeed() const {
+  double v = config_.work_speed;
+  if (HasTurnNear(config_.turn_speed_preview_m, config_.turn_speed_hold_m)) {
+    v = config_.turn_speed;
   }
-
-  // Heading-error slowdown: give the steering time to correct a large error.
-  const double he = std::fabs(heading_error);
-  if (he > heading_deadband_ && heading_max_ > heading_deadband_) {
-    const double ratio = (he - heading_deadband_) / (heading_max_ - heading_deadband_);
-    const double factor = 1.0 - std::clamp(ratio, 0.0, 1.0) * (1.0 - min_speed_factor_);
-    v = std::min(v, target_vel_ * factor);
-  }
-
-  // Never command below the global floor while tracking, and never exceed limits.
-  v = std::clamp(v, min_vel_, max_speed_);
   return v;
 }
 
-LQROutput LQR::getControlOutput()
-{
+// 计算反馈控制量
+LQROutput LQR::ComputeFeedbackControl(double effective_wheelbase) const {
   LQROutput output;
   output.target_pt = goal_;
 
-  // Too-few-points guard: cannot track, command a stop (mirrors MegaTrak lqr.cpp:175-183).
-  if (path_.size() < 2 || max_pt_idx_ >= path_.size()) {
-    output.vel_cmd.linear_v = 0.0;
-    output.vel_cmd.steer_angle = 0.0;
-    return output;
-  }
-
-  TrajectoryPoint target_pt = path_[max_pt_idx_];
+  TrajectoryPoint target_pt   = path_[target_idx_];
   const double target_heading = target_pt.heading;
-  const double target_kappa = target_pt.kappa;
+  const double target_kappa   = target_pt.kappa;
 
-  // Errors in the target frame. Sign convention: left positive, matching the
-  // CAN protocol's steer angle (left positive) so no negation is needed later.
-  const double dx = robot_state_.x - target_pt.x;
-  const double dy = robot_state_.y - target_pt.y;
-  const double heading_error = normalizeAngle(robot_state_.heading - target_heading);
+  // 在目标点坐标系中计算误差。符号约定为左正，与 CAN 协议的转向角一致，
+  // 因此后续无需再取反。
+  const double dx            = robot_state_.x - target_pt.x;
+  const double dy            = robot_state_.y - target_pt.y;
+  const double heading_error = NormalizeAngle(robot_state_.heading - target_heading);
   const double lateral_error = dy * std::cos(target_heading) - dx * std::sin(target_heading);
 
-  // Speed for this tick, shaped by curvature and heading error.
-  const double v_cmd = scaleSpeed(target_pt.v > 0.0 ? target_pt.v : target_vel_,
-      heading_error, max_pt_idx_);
+  // 目标速度只由路径分段和全局速度限幅决定。
+  const double v_cmd = ScaleSpeed();
 
-  // Linearized error dynamics for the kinematic bicycle model, evaluated at the
-  // commanded speed (using the commanded, not measured, speed keeps B_d well
-  // conditioned even when the robot is momentarily stopped).
-  const double v = std::max(v_cmd, 1e-3);
-  const double L = wheelbase_;
+  // 在指令速度处线性化运动学自行车模型的误差动力学。
+  // 使用指令速度而非实测速度，可在车辆短暂停止时保持 B_d 良态。
+  const double v = v_cmd;
+  const double L = effective_wheelbase;
 
   Eigen::MatrixXd A = Eigen::MatrixXd::Zero(2, 2);
-  A << 1.0, v * dt_,
-       0.0, 1.0;
-  // NOTE: B differs from MegaTrak's differential-drive [[0],[dt]].
-  // For Ackermann/four-wheel steering, heading rate = (v/L)*delta.
+  A << 1.0, v * config_.dt, 0.0, 1.0;
   Eigen::MatrixXd B = Eigen::MatrixXd::Zero(2, 1);
-  B << 0.0,
-       (v * dt_) / L;
+  B << 0.0, (v * config_.dt) / L;
 
   Eigen::MatrixXd K = Eigen::MatrixXd::Zero(1, 2);
-  calRicatti(A, B, K);
+  CalRicatti(A, B, K);
 
   Eigen::VectorXd X(2);
   X << lateral_error, heading_error;
 
-  // Feedback steering angle. U = -K*x is already a steering angle (rad) here,
-  // because the control input of the Ackermann model is delta, not omega.
+  // 计算反馈转角。此处 U = -K*x 已经是转角（弧度），因为阿克曼模型的控制输入是 delta，而不是角速度 omega。
   const Eigen::VectorXd U = -K * X;
-  const double steer_fb = U(0);
+  const double steer_fb   = U(0);
 
-  // Feedforward steering angle to hold the curve: delta_ff = L * kappa.
-  // (MegaTrak used omega_ff = v * kappa because its input was angular rate.)
-  const double steer_ff = L * target_kappa;
+  // 定曲率稳态前馈使用精确的自行车模型关系。
+  const double steer_ff = std::atan(L * target_kappa);
 
   double steer = steer_fb + steer_ff;
 
-  // Physical limits: protocol allows +/-90 deg, speed 0..1.4 m/s.
-  steer = std::clamp(steer, -max_steer_rad_, max_steer_rad_);
+  // 物理限制：协议允许 ±90 度转角，速度范围为 0～1.4 米/秒。
+  steer = std::clamp(steer, -config_.max_steer_rad, config_.max_steer_rad);
 
-  output.target_pt = target_pt;
-  output.vel_cmd.linear_v = v_cmd;
+  output.target_pt           = target_pt;
+  output.vel_cmd.linear_v    = v_cmd;
   output.vel_cmd.steer_angle = steer;
-  output.lateral_error = lateral_error;
-  output.heading_error = heading_error;
-  output.steer_ff = steer_ff;
-  output.steer_fb = steer_fb;
+  output.lateral_error       = lateral_error;
+  output.heading_error       = heading_error;
+  output.steer_ff            = steer_ff;
+  output.steer_fb            = steer_fb;
   return output;
 }
 
-}  // namespace path_tracker
+// 根据路径段类型和滞回区选择当前转向模式。
+bool LQR::SelectSymmetricAckermann() {
+  const bool previous_mode = turn_mode_active_;
+  if (!turn_mode_active_ && HasTurnNear(config_.turn_mode_enter_m, 0.0)) {
+    turn_mode_active_ = true;
+  } else if (turn_mode_active_ && !HasTurnNear(config_.turn_mode_enter_m, config_.turn_mode_exit_m)) {
+    turn_mode_active_ = false;
+  }
+
+  if (turn_mode_active_ != previous_mode) {
+    const double effective_wheelbase = EffectiveWheelbase(config_.wheelbase, turn_mode_active_);
+    SPDLOG_INFO("转向模式切换为 {}（{}），等效轴距 {:.3f} m", turn_mode_active_ ? 1 : 0, turn_mode_active_ ? "对称阿克曼" : "单阿克曼", effective_wheelbase);
+  }
+  return turn_mode_active_;
+}
+
+// 完成一次路径推进、转向模式选择和控制量计算。
+bool LQR::ComputeCommand(const LQRInput& input, LQROutput& output) {
+  output       = LQROutput{};
+  robot_state_ = input.robot_state;
+  UpdateTargetIndex();
+  if (IsAtPathEnd()) {
+    return false;
+  }
+
+  const bool symmetric_ackermann   = SelectSymmetricAckermann();
+  robot_state_                     = ControlStateForMode(symmetric_ackermann);
+  const double effective_wheelbase = EffectiveWheelbase(config_.wheelbase, symmetric_ackermann);
+  output                           = ComputeFeedbackControl(effective_wheelbase);
+  output.steer_mode                = symmetric_ackermann ? 1 : 0;
+  output.effective_wheelbase       = effective_wheelbase;
+  output.target_index              = target_idx_;
+  output.distance_to_goal =
+    std::hypot(input.robot_state.x - goal_.x, input.robot_state.y - goal_.y);
+  return true;
+}
+
+}   // namespace path_tracker

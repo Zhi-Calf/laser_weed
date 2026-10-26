@@ -107,14 +107,14 @@ struct BowInput {
 // 全覆盖路径规划算法的输出 (值语义)
 // ============================================================
 struct BowOutput {
-  PlanStatus status = PlanStatus::kOk;    // kOk = 成功 (waypoints 非空)
-  std::string message;                    // 失败原因 (成功时为空)
-  Polygon_2 inner_polygon;                // 内缩后的垄覆盖区域 (可视化 + 参考)
-  std::vector<Point_2> waypoints;         // /path: 跟踪用的细路径
-  std::vector<uint8_t> waypoint_types;    // 与 waypoints 1:1 的类型 (0=WORK/1=TURN)
-  std::vector<Point_2> key_waypoints;     // 每条垄的两个端点 (掉头点)
-  double sweep_dir_deg           = 0.0;   // 选定的扫描方向 (deg)
-  double turn_max_overrun        = 0.0;   // 掉头伸出地块边界的最大距离 (m) —— [TURN_BOUNDARY]
+  PlanStatus status = PlanStatus::kOk;   // kOk = 成功 (waypoints 非空)
+  std::string message;                   // 失败原因 (成功时为空)
+  Polygon_2 inner_polygon;               // 内缩后的垄覆盖区域 (可视化 + 参考)
+  std::vector<Point_2> waypoints;        // /path: 跟踪用的细路径
+  std::vector<uint8_t> waypoint_types;   // 与 waypoints 1:1 的类型 (0=WORK/1=TURN)
+  std::vector<Point_2> key_waypoints;    // 每条垄的两个端点 (掉头点)
+  double sweep_dir_deg    = 0.0;         // 选定的扫描方向 (deg)
+  double turn_max_overrun = 0.0;         // 掉头伸出地块边界的最大距离 (m) —— [TURN_BOUNDARY]
   bool ok() const {
     return status == PlanStatus::kOk;
   }

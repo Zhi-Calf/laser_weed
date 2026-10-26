@@ -34,6 +34,7 @@ target_include_directories(weeder_base_protocol PUBLIC
 add_library(${PROJECT_NAME}_lib SHARED
   src/can_driver.cpp
   src/chassis_node.cpp
+  src/logging.cpp
 )
 
 target_include_directories(${PROJECT_NAME}_lib PUBLIC

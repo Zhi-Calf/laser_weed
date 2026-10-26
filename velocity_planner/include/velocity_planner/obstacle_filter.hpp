@@ -1,4 +1,4 @@
-// Copyright 2026. 点云 ROI 过滤与停车保持逻辑。
+// 版权所有 2026。点云 ROI 过滤与停车保持逻辑。
 #ifndef VELOCITY_PLANNER__OBSTACLE_FILTER_HPP_
 #define VELOCITY_PLANNER__OBSTACLE_FILTER_HPP_
 

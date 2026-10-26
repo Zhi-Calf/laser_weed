@@ -1,4 +1,4 @@
-// Copyright 2026. 点云前向矩形避停状态节点。
+// 版权所有 2026。点云前向矩形避停状态节点。
 #ifndef VELOCITY_PLANNER__VELOCITY_PLANNER_NODE_HPP_
 #define VELOCITY_PLANNER__VELOCITY_PLANNER_NODE_HPP_
 
@@ -31,7 +31,7 @@ private:
   double stop_hold_s_{0.3};           // 障碍消失后的停车保持时间
   RoiConfig roi_config_;              // ROI 参数
 
-  std::string log_dir_{"~/.ros/logs"};   // spdlog 日志目录
+  std::string log_dir_{"/opt/agri/logs"};   // spdlog 日志目录
   int log_file_size_mb_{50};             // 单个日志文件大小上限 (MB)
   int log_file_count_{10};               // 滚动保留的日志文件数量
   bool log_enable_console_{true};        // 是否同时输出到终端

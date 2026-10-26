@@ -37,15 +37,14 @@ private:
   bool openSerial();
   int openNtripSocket(std::string& pending_data);
   std::string buildRequest() const;
-  bool checkGga(const std::string& line) const;
 
 private:
   // 内层数据交互结束原因。
   enum class SessionEnd {
-    kGgaTimeout,     // GGA 数据超时
-    kRtcmTimeout,    // RTCM 数据超时
-    kSerialWriteFail,  // 串口写 RTCM 连续失败
-    kDisconnected,   // 连接断开/收发失败/正常退出
+    kGgaTimeout,        // GGA 数据超时
+    kRtcmTimeout,       // RTCM 数据超时
+    kSerialWriteFail,   // 串口写 RTCM 连续失败
+    kDisconnected,      // 连接断开/收发失败/正常退出
   };
   SessionEnd runSession(int socket_fd, const std::string& first_gga, std::chrono::steady_clock::time_point first_gga_time, std::string pending_data);
 

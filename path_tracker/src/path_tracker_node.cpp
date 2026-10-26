@@ -1,222 +1,252 @@
-// Copyright 2026. ROS 2 node implementation for the four-wheel-steering LQR.
+// 版权所有 2026。四轮转向 LQR 的 ROS 2 节点实现。
 #include "path_tracker/path_tracker_node.hpp"
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <utility>
 
-namespace path_tracker
-{
+#include "path_tracker/logging.hpp"
 
-namespace
-{
-/// Throttle repeated warnings so the log stays readable at 10 Hz.
-constexpr int kWarnIntervalMs = 3000;
+namespace path_tracker {
+
+namespace {
 constexpr double kRad2Deg = 57.29577951308232;
 
-/// Node name used in logs.
-constexpr const char * kNodeName = "path_tracker";
-}  // namespace
+/// 日志中使用的节点名称。
+constexpr const char* kNodeName = "path_tracker";
 
-PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions & options)
-: Node(kNodeName, options)
-{
-  // Order matters: the LQR object must exist before loadParameters() configures
-  // it, otherwise loadParameters() dereferences a null pointer.
+}   // namespace
+
+PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNodeName, options) {
+  loadLogParameters();
+  LogConfig log_config;
+  log_config.logger_name         = "path_tracker";
+  log_config.log_file_name       = "path_tracker.log";
+  log_config.log_dir             = log_dir_;
+  log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb_) * 1024U * 1024U;
+  log_config.max_file_count      = static_cast<std::size_t>(log_file_count_);
+  log_config.enable_console      = log_enable_console_;
+  log_config.log_level           = log_level_;
+  ConfigureLogging(log_config);
+  SPDLOG_INFO("日志配置成功");
+
+  // 必须先在 loadParameters() 之前创建 LQR 对象，否则配置时会访问空指针。
   lqr_ = std::make_unique<LQR>();
   loadParameters();
 
   setupInterfaces();
 
-  const auto period_ns = std::chrono::nanoseconds(
-    static_cast<int64_t>(1.0e9 / control_hz_));
-  timer_ = create_wall_timer(period_ns, [this]() {controlTick();});
+  const auto period_ns = std::chrono::nanoseconds(static_cast<int64_t>(1.0e9 / control_hz_));
+  timer_               = create_wall_timer(period_ns, [this]() {
+    controlTick();
+  });
 
-  RCLCPP_INFO(get_logger(),
-    "LQR 控制器已启动: 轴距=%.3fm 等效轴距=%.3fm 最大转角=%.1fdeg 最大速度=%.2fm/s 频率=%.1fHz",
-    wheelbase_, effective_wheelbase_, max_steer_deg_, max_speed_, control_hz_);
-  RCLCPP_INFO(get_logger(),
-    "订阅 位姿=%s 路径=%s 工作模式=%s 避停状态=%s | 发布 %s | 避停门控=%s",
-    pose_topic_.c_str(), path_topic_.c_str(), work_mode_topic_.c_str(),
-    velocity_planner_status_topic_.c_str(),
-    cmd_topic_.c_str(),
-    require_velocity_planner_ ? "enabled" : "disabled");
+  SPDLOG_INFO(
+    "LQR 控制器已启动: 轴距={:.3f}m "
+    "最大转角={:.1f}deg 频率={:.1f}Hz",
+    wheelbase_,
+    max_steer_deg_,
+    control_hz_);
+  SPDLOG_INFO(
+    "订阅 位姿={} 路径={} 工作模式={} 避停状态={} | 发布 {} | 避停门控={}",
+    pose_topic_,
+    path_topic_,
+    work_mode_topic_,
+    velocity_planner_status_topic_,
+    cmd_topic_,
+    require_velocity_planner_ ? "开启" : "关闭");
 }
 
-void PathTrackerNode::loadParameters()
-{
-  control_hz_ = declare_parameter<double>("control_hz", 10.0);
-  wheelbase_ = declare_parameter<double>("wheelbase", 1.0);
-  steer_mode_ = declare_parameter<int>("steer_mode", 0);
-  if (steer_mode_ < 0 || steer_mode_ > 3) {
-    RCLCPP_WARN(get_logger(), "steer_mode=%d 非法, 回退为 0 (单阿克曼)", steer_mode_);
-    steer_mode_ = 0;
-  }
-  max_steer_deg_ = declare_parameter<double>("max_steer_deg", 90.0);
-  max_speed_ = declare_parameter<double>("max_speed_m_s", 1.4);
-  target_v_ = declare_parameter<double>("lqr_target_v", 0.5);
-  max_track_error_m_ = declare_parameter<double>("max_track_error_m", 3.0);
-  // rclcpp stores every integer parameter as int64_t, so declare_parameter<int>
-  // actually yields int64_t. Passing that to std::max(0, ...) mixes int with
-  // int64_t and template deduction fails to compile. Declare as int64_t and clamp
-  // with plain comparisons (no template deduction to get wrong). Bounded to
-  // [0, 1000] so a huge value cannot make the per-tick snap search expensive.
-  int64_t snap_window_raw = declare_parameter<int64_t>("snap_window", 25);
-  if (snap_window_raw < 0) {
-    snap_window_raw = 0;
-  }
-  if (snap_window_raw > 1000) {
-    snap_window_raw = 1000;
-  }
-  snap_window_ = static_cast<size_t>(snap_window_raw);
-  pose_timeout_s_ = declare_parameter<double>("pose_timeout_s", 1.0);
-  path_timeout_s_ = declare_parameter<double>("path_timeout_s", 5.0);
-  work_mode_timeout_s_ = declare_parameter<double>("work_mode_timeout_s", 3.0);
-  work_mode_startup_grace_s_ = declare_parameter<double>("work_mode_startup_grace_s", 20.0);
-  velocity_planner_status_timeout_s_ =
-    declare_parameter<double>("velocity_planner_status_timeout_s", 0.5);
-  require_unmanned_ = declare_parameter<bool>("require_unmanned", true);
-  require_velocity_planner_ =
-    declare_parameter<bool>("require_velocity_planner", true);
-  frame_id_ = declare_parameter<std::string>("frame_id", "odom");
-  pose_topic_ = declare_parameter<std::string>(
-    "pose_topic", "/gnss_driver/pose");
-  path_topic_ = declare_parameter<std::string>("path_topic", "/global_path_planner/path");
-  work_mode_topic_ = declare_parameter<std::string>("work_mode_topic", "/work_mode");
-  velocity_planner_status_topic_ = declare_parameter<std::string>(
-    "velocity_planner_status_topic", "/velocity_planner/status");
-  cmd_topic_ = declare_parameter<std::string>("cmd_topic", "/chassis/cmd");
-  viz_ = declare_parameter<bool>("viz", true);
+void PathTrackerNode::loadLogParameters() {
+  declare_parameter("log_dir", "/opt/agri/logs");
+  declare_parameter("log_file_size_mb", 50);
+  declare_parameter("log_file_count", 10);
+  declare_parameter("log_enable_console", true);
+  declare_parameter("log_level", "info");
 
-  // Sanity guards: a non-positive wheelbase would divide by zero in B_d, and a
-  // non-positive control rate would make the timer period invalid.
-  control_hz_ = std::clamp(control_hz_, 1.0, 200.0);
-  wheelbase_ = std::max(wheelbase_, 0.05);
-  max_speed_ = std::clamp(max_speed_, 0.1, 1.4);           // protocol ceiling 1400 mm/s
-  max_steer_deg_ = std::clamp(max_steer_deg_, 1.0, 90.0);  // protocol +/-90 deg
-  target_v_ = std::clamp(target_v_, 0.0, max_speed_);
-  // 0 disables the along-track safety gate entirely; require a positive floor so
-  // a typo cannot silently turn off the only guard against the LQR's missing
-  // along-track error term.
-  max_track_error_m_ = std::max(max_track_error_m_, 0.1);
-  snap_window_ = std::min(snap_window_, static_cast<size_t>(1000));
-  velocity_planner_status_timeout_s_ = std::max(velocity_planner_status_timeout_s_, 0.1);
-  if (velocity_planner_status_topic_.empty()) {
-    velocity_planner_status_topic_ = "/velocity_planner/status";
-  }
-
-  // Effective wheelbase depends on the steering mode, because the Ackermann
-  // assumption behind B_d = v*dt/L only holds for modes 0 and 1.
-  //   0 single Ackermann (front wheels only)  -> L
-  //   1 dual Ackermann (front + rear oppose)  -> L/2: the same curvature is
-  //     reached with half the steering angle, so the effective wheelbase halves
-  //   2 crab / translation                    -> not applicable
-  //   3 in-place rotation                     -> not applicable
-  effective_wheelbase_ = wheelbase_;
-  if (steer_mode_ == 1) {
-    effective_wheelbase_ = wheelbase_ * 0.5;
-  } else if (steer_mode_ == 2 || steer_mode_ == 3) {
-    RCLCPP_ERROR(get_logger(),
-      "steer_mode=%d (平移/原地转向) 下阿克曼假设不成立，B 矩阵 v*dt/L 无效，"
-      "本控制器不能用于该模式。请改用 0(单阿克曼) 或 1(双阿克曼)。",
-      steer_mode_);
-  }
-  effective_wheelbase_ = std::max(effective_wheelbase_, 0.05);
-
-  lqr_->configure(
-    1.0 / control_hz_,
-    declare_parameter<double>("lqr_eps", 1e-6),
-    declare_parameter<int>("lqr_max_iteration", 1000),
-    declare_parameter<double>("lqr_Q_lateral", 50.0),
-    declare_parameter<double>("lqr_Q_heading", 25.0),
-    declare_parameter<double>("lqr_R_steer", 25.0),
-    effective_wheelbase_,
-    max_steer_deg_ / kRad2Deg,
-    max_speed_,
-    declare_parameter<double>("lqr_min_speed_factor", 0.3),
-    declare_parameter<double>("lqr_heading_deadband", 0.1),
-    declare_parameter<double>("lqr_heading_max", 1.0),
-    target_v_,
-    declare_parameter<double>("lqr_min_vel", 0.1));
-
-  lqr_->setSpeedShaping(
-    declare_parameter<double>("lqr_curvature_threshold", 0.2),
-    declare_parameter<double>("lqr_curvature_span", 0.5),
-    declare_parameter<double>("lqr_speed_scale", 0.4),
-    declare_parameter<int>("lqr_lookahead_index", 30),
-    declare_parameter<int>("lqr_lookback_start", 20));
-
-  // Re-anchor the tracked goal to the nearest path point within this window, on
-  // top of the arc-length accumulation. Without it the goal trusts odometry
-  // exclusively and can drift away from the robot with nothing pulling it back.
-  lqr_->setSnapWindow(snap_window_);
+  log_dir_            = get_parameter("log_dir").as_string();
+  log_file_size_mb_   = static_cast<int>(get_parameter("log_file_size_mb").as_int());
+  log_file_count_     = static_cast<int>(get_parameter("log_file_count").as_int());
+  log_enable_console_ = get_parameter("log_enable_console").as_bool();
+  log_level_          = get_parameter("log_level").as_string();
 }
 
-void PathTrackerNode::setupInterfaces()
-{
-  // gnss_driver publishes pose with SensorDataQoS (best effort, keep last 5);
-  // a reliable subscriber would never match that publisher, so mirror its QoS.
-  pose_sub_ = create_subscription<weeder_msgs::msg::Pose>(
-    pose_topic_, rclcpp::SensorDataQoS(),
-    [this](const weeder_msgs::msg::Pose::SharedPtr msg) {
-      poseCallback(msg);
-    });
+void PathTrackerNode::loadParameters() {
+  control_hz_                        = declare_parameter<double>("control_hz", 10.0);
+  wheelbase_                         = declare_parameter<double>("wheelbase", 1.0);
+  turn_mode_enter_m_                 = declare_parameter<double>("turn_mode_enter_m", 0.6);
+  turn_mode_exit_m_                  = declare_parameter<double>("turn_mode_exit_m", 0.6);
+  max_steer_deg_                     = declare_parameter<double>("max_steer_deg", 90.0);
+  work_speed_                        = declare_parameter<double>("work_speed_m_s", 0.6);
+  turn_speed_                        = declare_parameter<double>("turn_speed_m_s", 0.3);
+  turn_speed_preview_m_              = declare_parameter<double>("turn_speed_preview_m", 1.0);
+  turn_speed_hold_m_                 = declare_parameter<double>("turn_speed_hold_m", 0.5);
+  speed_ramp_mps2_                   = declare_parameter<double>("speed_ramp_mps2", 0.5);
+  max_lateral_error_m_               = declare_parameter<double>("max_lateral_error_m", 0.3);
+  max_track_error_m_                 = declare_parameter<double>("max_track_error_m", 3.0);
+  snap_forward_points_               = static_cast<size_t>(declare_parameter<int64_t>("snap_forward_points", 20));
+  pose_timeout_s_                    = declare_parameter<double>("pose_timeout_s", 1.0);
+  path_timeout_s_                    = declare_parameter<double>("path_timeout_s", 1.0);
+  work_mode_timeout_s_               = declare_parameter<double>("work_mode_timeout_s", 1.0);
+  velocity_planner_status_timeout_s_ = declare_parameter<double>("velocity_planner_status_timeout_s", 1.0);
+  require_velocity_planner_          = declare_parameter<bool>("require_velocity_planner", true);
+  frame_id_                          = declare_parameter<std::string>("frame_id", "odom");
+  pose_topic_                        = declare_parameter<std::string>("pose_topic", "/gnss_driver/pose");
+  path_topic_                        = declare_parameter<std::string>("path_topic", "/global_path_planner/path");
+  work_mode_topic_                   = declare_parameter<std::string>("work_mode_topic", "/work_mode");
+  velocity_planner_status_topic_     = declare_parameter<std::string>("velocity_planner_status_topic", "/velocity_planner/status");
+  cmd_topic_                         = declare_parameter<std::string>("cmd_topic", "/chassis/cmd");
+  viz_                               = declare_parameter<bool>("viz", true);
 
-  // global_path_planner publishes ~/path transient_local (latched), so a late
-  // subscriber must use matching durability to receive the last path.
+  const double lqr_eps        = declare_parameter<double>("lqr_eps", 1e-6);
+  const int lqr_max_iteration = static_cast<int>(declare_parameter<int64_t>("lqr_max_iteration", 1000));
+  const double lqr_q_lateral  = declare_parameter<double>("lqr_Q_lateral", 50.0);
+  const double lqr_q_heading  = declare_parameter<double>("lqr_Q_heading", 25.0);
+  const double lqr_r_steer    = declare_parameter<double>("lqr_R_steer", 25.0);
+  const bool pose_at_vehicle_center =
+    declare_parameter<bool>("pose_at_vehicle_center", true);
+
+  LQRConfig lqr_config;
+  lqr_config.dt                   = 1.0 / control_hz_;
+  lqr_config.eps                  = lqr_eps;
+  lqr_config.max_iteration        = lqr_max_iteration;
+  lqr_config.q_lateral            = lqr_q_lateral;
+  lqr_config.q_heading            = lqr_q_heading;
+  lqr_config.r_steer              = lqr_r_steer;
+  lqr_config.wheelbase            = wheelbase_;
+  lqr_config.turn_mode_enter_m    = turn_mode_enter_m_;
+  lqr_config.turn_mode_exit_m     = turn_mode_exit_m_;
+  lqr_config.max_steer_rad        = max_steer_deg_ / kRad2Deg;
+  lqr_config.snap_forward_points  = snap_forward_points_;
+  lqr_config.work_speed           = work_speed_;
+  lqr_config.turn_speed           = turn_speed_;
+  lqr_config.turn_speed_preview_m = turn_speed_preview_m_;
+  lqr_config.turn_speed_hold_m    = turn_speed_hold_m_;
+  lqr_config.pose_at_vehicle_center = pose_at_vehicle_center;
+  lqr_->Configure(lqr_config);
+
+  SPDLOG_INFO(
+    "控制参数加载完成: control_hz={:.1f}Hz wheelbase={:.3f}m "
+    "max_steer={:.1f}° snap_forward_points={}",
+    control_hz_,
+    wheelbase_,
+    max_steer_deg_,
+    snap_forward_points_);
+  SPDLOG_INFO(
+    "速度参数: work={:.3f}m/s turn={:.3f}m/s ramp={:.3f}m/s² "
+    "preview={:.3f}m hold={:.3f}m enter={:.3f}m exit={:.3f}m",
+    work_speed_,
+    turn_speed_,
+    speed_ramp_mps2_,
+    turn_speed_preview_m_,
+    turn_speed_hold_m_,
+    turn_mode_enter_m_,
+    turn_mode_exit_m_);
+  SPDLOG_INFO(
+    "安全参数: max_lateral_error={:.3f}m max_track_error={:.3f}m "
+    "超时 pose={:.2f}s path={:.2f}s work_mode={:.2f}s "
+    "obstacle={:.2f}s 避停门控={}",
+    max_lateral_error_m_,
+    max_track_error_m_,
+    pose_timeout_s_,
+    path_timeout_s_,
+    work_mode_timeout_s_,
+    velocity_planner_status_timeout_s_,
+    require_velocity_planner_ ? "开启" : "关闭");
+  SPDLOG_INFO(
+    "话题参数: frame={} pose={} path={} work_mode={} obstacle={} cmd={} "
+    "viz={}",
+    frame_id_,
+    pose_topic_,
+    path_topic_,
+    work_mode_topic_,
+    velocity_planner_status_topic_,
+    cmd_topic_,
+    viz_);
+  SPDLOG_INFO(
+    "LQR 参数: dt={:.3f}s eps={:g} max_iter={} "
+    "Q_lateral={:.1f} Q_heading={:.1f} R_steer={:.1f} "
+    "pose_at_vehicle_center={}",
+    lqr_config.dt,
+    lqr_config.eps,
+    lqr_config.max_iteration,
+    lqr_config.q_lateral,
+    lqr_config.q_heading,
+    lqr_config.r_steer,
+    pose_at_vehicle_center);
+}
+
+void PathTrackerNode::setupInterfaces() {
+  // gnss_driver 使用 SensorDataQoS（尽力传输，保留最近 5 条）发布位姿。
+  // 可靠订阅端无法与该发布端匹配，因此这里使用相同的 QoS。
+  pose_sub_ = create_subscription<weeder_msgs::msg::Pose>(pose_topic_, rclcpp::SensorDataQoS(), [this](const weeder_msgs::msg::Pose::SharedPtr msg) {
+    poseCallback(msg);
+  });
+
+  // global_path_planner 使用 transient_local（瞬态本地持久化）发布路径
+  // 晚加入的订阅端必须使用相同持久性才能收到最后一条路径。
   const auto path_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
-  path_sub_ = create_subscription<weeder_msgs::msg::Path>(
-    path_topic_, path_qos,
-    [this](const weeder_msgs::msg::Path::SharedPtr msg) {pathCallback(msg);});
+  path_sub_           = create_subscription<weeder_msgs::msg::Path>(path_topic_, path_qos, [this](const weeder_msgs::msg::Path::SharedPtr msg) {
+    pathCallback(msg);
+  });
 
-  // /work_mode is the system-wide "who controls the chassis" bus, published
-  // latched by the mode manager so a late subscriber learns the current mode
-  // immediately. Same QoS contract as global_path_planner's subscription.
-  const auto mode_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
-  work_mode_sub_ = create_subscription<weeder_msgs::msg::WorkMode>(
-    work_mode_topic_, mode_qos,
-    [this](const weeder_msgs::msg::WorkMode::SharedPtr msg) {workModeCallback(msg);});
+  // work_mode 使用普通订阅即可，无需额外配置 QoS。
+  work_mode_sub_ = create_subscription<weeder_msgs::msg::WorkMode>(work_mode_topic_, 10, [this](const weeder_msgs::msg::WorkMode::SharedPtr msg) {
+    workModeCallback(msg);
+  });
 
-  const auto obstacle_qos =
-    rclcpp::QoS(rclcpp::KeepLast(1)).reliable();
-  obstacle_status_sub_ =
-    create_subscription<weeder_msgs::msg::ObstacleStatus>(
-    velocity_planner_status_topic_, obstacle_qos,
-    [this](const weeder_msgs::msg::ObstacleStatus::SharedPtr msg) {
-      ObstacleStatusCallback(msg);
-    });
+  // 障碍物数据
+  const auto obstacle_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable();
+  obstacle_status_sub_    = create_subscription<weeder_msgs::msg::ObstacleStatus>(velocity_planner_status_topic_, obstacle_qos, [this](const weeder_msgs::msg::ObstacleStatus::SharedPtr msg) {
+    ObstacleStatusCallback(msg);
+  });
 
+  // 发布控制指令
   cmd_pub_ = create_publisher<weeder_msgs::msg::ChassisCmd>(cmd_topic_, 10);
   if (viz_) {
     viz_pub_ = create_publisher<visualization_msgs::msg::Marker>("/path_tracker/target_point", 10);
   }
 
-  const auto t = now();
-  boot_time_ = t;
-  last_pose_time_ = t;
-  last_path_time_ = t;
-  last_work_mode_time_ = t;
+  const auto t               = now();
+  last_pose_time_            = t;
+  last_path_time_            = t;
+  last_work_mode_time_       = t;
   last_obstacle_status_time_ = t;
 }
 
-void PathTrackerNode::poseCallback(const weeder_msgs::msg::Pose::SharedPtr msg)
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  last_pose_time_ = now();
-  has_pose_ = true;
-  pose_valid_ = msg->valid;
-  robot_state_.x = msg->x;
-  robot_state_.y = msg->y;
-  robot_state_.heading = msg->yaw;
+void PathTrackerNode::poseCallback(const weeder_msgs::msg::Pose::SharedPtr msg) {
+  last_pose_time_       = now();
+  has_pose_             = true;
+  pose_valid_           = msg->valid;
+  robot_state_.x        = msg->x;
+  robot_state_.y        = msg->y;
+  robot_state_.heading  = msg->yaw;
   robot_state_.linear_v = msg->speed_m_s;
+
+  SPDLOG_INFO(
+    "收到位姿: x={:.3f} y={:.3f} z={:.3f} yaw={:.2f}° "
+    "speed={:.3f}m/s sats={} valid={}",
+    msg->x,
+    msg->y,
+    msg->z,
+    msg->yaw * kRad2Deg,
+    msg->speed_m_s,
+    msg->satellites,
+    msg->valid);
 }
 
-void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg)
-{
-  if (msg->x.size() < 2 || msg->x.size() != msg->y.size()) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
-      "收到的路径无效：x=%zu y=%zu (需要 x==y 且 >= 2)",
-      msg->x.size(), msg->y.size());
+void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) {
+  if (msg->x.size() < 3 || msg->x.size() != msg->y.size()) {
+    SPDLOG_WARN("收到的路径无效：x={} y={}（需要 x==y 且不少于 3 点）", msg->x.size(), msg->y.size());
+    return;
+  }
+
+  // 即使内容被忽略，也必须刷新路径心跳，避免规划器仍在运行时触发路径超时。
+  last_path_time_ = now();
+  if (!accept_path_message_) {
     return;
   }
 
@@ -226,315 +256,260 @@ void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg)
     xy.emplace_back(msg->x[i], msg->y[i]);
   }
 
-  std::lock_guard<std::mutex> lock(mutex_);
-  // Always refresh the freshness timestamp: the path_timeout_s gate must see the
-  // periodic republishes, or the planner would look stale even while alive.
-  last_path_time_ = now();
-  has_path_ = true;
-
-  // Fingerprint check (inside the lock: it reads the path_fp_* members).
-  //
-  // global_path_planner republishes the identical path every 100 ms. Reloading the trajectory
-  // on each republish would reset the tracked goal to index 0 every tick, pinning
-  // the vehicle to the path start -- the "orange target point never moves"
-  // symptom. Only a genuinely new path (different length or endpoints) may reset
-  // tracking. computePathProfile copies x/y verbatim, so the raw xy values are
-  // directly comparable with the stored fingerprint, letting us skip the reload
-  // before paying for the profile computation on a multi-thousand-point path.
-  const double tol = 1e-6;
-  const bool same_path =
-    (path_fp_count_ == xy.size()) &&
-    (std::fabs(xy.front().first - path_fp_x0_) < tol) &&
-    (std::fabs(xy.front().second - path_fp_y0_) < tol) &&
-    (std::fabs(xy.back().first - path_fp_xn_) < tol) &&
-    (std::fabs(xy.back().second - path_fp_yn_) < tol);
-  if (same_path) {
-    return;  // identical republish: keep tracking the existing goal index
+  std::vector<TrajectoryPoint> traj;
+  if (!ComputePathProfile(xy, &traj)) {
+    SPDLOG_ERROR("路径剖面计算失败，忽略这条路径");
+    return;
+  }
+  for (size_t i = 0; i < traj.size(); ++i) {
+    traj[i].waypoint_type = msg->waypoint_types[i];
   }
 
-  std::vector<TrajectoryPoint> traj;
-  // The planner path carries no velocity information, so the desired speed
-  // comes from the node parameter.
-  if (!computePathProfile(xy, target_v_, &traj)) {
-    RCLCPP_ERROR(get_logger(), "路径剖面计算失败，忽略这条路径");
+  has_path_            = true;
+  accept_path_message_ = false;
+  path_point_count_    = traj.size();
+  last_speed_cmd_      = 0.0;
+  lqr_->SetTrajectory(traj);
+
+  SPDLOG_INFO(
+    "已载入新路径: {} 个点, 起点 ({:.2f}, {:.2f}), "
+    "终点 ({:.2f}, {:.2f})",
+    traj.size(),
+    traj.front().x,
+    traj.front().y,
+    traj.back().x,
+    traj.back().y);
+}
+
+void PathTrackerNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg) {
+  last_work_mode_time_            = now();
+  const bool first_mode           = !ever_got_work_mode_;
+  ever_got_work_mode_             = true;
+  autonomous_driving_mode_active_ = (msg->mode == weeder_msgs::msg::WorkMode::MODE_UNMANNED);
+
+  // 仅在模式变化时记录日志，避免 1 Hz 重发刷屏。
+  // last_mode_ 同时用于变化检测；首条消息时其初值为 0。
+  if (first_mode || msg->mode != last_mode_) {
+    SPDLOG_INFO(
+      "工作模式切换: {} -> {} ({}) -> {}",
+      static_cast<unsigned>(last_mode_),
+      static_cast<unsigned>(msg->mode),
+      msg->mode_name,
+      autonomous_driving_mode_active_ ? "自动驾驶(接管底盘)" : "非自动驾驶(输出停车)");
+    last_mode_           = msg->mode;
+    accept_path_message_ = true;
+  }
+}
+
+void PathTrackerNode::ObstacleStatusCallback(const weeder_msgs::msg::ObstacleStatus::SharedPtr msg) {
+  last_obstacle_status_time_ = now();
+  has_obstacle_status_       = true;
+  obstacle_sensor_valid_     = msg->sensor_valid;
+  obstacle_stop_required_    = msg->stop_required;
+  obstacle_points_           = msg->obstacle_points;
+
+  if (obstacle_stop_required_) {
+    SPDLOG_WARN(
+      "收到避停状态: sensor_valid={} stop_required={} points={} "
+      "nearest={:.2f}m",
+      msg->sensor_valid,
+      msg->stop_required,
+      msg->obstacle_points,
+      msg->nearest_distance_m);
+  }
+}
+
+void PathTrackerNode::publishStop() {
+  weeder_msgs::msg::ChassisCmd zero;
+  zero.gear            = 0;
+  zero.steer_mode      = 0;
+  zero.release_brake   = false;
+  zero.estop           = false;
+  zero.ctrl_mode       = false;
+  zero.speed_m_s       = 0.0;
+  zero.steer_angle_rad = 0.0;
+  cmd_pub_->publish(zero);
+  last_speed_cmd_ = 0.0;
+}
+
+void PathTrackerNode::controlTick() {
+  const auto t = now();
+
+  // ---- 门控 1：工作模式，也就是系统级使能信号 ----
+  const bool mode_fresh = ever_got_work_mode_ && (t - last_work_mode_time_).seconds() <= work_mode_timeout_s_;
+  if (!mode_fresh || !autonomous_driving_mode_active_) {
+    SPDLOG_WARN(
+      "未使能：需在 {} 上以不低于 {:.2f} Hz 持续发布 MODE_UNMANNED，"
+      "输出停车",
+      work_mode_topic_,
+      1.0 / work_mode_timeout_s_);
+    publishStop();
     return;
   }
 
-  path_fp_count_ = traj.size();
-  path_fp_x0_ = traj.front().x;
-  path_fp_y0_ = traj.front().y;
-  path_fp_xn_ = traj.back().x;
-  path_fp_yn_ = traj.back().y;
-  path_point_count_ = traj.size();
-  lqr_->setTrajectory(traj);
-  first_tick_ = true;  // reset the travelled-distance accumulator
-
-  RCLCPP_INFO(get_logger(),
-    "已载入新路径: %zu 个点, 起点 (%.2f, %.2f), 终点 (%.2f, %.2f)",
-    traj.size(), traj.front().x, traj.front().y, traj.back().x, traj.back().y);
-}
-
-void PathTrackerNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg)
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  last_work_mode_time_ = now();
-  const bool first_mode = !ever_got_work_mode_;
-  ever_got_work_mode_ = true;
-  unmanned_ = (msg->mode == weeder_msgs::msg::WorkMode::MODE_UNMANNED);
-
-  // Log only when the mode value actually changes (not on every 1 Hz republish),
-  // so the log stays readable during a run. last_mode_ doubles as the change
-  // detector; on the very first message it holds its 0 initial value.
-  if (first_mode || msg->mode != last_mode_) {
-    RCLCPP_INFO(get_logger(), "工作模式切换: %u -> %u (%s) -> %s",
-      static_cast<unsigned>(last_mode_), static_cast<unsigned>(msg->mode),
-      msg->mode_name.c_str(),
-      unmanned_ ? "无人(接管底盘)" : "非无人(输出停车)");
-    last_mode_ = msg->mode;
-  }
-}
-
-// 保存最近一次避停状态及其新鲜度。
-void PathTrackerNode::ObstacleStatusCallback(
-  const weeder_msgs::msg::ObstacleStatus::SharedPtr msg)
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  last_obstacle_status_time_ = now();
-  has_obstacle_status_ = true;
-  obstacle_sensor_valid_ = msg->sensor_valid;
-  obstacle_stop_required_ = msg->stop_required;
-  obstacle_points_ = msg->obstacle_points;
-}
-
-void PathTrackerNode::publishStop()
-{
-  weeder_msgs::msg::ChassisCmd zero;
-  zero.gear = 0;
-  zero.steer_mode = 0;
-  zero.release_brake = false;
-  zero.estop = true;
-  zero.ctrl_mode = false;
-  zero.speed_m_s = 0.0;
-  zero.steer_angle_rad = 0.0;
-  cmd_pub_->publish(zero);
-}
-
-void PathTrackerNode::controlTick()
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  const auto t = now();
-  const double since_boot = (t - boot_time_).seconds();
-
-  // Startup grace: while nothing has ever arrived, stay quiet instead of
-  // reporting a fault during boot (mirrors MegaTrak's *_startup_grace_s). It
-  // only suppresses the report; it never allows motion.
-  const bool in_grace = since_boot < work_mode_startup_grace_s_;
-
-  // ---- Gate 1: work mode (the system-wide arm signal) ----
-  // Motion is allowed only in MODE_UNMANNED. A stale /work_mode counts as
-  // "not unmanned": the mode manager publishes at 1 Hz, so a gap longer than
-  // work_mode_timeout_s means the APP or the link died.
-  if (require_unmanned_) {
-    const bool fresh = ever_got_work_mode_ &&
-      (t - last_work_mode_time_).seconds() <= work_mode_timeout_s_;
-    if (!fresh || !unmanned_) {
-      if (!in_grace) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
-          "未使能：需在 %s 上以 >= %.2fHz 持续发布 MODE_UNMANNED，输出停车",
-          work_mode_topic_.c_str(), 1.0 / work_mode_timeout_s_);
-      }
-      publishStop();
-      return;
-    }
-  }
-
-  // ---- Gate 2: RTK pose present, fresh, and of fixed-solution quality ----
+  // ---- 门控 2：RTK 位姿存在、新鲜且为固定解 ----
   if (!has_pose_) {
-    if (!in_grace) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
-        "等待定位数据 (%s)，输出停车", pose_topic_.c_str());
-    }
+    SPDLOG_WARN("等待定位数据（{}），输出停车", pose_topic_);
     publishStop();
     return;
   }
   if ((t - last_pose_time_).seconds() > pose_timeout_s_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
-      "定位数据超时 (%.2fs > %.2fs)，输出停车",
-      (t - last_pose_time_).seconds(), pose_timeout_s_);
+    SPDLOG_WARN("定位数据超时（{:.2f}s > {:.2f}s），输出停车", (t - last_pose_time_).seconds(), pose_timeout_s_);
     publishStop();
     return;
   }
-
   if (!pose_valid_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
-      "定位位姿无效（非 RTK 固定解），输出停车");
+    SPDLOG_WARN("定位位姿无效（非 RTK 固定解），输出停车");
     publishStop();
     return;
   }
 
-  // ---- Gate 3: a path to track, still fresh ----
+  // ---- 门控 3：存在可跟踪且未超时的路径 ----
   if (!has_path_) {
-    if (!in_grace) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
-        "等待路径 (%s)，输出停车", path_topic_.c_str());
-    }
+    SPDLOG_WARN("等待路径（{}），输出停车", path_topic_);
     publishStop();
     return;
   }
   if ((t - last_path_time_).seconds() > path_timeout_s_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
-      "路径超时 (%.2fs > %.2fs)，输出停车",
-      (t - last_path_time_).seconds(), path_timeout_s_);
+    SPDLOG_WARN("路径超时（{:.2f}s > {:.2f}s），输出停车", (t - last_path_time_).seconds(), path_timeout_s_);
     publishStop();
     return;
   }
 
-  // ---- Gate 4: the Ackermann model must actually apply ----
-  if (steer_mode_ == 2 || steer_mode_ == 3) {
-    publishStop();
-    return;
-  }
-
-  // ---- Gate 5: point-cloud obstacle safety ----
-  const double obstacle_status_age_s = has_obstacle_status_ ?
-    (t - last_obstacle_status_time_).seconds() : 0.0;
-  const ObstacleGateDecision obstacle_decision = EvaluateObstacleGate(
-    require_velocity_planner_,
-    has_obstacle_status_,
-    obstacle_status_age_s,
-    velocity_planner_status_timeout_s_,
-    obstacle_sensor_valid_,
-    obstacle_stop_required_);
-  if (obstacle_decision != ObstacleGateDecision::kAllow) {
-    switch (obstacle_decision) {
-      case ObstacleGateDecision::kUnavailable:
-        RCLCPP_WARN_THROTTLE(
-          get_logger(),
-          *get_clock(),
-          kWarnIntervalMs,
-          "避停状态不可用或超时 (%.2fs > %.2fs)，故障码 %u，输出停车",
-          obstacle_status_age_s,
-          velocity_planner_status_timeout_s_,
-          fault::kVelocityPlannerUnavailable);
-        break;
-      case ObstacleGateDecision::kSensorInvalid:
-        RCLCPP_WARN_THROTTLE(
-          get_logger(),
-          *get_clock(),
-          kWarnIntervalMs,
-          "避停感知数据无效，故障码 %u，输出停车",
-          fault::kVelocityPlannerUnavailable);
-        break;
-      case ObstacleGateDecision::kStopRequired:
-        RCLCPP_WARN_THROTTLE(
-          get_logger(),
-          *get_clock(),
-          kWarnIntervalMs,
-          "ROI 内检测到 %u 个障碍点，故障码 %u，输出停车",
-          obstacle_points_,
-          fault::kObstacleInRoi);
-        break;
-      case ObstacleGateDecision::kAllow:
-        break;
+  // ---- 门控 4：点云避停安全门控 ----
+  if (require_velocity_planner_) {
+    const double obstacle_status_age_s = has_obstacle_status_ ? (t - last_obstacle_status_time_).seconds() : 0.0;
+    if (!has_obstacle_status_ || obstacle_status_age_s > velocity_planner_status_timeout_s_) {
+      SPDLOG_WARN(
+        "避停状态不可用或超时（{:.2f}s > {:.2f}s），"
+        "输出停车",
+        obstacle_status_age_s,
+        velocity_planner_status_timeout_s_);
+      publishStop();
+      return;
     }
-    publishStop();
-    return;
-  }
-
-  // ---- All gates passed: run the controller ----
-
-  lqr_->setRobotState(robot_state_);
-
-  // Advance the tracked goal by the distance actually travelled since last tick
-  // (pure-pursuit style goal advancement, as in MegaTrak).
-  if (first_tick_) {
-    first_tick_ = false;
-    last_x_ = robot_state_.x;
-    last_y_ = robot_state_.y;
-  } else {
-    const double travelled = std::hypot(robot_state_.x - last_x_, robot_state_.y - last_y_);
-    last_x_ = robot_state_.x;
-    last_y_ = robot_state_.y;
-    if (!lqr_->advanceGoal(travelled)) {
-      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
-        "已到达路径末端，输出停车");
+    if (!obstacle_sensor_valid_) {
+      SPDLOG_WARN("避停感知数据无效，输出停车");
+      publishStop();
+      return;
+    }
+    if (obstacle_stop_required_) {
+      SPDLOG_WARN("ROI 内检测到 {} 个障碍点，输出停车", obstacle_points_);
       publishStop();
       return;
     }
   }
 
-  // ---- Gate 6: the robot must still be near its tracked goal ----
-  //
-  // This gate exists because the LQR error state [e_lateral, e_heading] has NO
-  // along-track component. A robot that runs straight past the goal along the
-  // path's own direction reads as PERFECT tracking: both errors are exactly 0,
-  // so the controller happily commands full speed with zero steering, forever.
-  //
-  // Observed in simulation (2026-10-15): goal frozen at the path start while the
-  // robot ran 238 m downrange, steer_angle_rad = 2.4e-14, no warning logged. The
-  // vehicle drove out of the field with every error metric at zero.
-  //
-  // Placed AFTER advanceGoal() so the snap-forward has already had its chance to
-  // re-anchor the goal; only a genuine loss of tracking reaches this check.
-  const double dist_to_goal = lqr_->distToGoal();
-  if (dist_to_goal > max_track_error_m_) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), kWarnIntervalMs,
-      "偏离目标 %.2f m > %.2f m（横向/航向误差可能同时为 0 —— LQR 无沿路径误差项），"
-      "输出停车。idx=%zu/%zu",
-      dist_to_goal, max_track_error_m_, lqr_->nearestIndex(), path_point_count_);
+  // ---- 所有门控通过，开始运行控制器 ----
+
+  LQRInput lqr_input;
+  lqr_input.robot_state = robot_state_;
+  LQROutput out;
+  if (!lqr_->ComputeCommand(lqr_input, out)) {
+    SPDLOG_INFO("已到达路径末端，输出停车");
     publishStop();
     return;
   }
 
-  const LQROutput out = lqr_->getControlOutput();
-  const double v = out.vel_cmd.linear_v;
-  const double delta = out.vel_cmd.steer_angle;  // rad, left positive
+  // 超横差保护
+  const double lateral_error_abs = std::fabs(out.lateral_error);
+  if (lateral_error_abs > max_lateral_error_m_) {
+    SPDLOG_ERROR("横向误差 {:.3f} m > {:.3f} m，输出停车", lateral_error_abs, max_lateral_error_m_);
+    publishStop();
+    return;
+  }
+
+  // ---- 门控 5：车辆必须仍在跟踪目标点附近 ----
+  //
+  // 该门控用于弥补 LQR 误差状态 [e_lateral, e_heading] 不含沿路径方向误差的问题。
+  // 车辆沿路径方向冲过目标点时，横向和航向误差都为 0，控制器会误判为完美跟踪，
+  // 从而持续输出全速零转角。
+  //
+  // 2026-10-15 仿真中曾出现目标点冻结在路径起点、车辆驶出 238 米，
+  // 转角为 2.4e-14 且没有任何告警的情况，所有误差指标仍显示正常。
+  //
+  // 本检查放在 ComputeCommand() 之后，使前向吸附先完成重新锚定；
+  // 只有真正丢失跟踪时才会触发停车。
+  const double dist_to_goal = out.distance_to_goal;
+  if (dist_to_goal > max_track_error_m_) {
+    SPDLOG_ERROR(
+      "偏离目标 {:.2f} m > {:.2f} m"
+      "（横向/航向误差可能同时为 0，LQR 无沿路径误差项），"
+      "输出停车。idx={}/{}",
+      dist_to_goal,
+      max_track_error_m_,
+      out.target_index,
+      path_point_count_);
+    publishStop();
+    return;
+  }
+
+  // 速度平滑
+  const double target_v       = out.vel_cmd.linear_v;
+  const double max_speed_step = speed_ramp_mps2_ / control_hz_;
+  double v                    = last_speed_cmd_;
+  if (target_v > v) {
+    v = std::min(target_v, v + max_speed_step);
+  } else {
+    v = std::max(target_v, v - max_speed_step);
+  }
+  last_speed_cmd_    = v;
+  const double delta = out.vel_cmd.steer_angle;   // 弧度，左转为正
 
   // 速度与转角在同一帧发布，保证 CAN 桥使用的是同一控制周期内的运动学组合。
   // 转角单位为 rad、左正，与 ADCU_toVCU_01 的符号约定一致。
   weeder_msgs::msg::ChassisCmd cmd;
-  cmd.gear = 1;
-  cmd.steer_mode = static_cast<uint8_t>(steer_mode_);
-  cmd.release_brake = true;
-  cmd.estop = false;
-  cmd.ctrl_mode = true;
-  cmd.speed_m_s = v;
+  cmd.gear            = 1;
+  cmd.steer_mode      = static_cast<uint8_t>(out.steer_mode);
+  cmd.release_brake   = true;
+  cmd.estop           = false;
+  cmd.ctrl_mode       = true;
+  cmd.speed_m_s       = v;
   cmd.steer_angle_rad = delta;
   cmd_pub_->publish(cmd);
 
-  RCLCPP_DEBUG(get_logger(),
-    "v=%.3f m/s delta=%+.2f deg (fb=%+.2f ff=%+.2f) e_lat=%+.3f m e_head=%+.3f rad "
-    "d_goal=%.2f m idx=%zu/%zu",
-    v, delta * kRad2Deg, out.steer_fb * kRad2Deg, out.steer_ff * kRad2Deg,
-    out.lateral_error, out.heading_error, dist_to_goal,
-    lqr_->nearestIndex(), path_point_count_);
+  SPDLOG_DEBUG(
+    "mode={} type={} v={:.3f}/{:.3f} m/s delta={:+.2f} deg "
+    "(fb={:+.2f} ff={:+.2f}) e_lat={:+.3f} m "
+    "e_head={:+.3f} rad d_goal={:.2f} m idx={}/{}",
+    out.steer_mode,
+    static_cast<unsigned>(out.target_pt.waypoint_type),
+    v,
+    target_v,
+    delta * kRad2Deg,
+    out.steer_fb * kRad2Deg,
+    out.steer_ff * kRad2Deg,
+    out.lateral_error,
+    out.heading_error,
+    dist_to_goal,
+    out.target_index,
+    path_point_count_);
 
   if (viz_) {
     publishViz(out.target_pt);
   }
 }
 
-void PathTrackerNode::publishViz(const TrajectoryPoint & target)
-{
+void PathTrackerNode::publishViz(const TrajectoryPoint& target) {
   visualization_msgs::msg::Marker m;
-  m.header.frame_id = frame_id_;
-  m.header.stamp = now();
-  m.ns = "lqr_target";
-  m.id = 0;
-  m.type = visualization_msgs::msg::Marker::SPHERE;
-  m.action = visualization_msgs::msg::Marker::ADD;
-  m.pose.position.x = target.x;
-  m.pose.position.y = target.y;
-  m.pose.position.z = 0.0;
+  m.header.frame_id    = frame_id_;
+  m.header.stamp       = now();
+  m.ns                 = "lqr_target";
+  m.id                 = 0;
+  m.type               = visualization_msgs::msg::Marker::SPHERE;
+  m.action             = visualization_msgs::msg::Marker::ADD;
+  m.pose.position.x    = target.x;
+  m.pose.position.y    = target.y;
+  m.pose.position.z    = 0.0;
   m.pose.orientation.w = 1.0;
-  m.scale.x = 0.25;
-  m.scale.y = 0.25;
-  m.scale.z = 0.25;
-  m.color.r = 1.0f;
-  m.color.g = 0.5f;
-  m.color.b = 0.0f;
-  m.color.a = 1.0f;
+  m.scale.x            = 0.25;
+  m.scale.y            = 0.25;
+  m.scale.z            = 0.25;
+  m.color.r            = 1.0f;
+  m.color.g            = 0.5f;
+  m.color.b            = 0.0f;
+  m.color.a            = 1.0f;
   viz_pub_->publish(m);
 }
 
-}  // namespace path_tracker
+}   // namespace path_tracker

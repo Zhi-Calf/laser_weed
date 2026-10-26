@@ -1,158 +1,116 @@
-// Copyright 2026. LQR lateral controller for the four-wheel-steering laser weeder.
-//
-// Derived from MegaTrak path_controller (control_node/path_controller/src/lqr.cpp),
-// re-derived for Ackermann / four-wheel steering kinematics. See README for the
-// derivation. The differential-drive B matrix of MegaTrak is NOT reusable.
-#ifndef PATH_TRACKER__LQR_HPP_
-#define PATH_TRACKER__LQR_HPP_
+#pragma once
 
 #include <Eigen/Dense>
-
+#include <cstddef>
 #include <vector>
 
-namespace path_tracker
-{
+#include "path_tracker/discrete_points_math.hpp"
 
-/// One trajectory point with the geometric attributes needed by the controller.
-/// Mirrors MegaTrak's TrajectoryPoint so the tuning playbook stays applicable.
-struct TrajectoryPoint
-{
-  double x{0.0};        ///< ENU x (m)
-  double y{0.0};        ///< ENU y (m)
-  double heading{0.0};  ///< path heading (rad)
-  double kappa{0.0};    ///< path curvature (1/m), left positive
-  double dkappa{0.0};   ///< curvature rate d(kappa)/ds
-  double s{0.0};        ///< accumulated arc length (m)
-  double v{0.0};        ///< desired speed at this point (m/s)
+namespace path_tracker {
+
+/// 误差动力学使用的车辆状态。
+struct RobotState {
+  double x        = 0.0;   // ENU 坐标系 x 坐标（米）
+  double y        = 0.0;   // ENU 坐标系 y 坐标（米）
+  double heading  = 0.0;   // 车辆航向角（弧度）
+  double linear_v = 0.0;   // 实测前向速度（米/秒）
 };
 
-/// Vehicle state used by the error dynamics.
-struct RobotState
-{
-  double x{0.0};
-  double y{0.0};
-  double heading{0.0};
-  double linear_v{0.0};  ///< measured forward speed (m/s)
+/// 控制器输出的运动指令。
+struct VelocityCommand {
+  double linear_v    = 0.0;   // 目标速度（米/秒），不小于 0
+  double steer_angle = 0.0;   // 前轴中心等效转角（弧度），左转为正
 };
 
-/// Command produced by the controller.
-struct VelocityCommand
-{
-  double linear_v{0.0};   ///< target speed (m/s), >= 0
-  double steer_angle{0.0};  ///< front-wheel steering angle (rad), left positive
-};
-
-struct LQROutput
-{
+/// LQR输出
+struct LQROutput {
   TrajectoryPoint target_pt;
   VelocityCommand vel_cmd;
-  double lateral_error{0.0};   ///< e_y (m), left positive - for logging/tuning
-  double heading_error{0.0};   ///< e_psi (rad)
-  double steer_ff{0.0};        ///< feedforward part of the steering angle (rad)
-  double steer_fb{0.0};        ///< feedback part of the steering angle (rad)
+  double lateral_error       = 0.0;   // 横向误差 e_y（米），左正，用于日志和调参
+  double heading_error       = 0.0;   // 航向误差 e_psi（弧度）
+  double steer_ff            = 0.0;   // 前馈转角（弧度）
+  double steer_fb            = 0.0;   // 反馈转角（弧度）
+  double distance_to_goal    = 0.0;   // 车辆到当前目标点的距离（米）
+  double effective_wheelbase = 0.0;   // 当前转向模式使用的等效轴距（米）
+  std::size_t target_index   = 0;     // 当前跟踪目标在路径中的索引
+  int steer_mode             = 0;     // 当前转向模式，0=单阿克曼，1=对称阿克曼
 };
 
-/// Discrete LQR for the kinematic bicycle (Ackermann) model.
+/// 单次控制计算所需的输入。
+struct LQRInput {
+  RobotState robot_state;
+};
+
+/// LQR 的全部静态配置。
+struct LQRConfig {
+  double dt                       = 0.1;      // 控制周期（秒）
+  double eps                      = 1e-6;     // 黎卡提迭代收敛阈值
+  int max_iteration               = 1000;     // 黎卡提最大迭代次数
+  double q_lateral                = 50.0;     // 横向误差权重
+  double q_heading                = 25.0;     // 航向误差权重
+  double r_steer                  = 25.0;     // 转角控制代价
+  double wheelbase                = 1.0;      // 物理轴距（米）
+  double turn_mode_enter_m        = 0.6;      // 进入 TURN 模式的前视距离（米）
+  double turn_mode_exit_m         = 0.6;      // 退出 TURN 模式的保持距离（米）
+  double max_steer_rad            = 1.5708;   // 最大转角（弧度）
+  std::size_t snap_forward_points = 20;       // 从上一目标点向前的搜索点数，必须大于 0
+  double work_speed               = 0.6;      // WORK 段目标速度（米/秒）
+  double turn_speed               = 0.3;      // TURN 段目标速度（米/秒）
+  double turn_speed_preview_m     = 1.0;      // TURN 前预览距离（米）
+  double turn_speed_hold_m        = 0.5;      // TURN 后低速保持距离（米）
+  bool pose_at_vehicle_center = true;  // 位姿参考点是否为车体中心
+};
+
+/// 运动学自行车（阿克曼）模型的离散 LQR。
+/// 调用方必须保证轨迹非空、位姿有效；异常输入由上层停车处理。
 ///
-/// Error state  x = [e_y, e_psi]^T   (lateral error, heading error)
-/// Continuous   A = [[0, v], [0, 0]],  B = [[0], [v/L]]
-/// Discrete     A_d = I + A*dt = [[1, v*dt], [0, 1]]
-///              B_d = B*dt     = [[0], [v*dt/L]]
+/// 误差状态 x = [e_y, e_psi]^T，分别表示横向误差和航向误差。
+/// 连续模型 A = [[0, v], [0, 0]]，B = [[0], [v/L]]。
+/// 离散模型 A_d = I + A*dt = [[1, v*dt], [0, 1]]，
+/// B_d = B*dt = [[0], [v*dt/L]]。
 ///
-/// Note A_d is identical to MegaTrak's differential-drive A_d; only B_d differs.
-/// Feedforward at steady state on a curve of curvature kappa:
-///   e_psi_dot = (v/L)*delta - v*kappa = 0  =>  delta_ff = L * kappa
-class LQR
-{
+/// A_d 与 MegaTrak 的差速驱动模型相同，只有 B_d 不同。
+/// 曲率为 kappa 的稳态弯道前馈满足：
+/// e_psi_dot = (v/L)*tan(delta) - v*kappa = 0，
+/// 因此 delta_ff = atan(L * kappa)。
+class LQR {
 public:
   LQR() = default;
 
-  /// Configure weights and solver limits. Q is diag(Q_xy, Q_heading); R is scalar R_delta.
-  void configure(
-    double dt, double eps, int max_iteration,
-    double q_lateral, double q_heading, double r_steer,
-    double wheelbase, double max_steer_rad, double max_speed,
-    double min_speed_factor, double heading_deadband, double heading_max,
-    double target_v, double min_vel);
+  void Configure(const LQRConfig& config);
 
-  /// Curvature look-ahead and speed shaping. Parameter names mirror MegaTrak's
-  /// path_controller.yaml so the existing tuning playbook still applies.
-  void setSpeedShaping(
-    double curvature_threshold, double curvature_span, double speed_scale,
-    int lookahead_index, int lookback_start);
+  void SetTrajectory(const std::vector<TrajectoryPoint>& points);
 
-  /// Replace the tracked trajectory. `points` must carry x/y; heading/kappa/v
-  /// are filled in by computePathProfile() before this call.
-  void setTrajectory(const std::vector<TrajectoryPoint> & points);
-
-  /// Feed the latest localization pose.
-  void setRobotState(const RobotState & state);
-
-  /// Advance the tracked goal point by the measured distance, then snap forward
-  /// to the nearest point within the snap window. Returns false if the
-  /// trajectory is exhausted (caller should stop).
-  bool advanceGoal(double travelled);
-
-  /// Euclidean distance from the robot to the currently tracked goal (m).
-  /// The LQR error state has no along-track component, so this is the caller's
-  /// only handle on "the robot has run past the goal". Used as a safety gate.
-  double distToGoal() const;
-
-  /// Forward-snap window for advanceGoal(), in path points. 0 disables snapping
-  /// and falls back to pure arc-length accumulation.
-  void setSnapWindow(size_t window);
-
-  /// One control tick. Produces speed + steering angle.
-  LQROutput getControlOutput();
-
-  /// Nearest trajectory index to the robot, for visualization.
-  size_t nearestIndex() const;
+  bool ComputeCommand(const LQRInput& input, LQROutput& output);
 
 private:
-  /// Solve the discrete algebraic Riccati equation by fixed-point iteration.
-  /// Algorithm copied verbatim from MegaTrak lqr.cpp:71-85 (model-independent).
-  void calRicatti(const Eigen::MatrixXd & A, const Eigen::MatrixXd & B, Eigen::MatrixXd & K);
+  void UpdateTargetIndex();
 
-  /// Apply curvature- and heading-error-based speed scaling.
-  double scaleSpeed(double base_v, double heading_error, size_t idx) const;
+  bool IsAtPathEnd() const;
 
-  static double normalizeAngle(double angle);
+  bool HasTurnNear(double before_m, double after_m) const;
 
-  // Solver
-  double dt_{0.1};
-  double eps_{1e-6};
-  int max_iteration_{1000};
+  bool SelectSymmetricAckermann();
+
+  RobotState ControlStateForMode(bool symmetric_ackermann) const;
+
+  LQROutput ComputeFeedbackControl(double effective_wheelbase) const;
+
+  void CalRicatti(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B, Eigen::MatrixXd& K) const;
+
+  double ScaleSpeed() const;
+
+private:
+  LQRConfig config_;   // LQR 完整配置
   Eigen::Matrix2d Q_{Eigen::Matrix2d::Identity()};
   Eigen::MatrixXd R_{Eigen::MatrixXd::Identity(1, 1)};
 
-  // Vehicle limits
-  double wheelbase_{1.0};      ///< effective wheelbase for the active steering mode (m)
-  double max_steer_rad_{1.5708};  ///< +/-90 deg per CAN protocol
-  double max_speed_{1.4};      ///< protocol range 0..1400 mm/s
-
-  // Speed shaping
-  double min_speed_factor_{0.3};
-  double heading_deadband_{0.1};
-  double heading_max_{1.0};
-  double target_vel_{0.5};
-  double min_vel_{0.1};
-
-  // Curvature look-ahead
-  double curvature_threshold_{0.2};
-  double curvature_span_{0.5};
-  double speed_scale_{0.4};
-  int lookahead_index_{30};
-  int lookback_start_{20};
-
-  // Runtime
+private:
   std::vector<TrajectoryPoint> path_;
   TrajectoryPoint goal_;
-  size_t max_pt_idx_{0};
-  /// Forward-snap window for advanceGoal(), in path points.
-  size_t snap_window_{0};
+  size_t target_idx_{0};
   RobotState robot_state_;
+  bool turn_mode_active_{false};
 };
 
-}  // namespace path_tracker
-
-#endif  // PATH_TRACKER__LQR_HPP_
+}   // namespace path_tracker

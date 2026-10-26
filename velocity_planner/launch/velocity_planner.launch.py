@@ -1,4 +1,4 @@
-# Copyright 2026. 点云避停节点启动文件。
+# 版权所有 2026。点云避停节点启动文件。
 import os
 
 from ament_index_python.packages import get_package_share_directory

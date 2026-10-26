@@ -15,6 +15,7 @@
 
 #include <rclcpp/executors/single_threaded_executor.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <visualization_msgs/msg/marker.hpp>
 
 #include "global_path_planner/bow.hpp"
 #include "global_path_planner/global_path_planner.hpp"
@@ -82,18 +83,36 @@ TEST_F(GlobalPathPlannerNodeTest, PublishesPathWithMatchingTypesAndFrame) {
   auto listener     = std::make_shared<rclcpp::Node>("global_path_planner_node_test_listener");
 
   weeder_msgs::msg::Path::SharedPtr received;
+  visualization_msgs::msg::Marker::SharedPtr work_points;
+  visualization_msgs::msg::Marker::SharedPtr turn_points;
   auto subscription = listener->create_subscription<weeder_msgs::msg::Path>(
     "/global_path_planner/path", rclcpp::QoS(1).transient_local(),
     [&received](weeder_msgs::msg::Path::SharedPtr msg) { received = std::move(msg); });
+  auto work_subscription =
+    listener->create_subscription<visualization_msgs::msg::Marker>(
+      "/global_path_planner/work_points", 10,
+      [&work_points](visualization_msgs::msg::Marker::SharedPtr msg) {
+        work_points = std::move(msg);
+      });
+  auto turn_subscription =
+    listener->create_subscription<visualization_msgs::msg::Marker>(
+      "/global_path_planner/turn_points", 10,
+      [&turn_points](visualization_msgs::msg::Marker::SharedPtr msg) {
+        turn_points = std::move(msg);
+      });
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(planner_node);
   executor.add_node(listener);
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (!received && std::chrono::steady_clock::now() < deadline) {
+  while ((!received || !work_points || !turn_points) &&
+         std::chrono::steady_clock::now() < deadline) {
     executor.spin_some(std::chrono::milliseconds(50));
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
+  work_subscription.reset();
+  turn_subscription.reset();
+  subscription.reset();
   executor.remove_node(listener);
   executor.remove_node(planner_node);
 
@@ -109,4 +128,17 @@ TEST_F(GlobalPathPlannerNodeTest, PublishesPathWithMatchingTypesAndFrame) {
     EXPECT_TRUE(std::isfinite(received->x[i])) << "第 " << i << " 个 x 不是有限数";
     EXPECT_TRUE(std::isfinite(received->y[i])) << "第 " << i << " 个 y 不是有限数";
   }
+
+  ASSERT_TRUE(work_points) << "5 s 内没有收到 WORK 路径点 Marker";
+  ASSERT_TRUE(turn_points) << "5 s 内没有收到 TURN 路径点 Marker";
+  EXPECT_EQ(work_points->header.frame_id, "odom");
+  EXPECT_EQ(turn_points->header.frame_id, "odom");
+  EXPECT_EQ(work_points->type, visualization_msgs::msg::Marker::SPHERE_LIST);
+  EXPECT_EQ(turn_points->type, visualization_msgs::msg::Marker::SPHERE_LIST);
+  EXPECT_EQ(work_points->action, visualization_msgs::msg::Marker::ADD);
+  EXPECT_EQ(turn_points->action, visualization_msgs::msg::Marker::ADD);
+  EXPECT_GT(work_points->color.g, work_points->color.r);
+  EXPECT_GT(turn_points->color.r, turn_points->color.g);
+  EXPECT_EQ(work_points->points.size() + turn_points->points.size(),
+            received->x.size());
 }

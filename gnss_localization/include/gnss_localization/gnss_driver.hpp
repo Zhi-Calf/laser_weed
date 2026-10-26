@@ -3,9 +3,10 @@
 #include <tf2_ros/transform_broadcaster.h>
 
 #include <GeographicLib/LocalCartesian.hpp>
-#include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
 #include <chrono>
 #include <cstdint>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
 #include <memory>
 #include <mutex>
 #include <nav_msgs/msg/odometry.hpp>
@@ -13,8 +14,6 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <string>
-#include <utility>
-#include <vector>
 
 #include "gnss_localization/giavp_parser.hpp"
 #include "gnss_localization/serial_port.hpp"
@@ -31,6 +30,7 @@ constexpr int kStatusRtkFixed = 4;   // RTK 固定解
 /// /gnss_driver/<topic>):
 ///   ~/fix            原始经纬度 (设备 INS 解算, NavSatFix)
 ///   ~/pose           修正 ENU 位姿 (weeder_msgs/Pose, 含姿态/卫星数/有效性/速度)
+///   ~/pose_stamped   修正 ENU 位姿 (geometry_msgs/PoseStamped, 供 RViz 显示)
 ///   ~/odom_raw       原始里程计 (设备中心 gnss_link + 原始测向航向, 无任何修正), **仅供标定**
 ///   ~/imu            IMU 姿态 (含 ENU yaw), sensor_msgs/Imu
 ///   ~/vel            车体系速度 (TwistWithCovarianceStamped, x 前 y 左 z 上)
@@ -67,7 +67,6 @@ private:
   void publishVelocity(const GiavpData& d);
   void publishPose(const GiavpData& d);
   void publishOriginLlh();
-  rcl_interfaces::msg::SetParametersResult onSetParameters(const std::vector<rclcpp::Parameter>& parameters);
 
 private:
   double headingToEnuYaw(double heading_deg) const;
@@ -76,19 +75,15 @@ private:
   static int statusRank(int status);
 
 private:
-  enum class PersistOutcome { kPersisted, kSkippedNoPath, kFailed };
-  PersistOutcome persistParamsToYaml(const std::vector<std::pair<std::string, double>>& updates);
-
-private:
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr fix_pub_;
   rclcpp::Publisher<weeder_msgs::msg::Pose>::SharedPtr pose_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_stamped_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_raw_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   rclcpp::Publisher<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr vel_pub_;
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr origin_llh_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::TimerBase::SharedPtr timer_;
-  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr params_cb_handle_;
 
 private:
   SerialPort serial_;
@@ -97,27 +92,23 @@ private:
   mutable std::mutex datum_mutex_;   // 保护 datum_proj_ (防御性: 当前读写均在 timer 回调线程, 无跨线程竞争)
 
 private:
-  std::string serial_port_path_;           // 串口设备号
-  int baud_rate_{115200};                  // 串口波特率
-  std::string frame_id_;                   // 发布的坐标系
-  std::string gnss_config_path_;           // 配置文件路径
-  double heading_std_deg_{0.2};            // 航向标准差 (deg)
-  double acc_rtk_fixed_{0.02};             // rtk 固定解
-  double acc_rtk_float_{0.3};              // rtk 浮点解
-  double acc_rtd_{1.0};                    // rtk 动态解
-  double acc_spp_{1.5};                    // spp 解
-  double calib_offset_x_{0.0};             // 杆臂 x (m, 车体系: 前 +x)
-  double calib_offset_y_{0.0};             // 杆臂 y (m, 车体系: 左 +y)
-  double calib_offset_heading_{0.0};       // 航向安装偏角 (rad)
-  double calib_offset_max_xy_{2.5};        // calib_offset_x/y 范围上限 (m, 绝对杆臂长度)
-  double calib_offset_max_heading_{0.6};   // calib_offset_heading 范围上限 (rad, ≈34°)
-  mutable std::mutex calib_mutex_;         // 保护 calib_offset_* (参数回调 vs 定时器线程)
-  bool debug_giavp_{false};                // 是否打印 giavp 数据到日志
-  int gnss_log_interval_{500};             // GNSS 状态日志条数间隔
-  int pose_log_interval_{10};              // 位姿日志条数间隔
-  double giavp_timeout_sec_{1.0};           // 无有效 GIAVP 数据超时
-  bool use_gps_timestamp_{true};            // 是否使用 GIAVP GPS 时间戳
-  int gps_utc_leap_seconds_{18};            // GPS 与 UTC 当前闰秒差
+  std::string serial_port_path_;       // 串口设备号
+  int baud_rate_{115200};              // 串口波特率
+  std::string frame_id_;               // 发布的坐标系
+  double heading_std_deg_{0.2};        // 航向标准差 (deg)
+  double acc_rtk_fixed_{0.02};         // rtk 固定解
+  double acc_rtk_float_{0.3};          // rtk 浮点解
+  double acc_rtd_{1.0};                // rtk 动态解
+  double acc_spp_{1.5};                // spp 解
+  double calib_offset_x_{0.0};         // 杆臂 x (m, 车体系: 前 +x)
+  double calib_offset_y_{0.0};         // 杆臂 y (m, 车体系: 左 +y)
+  double calib_offset_heading_{0.0};   // 航向安装偏角 (rad)
+  bool debug_giavp_{false};            // 是否打印 giavp 数据到日志
+  int gnss_log_interval_{500};         // GNSS 状态日志条数间隔
+  int pose_log_interval_{10};          // 位姿日志条数间隔
+  double giavp_timeout_sec_{1.0};      // 无有效 GIAVP 数据超时
+  bool use_gps_timestamp_{true};       // 是否使用 GIAVP GPS 时间戳
+  int gps_utc_leap_seconds_{18};       // GPS 与 UTC 当前闰秒差
 
 private:
   std::string log_dir_     = "/opt/agri/logs";   // 日志目录

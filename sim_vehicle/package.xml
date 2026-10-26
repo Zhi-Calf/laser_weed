@@ -6,29 +6,33 @@
   <description>
     Simulation vehicle node for laser-weeder integration testing without hardware.
     Replaces gnss_localization (publishes /gnss_driver/pose, /gnss_driver/origin, TF
-    odom->base_link) and the chassis (consumes /chassis/cmd, integrates
-    a single-Ackermann bicycle model), and publishes /work_mode so that
-    global_path_planner and path_tracker can be exercised end to end.
+    odom->base_link) and the four-wheel-steering chassis (consumes /chassis/cmd,
+    integrates the equivalent Ackermann motion and publishes four wheel steer
+    angles and speeds), and publishes /work_mode so that global_path_planner and
+    path_tracker can be exercised end to end. A C++ orchestrator switches to
+    UNMANNED mode after the planned path becomes available.
   </description>
   <maintainer email="jw11141@users.noreply.github.com">jw11141</maintainer>
   <license>Apache-2.0</license>
 
-  <exec_depend>rclpy</exec_depend>
-  <exec_depend>geometry_msgs</exec_depend>
-  <exec_depend>nav_msgs</exec_depend>
-  <exec_depend>sensor_msgs</exec_depend>
-  <exec_depend>std_msgs</exec_depend>
-  <exec_depend>tf2_msgs</exec_depend>
-  <exec_depend>visualization_msgs</exec_depend>
-  <!-- WorkMode definition, from the ported weeder_msgs package -->
-  <exec_depend>weeder_msgs</exec_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <test_depend>ament_copyright</test_depend>
-  <test_depend>ament_flake8</test_depend>
-  <test_depend>ament_pep257</test_depend>
-  <test_depend>python3-pytest</test_depend>
+  <depend>geometry_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>weeder_msgs</depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
-    <build_type>ament_python</build_type>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

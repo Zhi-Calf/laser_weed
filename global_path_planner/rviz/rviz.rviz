@@ -10,6 +10,8 @@ Panels:
         - /Marker2
         - /Marker3
         - /Marker4
+        - /Marker5
+        - /Marker6
         - /Path1
       Splitter Ratio: 0.5
     Tree Height: 754
@@ -47,6 +49,25 @@ Visualization Manager:
       Plane Cell Count: 10
       Reference Frame: <Fixed Frame>
       Value: true
+    - Alpha: 1
+      Axes Length: 1.5
+      Axes Radius: 0.15
+      Class: rviz_default_plugins/Pose
+      Color: 255; 140; 0
+      Enabled: true
+      Head Length: 0.3
+      Head Radius: 0.12
+      Name: GNSS 位姿
+      Shaft Length: 1
+      Shaft Radius: 0.06
+      Shape: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /gnss_driver/pose_stamped
+      Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: true
       Name: Marker
@@ -60,9 +81,10 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /global_path_planner/key_points
       Value: true
+    # 原始完整路径点保留用于兼容旧订阅，默认由下方的 WORK/TURN 分色显示替代。
     - Class: rviz_default_plugins/Marker
-      Enabled: true
-      Name: Marker
+      Enabled: false
+      Name: 原始路径点
       Namespaces:
         {}
       Topic:
@@ -72,6 +94,32 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /global_path_planner/path_points
+      Value: false
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: WORK 作业段
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_path_planner/work_points
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: TURN 掉头段
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_path_planner/turn_points
       Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: true

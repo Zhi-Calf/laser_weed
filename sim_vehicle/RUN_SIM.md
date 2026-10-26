@@ -9,9 +9,36 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker ──/chassis/cmd─�
 global_path_planner（YAML poly 首个顶点为原点）──/path──► path_tracker
 ```
 
-`sim_vehicle` 同时扮演三个角色：GNSS 定位、车辆运动学和工作模式管理。
+`sim_vehicle` 同时扮演三个角色：GNSS 定位、四轮转向车辆运动学和工作模式管理。
+`sim_vehicle` 和 `sim_orchestrator` 均使用 C++20 实现。
 `global_path_planner` 启动时直接从 YAML 读取田块和几何参数，不再需要
 `set_source` 服务。
+
+车辆几何默认与 `Laser-Weeding-Sim` 的 Isaac 场景一致：
+
+| 参数 | 默认值 | 说明 |
+|---|---:|---|
+| `wheelbase` | `1.521 m` | 前后轴距，同时传给 `path_tracker` |
+| `wheel_track` | `1.306 m` | 左右轮中心距 |
+| `wheel_radius` | `0.29 m` | 车轮半径 |
+| `vehicle_length` | `1.8 m` | 车体本体长度，不含车轮外伸部分 |
+| `vehicle_width` | `1.2 m` | 车体本体宽度，不含车轮外伸部分 |
+| `vehicle_height` | `0.5 m` | 车体本体高度 |
+| `max_plant_steer_deg` | `90°` | 单轮最大转向角 |
+| `cmd_timeout_s` | `0.3 s` | 指令超时停车，与 `weeder_base` 一致 |
+
+`sim_vehicle` 根据 `steer_mode` 输出四个轮子的转角和轮速，并发布
+`/chassis/state`。当前只实现路径跟踪使用的 `steer_mode=0` 单阿克曼和
+`steer_mode=1` 对称阿克曼；`2/3` 因统一指令中缺少明确的横移/自转语义而停车。
+`/gnss_driver/pose`、TF 和车辆 Marker 始终使用车体几何中心；
+`path_tracker` 在单阿克曼模式下自动换算到后轴控制点。
+
+四轮运动学单元测试：
+
+```bash
+colcon test --packages-select sim_vehicle
+colcon test-result --test-result-base build/sim_vehicle --verbose
+```
 
 ## 一、一条命令启动
 
@@ -38,14 +65,15 @@ ros2 launch sim_vehicle weeder_sim.launch.py
 常用参数：
 
 ```bash
-# 改垄宽和目标速度
-ros2 launch sim_vehicle weeder_sim.launch.py ridge_width:=3.0 target_v:=0.8
+# 改垄宽、WORK 速度和 TURN 速度
+ros2 launch sim_vehicle weeder_sim.launch.py \
+  ridge_width:=3.0 target_v:=0.6 turn_speed:=0.3
 
 # 无显示器/SSH
 ros2 launch sim_vehicle weeder_sim.launch.py rviz:=false
 
-# 初始横向偏差更大，便于观察收敛
-ros2 launch sim_vehicle weeder_sim.launch.py align_offset:=2.0
+# 在安全门限内保留初始横向偏差，便于观察收敛
+ros2 launch sim_vehicle weeder_sim.launch.py align_offset:=0.2
 ```
 
 ## 二、田块与路径配置
@@ -94,9 +122,12 @@ sim_orchestrator 切 UNMANNED → path_tracker 开始驱动
 ```bash
 source install/setup.bash
 ros2 run sim_vehicle sim_vehicle --ros-args \
-  -p wheelbase:=1.2 \
+  -p wheelbase:=1.521 \
+  -p wheel_track:=1.306 \
+  -p wheel_radius_m:=0.29 \
+  -p cmd_timeout_s:=0.3 \
   -p align_to_path_start:=true \
-  -p align_lateral_offset:=0.8
+  -p align_lateral_offset:=0.2
 ```
 
 ### 终端 2：规划器
@@ -136,11 +167,15 @@ ros2 topic pub --once /sim/unmanned std_msgs/msg/Bool "{data: true}"
 | 田块边界 | `/global_path_planner/boundary_points` |
 | 内缩边界 | `/global_path_planner/inner_boundary_points` |
 | 掉头关键点 | `/global_path_planner/key_points` |
-| 全覆盖路径 | `/global_path_planner/path` |
-| 仿真车 | `/sim_vehicle/marker` |
+| WORK 作业段（绿色） | `/global_path_planner/work_points` |
+| TURN 掉头段（橙色） | `/global_path_planner/turn_points` |
+| 原始完整路径点 | `/global_path_planner/path_points` |
+| 仿真车（车体、黄色车头、四个转向轮） | RViz 显示：`/sim_vehicle/marker`；数据：`/sim_vehicle/marker_array` |
 | 跟踪目标点 | `/path_tracker/target_point` |
+| 四轮转角与轮速 | `/chassis/state` |
 
-`/gnss_driver/pose` 使用 SensorDataQoS（Best Effort）。手动添加显示时
+`/gnss_driver/pose_stamped` 使用 SensorDataQoS（Best Effort），可在 RViz
+中直接添加 Pose 显示。手动订阅自定义 `/gnss_driver/pose` 时
 必须把 RViz 的 Reliability 改成 **Best Effort**。
 
 ## 六、判断成功
@@ -151,7 +186,7 @@ ros2 topic pub --once /sim/unmanned std_msgs/msg/Bool "{data: true}"
 | 控制器接管 | 日志从“未使能/等待路径”变为跟踪输出 |
 | 转向收敛 | `steer_angle_rad` 从初始偏差逐渐减小 |
 | 车在动 | `ros2 run tf2_ros tf2_echo odom base_link` 坐标持续变化 |
-| 跟踪正常 | RViz 中绿箭头贴合路径，橙球随车前进 |
+| 跟踪正常 | RViz 中绿色车体贴合路径，橙球随车前进 |
 
 ## 七、常见问题
 

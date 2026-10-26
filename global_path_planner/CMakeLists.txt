@@ -66,6 +66,7 @@ set(dependencies
 add_library(${PROJECT_NAME}_lib SHARED
   src/bow.cpp
   src/global_path_planner.cpp
+  src/logging.cpp
 )
 
 target_include_directories(${PROJECT_NAME}_lib PUBLIC
@@ -187,9 +188,7 @@ if(BUILD_TESTING)
             --yaml ${CMAKE_CURRENT_SOURCE_DIR}/config/global_path_planner.yaml
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO)
 
-  # (这里曾经有 test_yaml_persist: "参数写回 yaml"的契约测试。它随"运行期可改的参数全删 + 参数持久化
-  #  (src/yaml_persist.hpp 与 planner_config_path) 一并删除"而移除 —— 本包不再写任何 yaml 文件。
-  #  ⚠ gnss_localization / tractor_calibration 各自那份同名实现与它们的测试不受影响。)
+  # 本包在运行期不写任何 YAML 文件。
 
   # YAML 配置契约测试: poly 顶点数量/长度/经纬度, 以及 ridge_width /
   # field_margin / first_row_margin 的取值域。
@@ -226,7 +225,12 @@ if(BUILD_TESTING)
   # 节点级集成测试: 启动真实 GlobalPathPlannerNode, 验证 /path 发布、类型数组长度与坐标系。
   ament_add_gtest(test_global_path_planner_node test/test_global_path_planner_node.cpp)
   target_link_libraries(test_global_path_planner_node ${PROJECT_NAME}_lib)
-  ament_target_dependencies(test_global_path_planner_node rclcpp weeder_msgs)
+  ament_target_dependencies(
+    test_global_path_planner_node
+    rclcpp
+    visualization_msgs
+    weeder_msgs
+  )
 endif()
 
 ament_package()

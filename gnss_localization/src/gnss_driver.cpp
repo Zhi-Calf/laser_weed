@@ -1,24 +1,17 @@
 #include "gnss_localization/gnss_driver.hpp"
 
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <tf2/LinearMath/Quaternion.h>
-#include <unistd.h>
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <eigen3/Eigen/Core>
-#include <filesystem>
 #include <limits>
 #include <stdexcept>
-#include <system_error>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
-#include "yaml_persist.hpp"
+#include "gnss_localization/logging.hpp"
 
 namespace gnss_localization {
 
@@ -29,9 +22,8 @@ constexpr double kVelocityStd           = 0.05;        // m/s (人工标定: 速
 constexpr int64_t kGpsEpochUnixSec      = 315964800;   // 1980-01-06 00:00:00 UTC
 constexpr double kSecondsPerWeek        = 604800.0;
 
-// 标定参数的**启动**有效性校验: yaml 里可能躺着旧版本写坏的 nan (那时 onSetParameters 的范围判断
-// 拦不住 NaN, 见那里的说明)。非有限值一律退回 0.0 (未标定) 并告警 —— 比起带着 NaN 跑 (odom 的
-// 位置/航向整体变 NaN, 且从数值上完全看不出来), 退回"未标定"是唯一诚实且可恢复的处置。
+// 标定参数的启动有效性校验。非有限值一律退回 0.0（未标定）并告警，
+// 避免 NaN 让 odom 的位置和航向整体失效。
 double SanitizeFiniteCalib(const char* name, double value) {
   if (std::isfinite(value)) {
     return value;
@@ -49,94 +41,6 @@ double PositiveOr(const char* name, double value, double fallback) {
   return fallback;
 }
 
-// 扩展路径中的环境变量
-std::string ExpandPath(std::string path) {
-  if (path.rfind("~/", 0) == 0) {
-    const char* home = std::getenv("HOME");
-    if (home) {
-      path = std::string(home) + path.substr(1);
-    }
-  }
-  std::string out;
-  for (size_t i = 0; i < path.size(); ++i) {
-    if (path[i] != '$') {
-      out += path[i];
-      continue;
-    }
-    size_t j = i + 1;
-    while (j < path.size() && (std::isalnum(static_cast<unsigned char>(path[j])) || path[j] == '_')) {
-      ++j;
-    }
-    const std::string name = path.substr(i + 1, j - i - 1);
-    const char* val        = name.empty() ? nullptr : std::getenv(name.c_str());
-    if (val) {
-      out += val;
-    }
-    i = j - 1;
-  }
-  return out;
-}
-
-// 解析日志目录
-std::string ResolveLogDir(const std::string& configured) {
-  std::error_code ec;
-  const std::string preferred = ExpandPath(configured);
-  if (!preferred.empty()) {
-    std::filesystem::create_directories(preferred, ec);
-    if (!ec && access(preferred.c_str(), W_OK) == 0) {
-      return preferred;
-    }
-  }
-
-  const char* ros_home = std::getenv("ROS_HOME");
-  const char* home     = std::getenv("HOME");
-  std::string fallback;
-  if (ros_home && *ros_home) {
-    fallback = std::string(ros_home) + "/logs";
-  } else if (home && *home) {
-    fallback = std::string(home) + "/.ros/logs";
-  } else {
-    return "";
-  }
-
-  std::filesystem::create_directories(fallback, ec);
-  if (ec || access(fallback.c_str(), W_OK) != 0) {
-    return "";
-  }
-  return fallback;
-}
-
-// 配置日志
-void ConfigureLogger(const std::string& log_dir, size_t max_file_size_bytes, size_t max_file_count, bool enable_console, const std::string& log_level) {
-  constexpr const char* kLogPattern = "[%Y-%m-%d %H:%M:%S.%e] [%l] [%s:%#] %v";
-  const std::string dir             = ResolveLogDir(log_dir);
-  if (dir.empty()) {
-    throw std::runtime_error("no writable log directory (tried \"" + log_dir + "\")");
-  }
-
-  std::vector<spdlog::sink_ptr> sinks;
-  sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>((std::filesystem::path(dir) / "gnss_localization.log").string(), max_file_size_bytes, max_file_count));
-  if (enable_console) {
-    sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
-  }
-
-  auto logger = std::make_shared<spdlog::logger>("gnss_localization", sinks.begin(), sinks.end());
-  logger->set_pattern(kLogPattern);
-  const spdlog::level::level_enum level = spdlog::level::from_str(log_level);
-  if (level == spdlog::level::off && log_level != "off") {
-    logger->set_level(spdlog::level::info);
-    SPDLOG_WARN("无法识别的日志级别 \"{}\", 已回退到 info", log_level);
-  } else {
-    logger->set_level(level);
-  }
-  spdlog::set_default_logger(logger);
-  if (dir != ExpandPath(log_dir)) {
-    SPDLOG_WARN("日志目录 \"{}\" 不可写，已回退到 \"{}\"", log_dir, dir);
-  }
-  spdlog::flush_on(spdlog::level::warn);
-  spdlog::flush_every(std::chrono::seconds(3));
-}
-
 }   // namespace
 
 GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver", options) {
@@ -144,8 +48,16 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   loadLogParameters();
 
   // 配置 spdlog 滚动文件输出
+  LogConfig log_config;
+  log_config.logger_name         = "gnss_localization";
+  log_config.log_file_name       = "gnss_localization.log";
+  log_config.log_dir             = log_dir_;
+  log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb_) * 1024U * 1024U;
+  log_config.max_file_count      = static_cast<std::size_t>(log_file_count_);
+  log_config.enable_console      = log_enable_console_;
+  log_config.log_level           = log_level_;
   try {
-    ConfigureLogger(log_dir_, static_cast<size_t>(log_file_size_mb_) * 1024U * 1024U, static_cast<size_t>(log_file_count_), log_enable_console_, log_level_);
+    ConfigureLogging(log_config);
     SPDLOG_INFO("日志配置成功");
   } catch (const std::exception& e) {
     SPDLOG_WARN("文件日志配置失败，使用默认日志器: {}", e.what());
@@ -154,7 +66,6 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   loadParameters();
 
   if (!serial_.open(serial_port_path_, baud_rate_)) {
-    SPDLOG_ERROR("串口 {} 打开失败", serial_port_path_);
     throw std::runtime_error("无法打开 GNSS 串口: " + serial_port_path_);
   }
   has_giavp_       = false;
@@ -165,13 +76,14 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   rclcpp::QoS qos_sensor = rclcpp::SensorDataQoS(rclcpp::KeepLast(5));
   fix_pub_               = create_publisher<sensor_msgs::msg::NavSatFix>("~/fix", qos_sensor);
   pose_pub_              = create_publisher<weeder_msgs::msg::Pose>("~/pose", qos_sensor);
+  pose_stamped_pub_      = create_publisher<geometry_msgs::msg::PoseStamped>(
+      "~/pose_stamped", 10);
   odom_raw_pub_          = create_publisher<nav_msgs::msg::Odometry>("~/odom_raw", qos_sensor);
   imu_pub_               = create_publisher<sensor_msgs::msg::Imu>("~/imu", qos_sensor);
   vel_pub_               = create_publisher<geometry_msgs::msg::TwistWithCovarianceStamped>("~/vel", qos_sensor);
   origin_llh_pub_        = create_publisher<sensor_msgs::msg::NavSatFix>("~/origin", rclcpp::QoS(1).transient_local());
   tf_broadcaster_        = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
   timer_                 = create_wall_timer(std::chrono::milliseconds(10), std::bind(&GnssDriver::timerCallback, this));
-  params_cb_handle_      = add_on_set_parameters_callback(std::bind(&GnssDriver::onSetParameters, this, std::placeholders::_1));
 
   SPDLOG_INFO("GNSS 驱动已启动, 100 Hz 轮询串口 {}", serial_port_path_);
 }
@@ -247,12 +159,9 @@ void GnssDriver::loadParameters() {
   declare_parameter("acc_rtk_float", 0.3);
   declare_parameter("acc_rtd", 1.0);
   declare_parameter("acc_spp", 1.5);
-  declare_parameter("calib_offset_x", 0.0);             // 杆臂 x (m, 车体系: 前 +x)
-  declare_parameter("calib_offset_y", 0.0);             // 杆臂 y (m, 车体系: 左 +y)
-  declare_parameter("calib_offset_heading", 0.0);       // 航向安装偏角 (rad)
-  declare_parameter("calib_offset_max_xy", 2.5);        // calib_offset_x/y 范围上限 (m, 绝对杆臂)
-  declare_parameter("calib_offset_max_heading", 0.6);   // calib_offset_heading 范围上限 (rad, ≈34°)
-  declare_parameter("gnss_config_path", "");
+  declare_parameter("calib_offset_x", 0.0);         // 杆臂 x (m, 车体系: 前 +x)
+  declare_parameter("calib_offset_y", 0.0);         // 杆臂 y (m, 车体系: 左 +y)
+  declare_parameter("calib_offset_heading", 0.0);   // 航向安装偏角 (rad)
   declare_parameter("debug_giavp", false);
   declare_parameter("gnss_log_interval", 500);
   declare_parameter("pose_log_interval", 10);
@@ -260,29 +169,26 @@ void GnssDriver::loadParameters() {
   declare_parameter("use_gps_timestamp", true);
   declare_parameter("gps_utc_leap_seconds", 18);
 
-  serial_port_path_         = get_parameter("serial_port").as_string();
-  baud_rate_                = get_parameter("baud_rate").as_int();
-  frame_id_                 = get_parameter("frame_id").as_string();
-  const double origin_lat   = get_parameter("origin_lat").as_double();
-  const double origin_lon   = get_parameter("origin_lon").as_double();
-  const double origin_alt   = get_parameter("origin_alt").as_double();
-  heading_std_deg_          = get_parameter("heading_std_deg").as_double();
-  acc_rtk_fixed_            = get_parameter("acc_rtk_fixed").as_double();
-  acc_rtk_float_            = get_parameter("acc_rtk_float").as_double();
-  acc_rtd_                  = get_parameter("acc_rtd").as_double();
-  acc_spp_                  = get_parameter("acc_spp").as_double();
-  calib_offset_x_           = SanitizeFiniteCalib("calib_offset_x", get_parameter("calib_offset_x").as_double());
-  calib_offset_y_           = SanitizeFiniteCalib("calib_offset_y", get_parameter("calib_offset_y").as_double());
-  calib_offset_heading_     = SanitizeFiniteCalib("calib_offset_heading", get_parameter("calib_offset_heading").as_double());
-  calib_offset_max_xy_      = std::max(0.0, get_parameter("calib_offset_max_xy").as_double());
-  calib_offset_max_heading_ = std::max(0.0, get_parameter("calib_offset_max_heading").as_double());
-  gnss_config_path_         = get_parameter("gnss_config_path").as_string();
-  debug_giavp_              = get_parameter("debug_giavp").as_bool();
-  gnss_log_interval_        = static_cast<int>(std::max<int64_t>(1, get_parameter("gnss_log_interval").as_int()));
-  pose_log_interval_        = static_cast<int>(std::max<int64_t>(1, get_parameter("pose_log_interval").as_int()));
-  giavp_timeout_sec_        = PositiveOr("giavp_timeout_sec", get_parameter("giavp_timeout_sec").as_double(), 1.0);
-  use_gps_timestamp_        = get_parameter("use_gps_timestamp").as_bool();
-  gps_utc_leap_seconds_     = static_cast<int>(std::max<int64_t>(0, get_parameter("gps_utc_leap_seconds").as_int()));
+  serial_port_path_       = get_parameter("serial_port").as_string();
+  baud_rate_              = get_parameter("baud_rate").as_int();
+  frame_id_               = get_parameter("frame_id").as_string();
+  const double origin_lat = get_parameter("origin_lat").as_double();
+  const double origin_lon = get_parameter("origin_lon").as_double();
+  const double origin_alt = get_parameter("origin_alt").as_double();
+  heading_std_deg_        = get_parameter("heading_std_deg").as_double();
+  acc_rtk_fixed_          = get_parameter("acc_rtk_fixed").as_double();
+  acc_rtk_float_          = get_parameter("acc_rtk_float").as_double();
+  acc_rtd_                = get_parameter("acc_rtd").as_double();
+  acc_spp_                = get_parameter("acc_spp").as_double();
+  calib_offset_x_         = SanitizeFiniteCalib("calib_offset_x", get_parameter("calib_offset_x").as_double());
+  calib_offset_y_         = SanitizeFiniteCalib("calib_offset_y", get_parameter("calib_offset_y").as_double());
+  calib_offset_heading_   = SanitizeFiniteCalib("calib_offset_heading", get_parameter("calib_offset_heading").as_double());
+  debug_giavp_            = get_parameter("debug_giavp").as_bool();
+  gnss_log_interval_      = static_cast<int>(std::max<int64_t>(1, get_parameter("gnss_log_interval").as_int()));
+  pose_log_interval_      = static_cast<int>(std::max<int64_t>(1, get_parameter("pose_log_interval").as_int()));
+  giavp_timeout_sec_      = PositiveOr("giavp_timeout_sec", get_parameter("giavp_timeout_sec").as_double(), 1.0);
+  use_gps_timestamp_      = get_parameter("use_gps_timestamp").as_bool();
+  gps_utc_leap_seconds_   = static_cast<int>(std::max<int64_t>(0, get_parameter("gps_utc_leap_seconds").as_int()));
 
   // ---- ENU 原点: 优先使用 YAML 配置；未配置时沿用首次 RTK 固定解 ----
   const bool origin_any   = !std::isnan(origin_lat) || !std::isnan(origin_lon) || !std::isnan(origin_alt);
@@ -307,170 +213,17 @@ void GnssDriver::loadParameters() {
   SPDLOG_INFO("航向: std={:.2f}°", heading_std_deg_);
   SPDLOG_INFO("位置精度 (m): 固定解={:.3f} 浮点解={:.3f} RTD={:.3f} 单点={:.3f}", acc_rtk_fixed_, acc_rtk_float_, acc_rtd_, acc_spp_);
   SPDLOG_INFO(
-    "标定杆臂 (base_link->设备中心, 车体系): x={:.3f} y={:.3f} m, 航向偏角={:.4f} rad (范围: xy≤{:.2f}m 航向≤{:.2f}rad)",
+    "标定杆臂 (base_link->设备中心, 车体系): x={:.3f} y={:.3f} m, "
+    "航向偏角={:.4f} rad",
     calib_offset_x_,
     calib_offset_y_,
-    calib_offset_heading_,
-    calib_offset_max_xy_,
-    calib_offset_max_heading_);
-  SPDLOG_INFO("参数持久化路径: {}", gnss_config_path_.empty() ? "(未配置, 跳过写回)" : gnss_config_path_);
+    calib_offset_heading_);
   SPDLOG_INFO("debug_giavp: {}", debug_giavp_ ? "是" : "否");
   SPDLOG_INFO("GNSS 日志间隔: {} 条 (10Hz 下约 {:.1f}s), 位姿日志间隔: {} 条 (10Hz 下约 {:.1f}s)", gnss_log_interval_, gnss_log_interval_ / 10.0, pose_log_interval_, pose_log_interval_ / 10.0);
   SPDLOG_INFO("GIAVP 超时: {:.2f}s", giavp_timeout_sec_);
   SPDLOG_INFO("GPS 时间戳: {}, UTC 闰秒: {}s", use_gps_timestamp_ ? "启用" : "禁用", gps_utc_leap_seconds_);
   SPDLOG_INFO("日志级别: {}, 目录: {}, 文件上限: {} MB, 文件数量: {}, 控制台: {}", log_level_, log_dir_, log_file_size_mb_, log_file_count_, log_enable_console_ ? "是" : "否");
   SPDLOG_INFO("=========================================");
-}
-
-// 更新参数回调
-rcl_interfaces::msg::SetParametersResult GnssDriver::onSetParameters(const std::vector<rclcpp::Parameter>& parameters) {
-  // ---- 第一轮: 校验 ----
-  for (const auto& p : parameters) {
-    const std::string& name = p.get_name();
-    if (name == "calib_offset_x" || name == "calib_offset_y") {
-      const double v = p.as_double();
-      if (!std::isfinite(v)) {
-        rcl_interfaces::msg::SetParametersResult result;
-        result.successful = false;
-        result.reason     = name + " 必须是有限数值, 收到 " + p.value_to_string() + " (杆臂不接受 nan/inf)";
-        SPDLOG_WARN("标定参数拒绝: {} = {} 不是有限数值", name, p.value_to_string());
-        return result;
-      }
-      if (std::abs(v) > calib_offset_max_xy_) {
-        rcl_interfaces::msg::SetParametersResult result;
-        result.successful = false;
-        result.reason     = name + " 超出范围 [-" + std::to_string(calib_offset_max_xy_) + ", " + std::to_string(calib_offset_max_xy_) + "] m";
-        SPDLOG_WARN("标定参数拒绝: {} = {} 超出 ±{} m", name, v, calib_offset_max_xy_);
-        return result;
-      }
-    } else if (name == "calib_offset_heading") {
-      const double v = p.as_double();
-      // 同 calib_offset_x/y: 先判有限, 再判范围 (NaN 会让 odom 的航向修正整体变 NaN)。
-      if (!std::isfinite(v)) {
-        rcl_interfaces::msg::SetParametersResult result;
-        result.successful = false;
-        result.reason     = name + " 必须是有限数值, 收到 " + p.value_to_string() + " (安装偏角不接受 nan/inf)";
-        SPDLOG_WARN("标定参数拒绝: {} = {} 不是有限数值", name, p.value_to_string());
-        return result;
-      }
-      if (std::abs(v) > calib_offset_max_heading_) {
-        rcl_interfaces::msg::SetParametersResult result;
-        result.successful = false;
-        result.reason     = name + " 超出范围 [-" + std::to_string(calib_offset_max_heading_) + ", " + std::to_string(calib_offset_max_heading_) + "] rad";
-        SPDLOG_WARN("标定参数拒绝: {} = {} 超出 ±{} rad", name, v, calib_offset_max_heading_);
-        return result;
-      }
-    }
-  }
-
-  // ---- 第二轮: 应用 (改内存) ----
-  // 只持 calib_mutex_ 改内存; 落盘放在锁外 —— publishPose 每帧都要拿这把锁, 文件 I/O
-  // (含 fsync) 不该拖住 10 Hz 的位姿发布。
-  std::vector<std::pair<std::string, double>> updates;
-  {
-    std::lock_guard<std::mutex> lock(calib_mutex_);
-    for (const auto& p : parameters) {
-      const std::string& name = p.get_name();
-      if (name == "calib_offset_x") {
-        calib_offset_x_ = p.as_double();
-        SPDLOG_INFO("标定参数更新: calib_offset_x = {:.6f}", calib_offset_x_);
-        updates.emplace_back("calib_offset_x", calib_offset_x_);
-      } else if (name == "calib_offset_y") {
-        calib_offset_y_ = p.as_double();
-        SPDLOG_INFO("标定参数更新: calib_offset_y = {:.6f}", calib_offset_y_);
-        updates.emplace_back("calib_offset_y", calib_offset_y_);
-      } else if (name == "calib_offset_heading") {
-        calib_offset_heading_ = p.as_double();
-        SPDLOG_INFO("标定参数更新: calib_offset_heading = {:.6f}", calib_offset_heading_);
-        updates.emplace_back("calib_offset_heading", calib_offset_heading_);
-      }
-    }
-  }
-
-  // ---- 第三轮: 落盘 (锁外) ----
-  PersistOutcome outcome = PersistOutcome::kPersisted;
-  if (!updates.empty()) {
-    outcome = persistParamsToYaml(updates);
-  }
-
-  // 参数已在内存生效, 所以 successful 一律为 true: 若因落盘失败回 false, 调用方
-  // (tractor_calibration) 会按"未生效"回滚自己的 yaml, 反而变成"文件旧值 / 车上新值"
-  // 的不一致。落盘失败/未配置路径改用 reason 明确告知, 由调用方显示给现场。
-  rcl_interfaces::msg::SetParametersResult result;
-  result.successful = true;
-  switch (outcome) {
-    case PersistOutcome::kSkippedNoPath:
-      result.reason = "updated (gnss_config_path 未配置: 仅内存生效, 重启后会丢失)";
-      SPDLOG_WARN("标定参数已生效, 但 gnss_config_path 未配置, 重启后会丢失");
-      break;
-    case PersistOutcome::kFailed:
-      result.reason = "updated (警告: 写入 " + gnss_config_path_ + " 失败, 重启后会丢失; 参数当前已生效)";
-      SPDLOG_ERROR("标定参数已生效, 但持久化到 {} 失败: 重启后会丢失", gnss_config_path_);
-      break;
-    default:
-      result.reason = "updated";
-      break;
-  }
-  return result;
-}
-
-// 把参数写回 yaml: 路径为空/日志/结果映射在这一层, 文本替换与原子落盘的规则见 src/yaml_persist.hpp
-// (与 tractor_calibration 的 persistCalibToYaml 同一套语义 —— 现场同一份 yaml 可能被多个节点写,
-// 两边的分层与文案保持一致才好排查)。
-GnssDriver::PersistOutcome GnssDriver::persistParamsToYaml(const std::vector<std::pair<std::string, double>>& updates) {
-  // 没有要写回的参数: 跳过
-  if (updates.empty()) {
-    return PersistOutcome::kPersisted;   // 没有要写的键
-  }
-  if (gnss_config_path_.empty()) {
-    return PersistOutcome::kSkippedNoPath;   // 部署时未配置持久化路径 (文档化的行为)
-  }
-
-  // 写回实现按字符串值处理；标定参数统一使用固定六位小数文本。
-  std::vector<std::pair<std::string, std::string>> text_updates;
-  text_updates.reserve(updates.size());
-  for (const auto& [key, value] : updates) {
-    text_updates.emplace_back(key, std::to_string(value));
-  }
-
-  YamlUpdateReport report;
-  const YamlPersistStatus status = PersistYamlKeys(gnss_config_path_, "gnss_driver", text_updates, &report);
-  if (!report.target_node_found) {
-    SPDLOG_WARN("{} 中未找到唯一的 gnss_driver 节点", gnss_config_path_);
-  }
-  if (report.duplicate_keys > 0) {
-    SPDLOG_WARN("{} 中存在重复键 ({} 处, 已全部替换为同一值): YAML 解析器对重复键取最后一个, 建议手工清理重复行", gnss_config_path_, report.duplicate_keys);
-  }
-  if (!report.mapping_found) {
-    SPDLOG_WARN("{} 里没找到 ros__parameters 映射, 新增键只能追加到文件末尾 (可能不生效)", gnss_config_path_);
-  }
-  if (report.dir_sync_failed) {
-    SPDLOG_WARN("{} 的父目录 fsync 失败 (本次写入已生效, 但掉电后可能丢这次 rename)", gnss_config_path_);
-  }
-  if (report.yaml_validated) {
-    SPDLOG_INFO("{} 修改后的 YAML 结构校验通过", gnss_config_path_);
-  }
-  switch (status) {
-    case YamlPersistStatus::kUnchanged:
-      SPDLOG_INFO("参数值与 {} 中已有内容一致, 未重写文件", gnss_config_path_);
-      return PersistOutcome::kPersisted;
-    case YamlPersistStatus::kReadFailed:
-      SPDLOG_WARN("无法读取 gnss 配置文件 {} (参数未写回)", gnss_config_path_);
-      return PersistOutcome::kFailed;
-    case YamlPersistStatus::kInvalidStructure:
-      SPDLOG_ERROR("gnss 配置文件 {} 的节点结构或修改结果无效", gnss_config_path_);
-      return PersistOutcome::kFailed;
-    case YamlPersistStatus::kLockFailed:
-      SPDLOG_ERROR("无法获取 gnss 配置文件 {} 的写锁", gnss_config_path_);
-      return PersistOutcome::kFailed;
-    case YamlPersistStatus::kWriteFailed:
-      SPDLOG_ERROR("写入 {} 失败 (参数未写回)", gnss_config_path_);
-      return PersistOutcome::kFailed;
-    case YamlPersistStatus::kPersisted:
-    default:
-      SPDLOG_INFO("标定参数已持久化到 {} (逐行写入, 保留注释, 原子替换)", gnss_config_path_);
-      return PersistOutcome::kPersisted;
-  }
 }
 
 // 定时器回调
@@ -674,14 +427,9 @@ void GnssDriver::publishPose(const GiavpData& d) {
     datum_proj_->Forward(d.latitude_deg, d.longitude_deg, d.altitude_m, dev_x, dev_y, dev_z);
   }
 
-  // 读取标定值 (参数回调线程 vs 定时器线程, 真跨线程, 必须加锁)。
-  double calib_x, calib_y, calib_heading;
-  {
-    std::lock_guard<std::mutex> lock(calib_mutex_);
-    calib_x       = calib_offset_x_;
-    calib_y       = calib_offset_y_;
-    calib_heading = calib_offset_heading_;
-  }
+  const double calib_x       = calib_offset_x_;
+  const double calib_y       = calib_offset_y_;
+  const double calib_heading = calib_offset_heading_;
 
   // 修正航向 = 测向航向 + 标定残差航向偏角。
   const double yaw_raw                 = headingToEnuYaw(d.heading_deg);
@@ -749,6 +497,16 @@ void GnssDriver::publishPose(const GiavpData& d) {
     pose.speed_m_s       = forward_speed;
 
     pose_pub_->publish(pose);
+
+    geometry_msgs::msg::PoseStamped pose_stamped;
+    pose_stamped.header          = pose.header;
+    pose_stamped.pose.position.x = base_x;
+    pose_stamped.pose.position.y = base_y;
+    pose_stamped.pose.position.z = base_z;
+    tf2::Quaternion pose_quaternion;
+    pose_quaternion.setRPY(pose.roll, pose.pitch, pose.yaw);
+    pose_stamped.pose.orientation = tf2::toMsg(pose_quaternion);
+    pose_stamped_pub_->publish(pose_stamped);
 
     if (++pose_log_counter_ >= pose_log_interval_) {
       pose_log_counter_ = 0;

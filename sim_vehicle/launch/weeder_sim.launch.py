@@ -1,4 +1,4 @@
-# Copyright 2026. 一键启动激光除草机联调仿真。
+# 版权所有 2026。一键启动激光除草机联调仿真。
 #
 # 把原来需要手动开的 4 个终端 + RViz + 四段式时序敲命令，合成一条：
 #
@@ -36,11 +36,25 @@ def generate_launch_description():
     planner_params = os.path.join(planner_share, 'config', 'global_path_planner.yaml')
     tracker_params = os.path.join(tracker_share, 'config', 'path_tracker.yaml')
 
-    # ---- Launch arguments ----
+    # ---- 启动参数 ----
     # wheelbase 同时传给仿真车辆与控制器，两者**必须一致**：否则仿真的"真实车辆"
     # 与控制器假设的模型不是同一台车，横向误差会收敛到非零稳态值，看起来像调参没调好。
     wheelbase = ParameterValue(
         LaunchConfiguration('wheelbase'), value_type=float)
+    wheel_track = ParameterValue(
+        LaunchConfiguration('wheel_track'), value_type=float)
+    wheel_radius = ParameterValue(
+        LaunchConfiguration('wheel_radius'), value_type=float)
+    vehicle_length = ParameterValue(
+        LaunchConfiguration('vehicle_length'), value_type=float)
+    vehicle_width = ParameterValue(
+        LaunchConfiguration('vehicle_width'), value_type=float)
+    vehicle_height = ParameterValue(
+        LaunchConfiguration('vehicle_height'), value_type=float)
+    max_plant_steer = ParameterValue(
+        LaunchConfiguration('max_plant_steer_deg'), value_type=float)
+    cmd_timeout = ParameterValue(
+        LaunchConfiguration('cmd_timeout_s'), value_type=float)
     # 垄宽决定弓字形行距，也决定地头掉头半径（= 垄宽/2）。
     ridge_width = ParameterValue(
         LaunchConfiguration('ridge_width'), value_type=float)
@@ -50,6 +64,8 @@ def generate_launch_description():
     field_margin = ParameterValue(
         LaunchConfiguration('field_margin'), value_type=float)
     target_v = ParameterValue(LaunchConfiguration('target_v'), value_type=float)
+    turn_speed = ParameterValue(
+        LaunchConfiguration('turn_speed'), value_type=float)
     align_offset = ParameterValue(
         LaunchConfiguration('align_offset'), value_type=float)
     use_sim_time = ParameterValue(
@@ -57,8 +73,23 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            'wheelbase', default_value='1.2',
-            description='等效轴距(m)，同时传给仿真车辆与 LQR 控制器，两处必须一致'),
+            'wheelbase', default_value='1.521',
+            description='Isaac 底盘前后轴距(m)，车辆与控制器共用'),
+        DeclareLaunchArgument(
+            'wheel_track', default_value='1.306',
+            description='Isaac 底盘左右轮中心距(m)'),
+        DeclareLaunchArgument(
+            'wheel_radius', default_value='0.29',
+            description='Isaac 底盘车轮半径(m)'),
+        DeclareLaunchArgument(
+            'vehicle_length', default_value='1.8',
+            description='Isaac 车体长度(m)'),
+        DeclareLaunchArgument(
+            'vehicle_width', default_value='1.2',
+            description='Isaac 车体宽度(m)'),
+        DeclareLaunchArgument(
+            'vehicle_height', default_value='0.5',
+            description='Isaac 车体高度(m)'),
         DeclareLaunchArgument(
             'ridge_width', default_value='2.5',
             description='垄宽/行距(m)，决定弓字形行距与地头掉头半径(=垄宽/2)'),
@@ -66,11 +97,20 @@ def generate_launch_description():
             'field_margin', default_value='1.5',
             description='田边内缩余量(m)，建议 >= ridge_width/2 以保证机具半幅不越过田边'),
         DeclareLaunchArgument(
-            'target_v', default_value='0.5',
-            description='目标线速度(m/s)，协议上限 1.4'),
+            'target_v', default_value='0.6',
+            description='WORK 段线速度(m/s)'),
         DeclareLaunchArgument(
-            'align_offset', default_value='0.8',
+            'turn_speed', default_value='0.3',
+            description='TURN 段及过渡区线速度(m/s)'),
+        DeclareLaunchArgument(
+            'align_offset', default_value='0.2',
             description='对齐路径起点时故意留的初始横向偏差(m)，用于观察收敛'),
+        DeclareLaunchArgument(
+            'max_plant_steer_deg', default_value='90.0',
+            description='仿真底盘单轮最大转向角(deg)'),
+        DeclareLaunchArgument(
+            'cmd_timeout_s', default_value='0.3',
+            description='底盘指令超时(s)，与 weeder_base 默认值一致'),
         DeclareLaunchArgument(
             'rviz', default_value='true',
             description='是否同时启动 RViz 预置视图'),
@@ -86,6 +126,13 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'wheelbase': wheelbase,
+                'wheel_track': wheel_track,
+                'wheel_radius_m': wheel_radius,
+                'vehicle_length_m': vehicle_length,
+                'vehicle_width_m': vehicle_width,
+                'vehicle_height_m': vehicle_height,
+                'max_plant_steer_deg': max_plant_steer,
+                'cmd_timeout_s': cmd_timeout,
                 'align_to_path_start': True,
                 'align_lateral_offset': align_offset,
                 'use_sim_time': use_sim_time,
@@ -114,9 +161,10 @@ def generate_launch_description():
             output='screen',
             parameters=[
                 tracker_params,
-                # 命令行覆盖 yaml：wheelbase 与仿真车辆严格一致，target_v 可一键调
+                # 命令行覆盖 yaml：轴距与仿真车辆一致，分段速度可一键调
                 {'wheelbase': wheelbase},
-                {'lqr_target_v': target_v},
+                {'work_speed_m_s': target_v},
+                {'turn_speed_m_s': turn_speed},
                 # 仿真不启动激光雷达，显式关闭实车默认启用的点云避停门控。
                 {'require_velocity_planner': False},
                 {'use_sim_time': use_sim_time},

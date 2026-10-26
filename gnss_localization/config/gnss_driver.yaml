@@ -30,17 +30,8 @@ gnss_driver:
     calib_offset_x: 0.5            # 杆臂 x: 设备中心相对 base_link (m, 车体系: 前 +x, 出厂≈前方 0.5 m)
     calib_offset_y: 0.0            # 杆臂 y: (m, 车体系: 左 +y)
     calib_offset_heading: 0.0      # 航向安装偏角 (rad, 真实航向 = 原始测向 + 该值)
-    calib_offset_max_xy: 2.5       # calib_offset_x/y 范围上限 (m, 绝对杆臂长度)
-    calib_offset_max_heading: 0.6  # calib_offset_heading 范围上限 (rad, ≈34°)
-    # ⚠ 运行期**只有这三个 calib_offset_*** 会生效 (参数服务: 立即生效 + 写回 gnss_config_path);
-    #   本节点其它键运行期 set 是"接受但不生效" (参数服务器记新值, 节点仍用启动值 —— 改 yaml 后重启)。
-    #   calib_offset_* 的值必须是**有限数值**且在 ±上限 内: nan/inf 一律拒绝 —— 范围判断对 NaN 恒为假,
-    #   必须单独拦, 否则 NaN 杆臂会让 /gnss_driver/pose 的位置与航向整体变成 NaN (还会被写回 yaml)。
-
-    # 参数持久化写回目标: 动态更新标定/杆臂参数后, 逐行写回该 yaml。
-    # 空字符串则跳过写回 (仅内存更新)。建议指向 install 下运行时实际加载的
-    # gnss_driver.yaml, 或由 launch 注入。
-    gnss_config_path: ""
+    # 标定参数仅在节点启动时读取，修改 YAML 后需要重启节点。
+    # calib_offset_* 必须是有限数值；nan/inf 会回退到 0.0（未标定）。
 
     # spdlog 滚动日志
     log_dir: "/opt/agri/logs"   # 日志目录

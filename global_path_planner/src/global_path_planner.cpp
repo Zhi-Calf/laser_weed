@@ -1,122 +1,84 @@
 #include "global_path_planner/global_path_planner.hpp"
 
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
-#include <unistd.h>
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
-#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
-#include <system_error>
 #include <vector>
 
 #include "global_path_planner/fault_codes.hpp"
+#include "global_path_planner/logging.hpp"
 
 using namespace std::chrono_literals;
 
+namespace global_path_planner {
+
 namespace {
 
-// 扩展路径中的环境变量
-std::string ExpandPath(std::string path) {
-  if (path.rfind("~/", 0) == 0) {
-    const char* home = std::getenv("HOME");
-    if (home)
-      path = std::string(home) + path.substr(1);
-  }
-  std::string out;
-  for (size_t i = 0; i < path.size(); ++i) {
-    if (path[i] != '$') {
-      out += path[i];
+// 构造按路径类型过滤的 RViz 点集。
+// 类型数组缺失时按 WORK 处理。
+visualization_msgs::msg::Marker MakePathTypeMarker(
+  const std::vector<Point_2>& waypoints,
+  const std::vector<uint8_t>& waypoint_types,
+  uint8_t selected_type,
+  const std::string& name,
+  int id,
+  float red,
+  float green,
+  float blue,
+  const rclcpp::Time& stamp) {
+  visualization_msgs::msg::Marker marker;
+  marker.header.frame_id    = "odom";
+  marker.header.stamp       = stamp;
+  marker.ns                 = name;
+  marker.id                 = id;
+  marker.pose.orientation.w = 1.0;
+  marker.type               = visualization_msgs::msg::Marker::SPHERE_LIST;
+  marker.color.a            = 1.0F;
+  marker.color.r            = red;
+  marker.color.g            = green;
+  marker.color.b            = blue;
+  marker.scale.x            = 0.09;
+  marker.scale.y            = 0.09;
+  marker.scale.z            = 0.09;
+
+  const bool have_types = waypoint_types.size() == waypoints.size();
+  for (size_t i = 0; i < waypoints.size(); ++i) {
+    const uint8_t waypoint_type = have_types ? waypoint_types[i] : 0U;
+    if (waypoint_type != selected_type) {
       continue;
     }
-    size_t j = i + 1;
-    while (j < path.size() && (std::isalnum(static_cast<unsigned char>(path[j])) || path[j] == '_'))
-      ++j;
-    const std::string name = path.substr(i + 1, j - i - 1);
-    const char* val        = name.empty() ? nullptr : std::getenv(name.c_str());
-    if (val)
-      out += val;
-    i = j - 1;
+    geometry_msgs::msg::Point point;
+    point.x = waypoints[i][0];
+    point.y = waypoints[i][1];
+    marker.points.push_back(point);
   }
-  return out;
-}
-
-// 解析日志目录
-std::string ResolveLogDir(const std::string& configured) {
-  std::error_code ec;
-  const std::string preferred = ExpandPath(configured);
-  if (!preferred.empty()) {
-    std::filesystem::create_directories(preferred, ec);
-    if (!ec && access(preferred.c_str(), W_OK) == 0)
-      return preferred;
-  }
-
-  const char* ros_home = std::getenv("ROS_HOME");
-  const char* home     = std::getenv("HOME");
-  std::string fallback;
-  if (ros_home && *ros_home)
-    fallback = std::string(ros_home) + "/logs";
-  else if (home && *home)
-    fallback = std::string(home) + "/.ros/logs";
-  else
-    return "";
-
-  std::filesystem::create_directories(fallback, ec);
-  if (ec || access(fallback.c_str(), W_OK) != 0)
-    return "";
-  return fallback;
-}
-
-// 配置日志
-void ConfigureLogger(const std::string& log_dir, size_t max_file_size_bytes, size_t max_file_count, bool enable_console, const std::string& log_level) {
-  constexpr const char* kLogPattern = "[%Y-%m-%d %H:%M:%S.%e] [%l] [%s:%#] %v";
-  const std::string dir             = ResolveLogDir(log_dir);
-  if (dir.empty()) {
-    throw std::runtime_error("no writable log directory (tried \"" + log_dir + "\")");
-  }
-
-  std::vector<spdlog::sink_ptr> sinks;
-  sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>((std::filesystem::path(dir) / "global_path_planner.log").string(), max_file_size_bytes, max_file_count));
-  if (enable_console) {
-    sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
-  }
-
-  auto logger = std::make_shared<spdlog::logger>("global_path_planner", sinks.begin(), sinks.end());
-  logger->set_pattern(kLogPattern);
-  const spdlog::level::level_enum level = spdlog::level::from_str(log_level);
-  if (level == spdlog::level::off && log_level != "off") {
-    logger->set_level(spdlog::level::info);
-    SPDLOG_WARN("无法识别的日志级别 \"{}\", 已回退到 info", log_level);
-  } else {
-    logger->set_level(level);
-  }
-  spdlog::set_default_logger(logger);
-  if (dir != ExpandPath(log_dir)) {
-    SPDLOG_WARN("日志目录 \"{}\" 不可写，已回退到 \"{}\"", log_dir, dir);
-  }
-  spdlog::flush_on(spdlog::level::warn);
-  spdlog::flush_every(3s);
+  marker.action = marker.points.empty() ? visualization_msgs::msg::Marker::DELETE : visualization_msgs::msg::Marker::ADD;
+  return marker;
 }
 
 }   // namespace
-
-namespace global_path_planner {
 
 GlobalPathPlannerNode::GlobalPathPlannerNode(const rclcpp::NodeOptions& options) : Node("global_path_planner", options) {
 
   loadLogParameters();
 
   // 配置 spdlog 滚动文件输出
+  LogConfig log_config;
+  log_config.logger_name         = "global_path_planner";
+  log_config.log_file_name       = "global_path_planner.log";
+  log_config.log_dir             = log_dir_;
+  log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb_) * 1024U * 1024U;
+  log_config.max_file_count      = static_cast<std::size_t>(log_file_count_);
+  log_config.enable_console      = log_enable_console_;
+  log_config.log_level           = log_level_;
   try {
-    ConfigureLogger(log_dir_, static_cast<size_t>(log_file_size_mb_) * 1024U * 1024U, static_cast<size_t>(log_file_count_), log_enable_console_, log_level_);
+    ConfigureLogging(log_config);
     SPDLOG_INFO("日志配置成功");
   } catch (const std::exception& e) {
     SPDLOG_WARN("文件日志配置失败，使用默认日志器: {}", e.what());
@@ -134,6 +96,8 @@ GlobalPathPlannerNode::GlobalPathPlannerNode(const rclcpp::NodeOptions& options)
   // 发布
   timer_                     = create_wall_timer(100ms, std::bind(&GlobalPathPlannerNode::timerCallback, this));
   path_points_pub_           = create_publisher<visualization_msgs::msg::Marker>("~/path_points", 10);
+  work_points_pub_           = create_publisher<visualization_msgs::msg::Marker>("~/work_points", 10);
+  turn_points_pub_           = create_publisher<visualization_msgs::msg::Marker>("~/turn_points", 10);
   key_points_pub_            = create_publisher<visualization_msgs::msg::Marker>("~/key_points", 10);
   boundary_points_pub_       = create_publisher<visualization_msgs::msg::Marker>("~/boundary_points", 10);
   inner_boundary_points_pub_ = create_publisher<visualization_msgs::msg::Marker>("~/inner_boundary_points", 10);
@@ -141,7 +105,7 @@ GlobalPathPlannerNode::GlobalPathPlannerNode(const rclcpp::NodeOptions& options)
 }
 
 void GlobalPathPlannerNode::loadLogParameters() {
-  declare_parameter("log_dir", "~/.ros/logs");
+  declare_parameter("log_dir", "/opt/agri/logs");
   declare_parameter("log_file_size_mb", 50);
   declare_parameter("log_file_count", 10);
   declare_parameter("log_enable_console", true);
@@ -240,10 +204,12 @@ void GlobalPathPlannerNode::planGeometry() {
 
 // 100ms 定时器: 发布当前生效路径 (/global_path_planner/path) + RViz Markers。
 void GlobalPathPlannerNode::timerCallback() {
-  // path points for rviz
+  const rclcpp::Time stamp = get_clock()->now();
+
+  // 供 RViz 显示的路径点
   visualization_msgs::msg::Marker path_point;
   path_point.header.frame_id    = "odom";
-  path_point.header.stamp       = get_clock()->now();
+  path_point.header.stamp       = stamp;
   path_point.ns                 = "path_point";
   path_point.id                 = 1;
   path_point.pose.orientation.w = 1.0;
@@ -261,10 +227,14 @@ void GlobalPathPlannerNode::timerCallback() {
     path_point.points.emplace_back(p);
   }
 
-  // key points for rviz
+  // 按类型分别发布点集，便于在 RViz 中独立显示和关闭。
+  const visualization_msgs::msg::Marker work_points = MakePathTypeMarker(waypoints_, waypoint_types_, 0U, "work_points", 1, 0.1F, 0.9F, 0.2F, stamp);
+  const visualization_msgs::msg::Marker turn_points = MakePathTypeMarker(waypoints_, waypoint_types_, 1U, "turn_points", 1, 1.0F, 0.35F, 0.0F, stamp);
+
+  // 供 RViz 显示的关键点
   visualization_msgs::msg::Marker key_points;
   key_points.header.frame_id    = "odom";
-  key_points.header.stamp       = get_clock()->now();
+  key_points.header.stamp       = stamp;
   key_points.ns                 = "key_points";
   key_points.id                 = 1;
   key_points.pose.orientation.w = 1.0;
@@ -282,11 +252,11 @@ void GlobalPathPlannerNode::timerCallback() {
     key_points.points.emplace_back(p);
   }
 
-  // boundary line (from YAML) for rviz
+  // 供 RViz 显示的 YAML 边界线
   const bool show_local_boundary = cell_.size() >= 3;
   visualization_msgs::msg::Marker boundary_points;
   boundary_points.header.frame_id    = "odom";
-  boundary_points.header.stamp       = get_clock()->now();
+  boundary_points.header.stamp       = stamp;
   boundary_points.ns                 = "boundary_points";
   boundary_points.id                 = 1;
   boundary_points.pose.orientation.w = 1.0;
@@ -312,7 +282,7 @@ void GlobalPathPlannerNode::timerCallback() {
   // 收缩后的内边界，同样以 LINE_STRIP 形式通过 boundary_points_pub_ 发布
   visualization_msgs::msg::Marker inner_boundary;
   inner_boundary.header.frame_id    = "odom";
-  inner_boundary.header.stamp       = get_clock()->now();
+  inner_boundary.header.stamp       = stamp;
   inner_boundary.ns                 = "boundary_points";
   inner_boundary.id                 = 2;
   inner_boundary.pose.orientation.w = 1.0;
@@ -340,7 +310,7 @@ void GlobalPathPlannerNode::timerCallback() {
   // ---- /path: x/y 与段类型分开存放 ----
   weeder_msgs::msg::Path path_msg;
   path_msg.header.frame_id   = "odom";
-  path_msg.header.stamp      = get_clock()->now();
+  path_msg.header.stamp      = stamp;
   const bool have_path_types = (waypoints_.size() == waypoint_types_.size());
   path_msg.x.reserve(waypoints_.size());
   path_msg.y.reserve(waypoints_.size());
@@ -352,6 +322,8 @@ void GlobalPathPlannerNode::timerCallback() {
   }
 
   path_points_pub_->publish(path_point);
+  work_points_pub_->publish(work_points);
+  turn_points_pub_->publish(turn_points);
   key_points_pub_->publish(key_points);
   boundary_points_pub_->publish(boundary_points);
   path_pub_->publish(path_msg);

@@ -281,12 +281,11 @@ std::vector<Point_2> PlanBowShapedPath::smoothTurns(const std::vector<Point_2>& 
         }
         append(turn.back(), kSegWork);
       } else {
-        // 非平行半圆的出口 t2 可能不在下一条垄起点 P3 上。此时把 t2 标 TURN,
-        // 让 t2 -> 下一个掉头起点 T1' 的直线连接段被识别为掉头段; 不改变路径几何。
-        const bool has_exit_connector = (turn.back() - key_waypoints[i + 2]).norm() > kMinVertexSpacing;
+        // 半圆出口 t2 已经回到直线作业段，必须标 WORK。t2 到下一个掉头起点的
+        // 连接线就是整条作业垄，若把 t2 标成 TURN，会把整行误判为掉头段。
         for (size_t k = 1; k + 1 < turn.size(); ++k)
           append(turn[k], kSegTurn);
-        append(turn.back(), has_exit_connector ? kSegTurn : kSegWork);
+        append(turn.back(), kSegWork);
       }
     }
     i += 2;
@@ -619,12 +618,7 @@ void PlanBowShapedPath::generateWaypoints() {
   }
 
   // 汇总输出本次规划结果
-  SPDLOG_INFO(
-    "扫描方向 {:.1f}°: {} 条垄; 掉头 {} 次 (半圆), 掉头最大出界 {:.2f} m",
-    output_.sweep_dir_deg,
-    ridges.size(),
-    ridges.size() > 0 ? ridges.size() - 1 : 0,
-    output_.turn_max_overrun);
+  SPDLOG_INFO("扫描方向 {:.1f}°: {} 条垄; 掉头 {} 次 (半圆), 掉头最大出界 {:.2f} m", output_.sweep_dir_deg, ridges.size(), ridges.size() > 0 ? ridges.size() - 1 : 0, output_.turn_max_overrun);
 }
 
 // ============================================================

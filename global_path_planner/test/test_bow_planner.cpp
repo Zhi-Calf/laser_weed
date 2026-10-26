@@ -725,8 +725,8 @@ TEST(BowPlannerTurn, StraightFallbackIsMarkedTurn) {
   }
 }
 
-// 非平行半圆的出口 t2 不在下一垄起点时, t2->下一垄作业段起点应为 TURN。
-TEST(BowPlannerTurn, NonParallelHalfExitIsMarkedTurn) {
+// 非平行半圆的出口连接段是作业垄, t2 及其后的直线连接段必须标 WORK。
+TEST(BowPlannerTurn, NonParallelHalfExitStartsWork) {
   PlanBowShapedPath planner;
   const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0),
                         Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
@@ -740,8 +740,36 @@ TEST(BowPlannerTurn, NonParallelHalfExitIsMarkedTurn) {
   ASSERT_EQ(path.size(), types.size());
   ASSERT_GE(path.size(), 3u);
   EXPECT_EQ(types.back(), kSegWork);
-  EXPECT_EQ(types[types.size() - 2], kSegTurn)
-      << "非平行半圆出口后的连接段应标 TURN";
+  EXPECT_EQ(types[types.size() - 2], kSegWork)
+      << "非平行半圆出口后的连接段应标 WORK";
+  EXPECT_NE(std::find(types.begin(), types.end(), kSegTurn), types.end())
+      << "掉头圆弧本身仍应包含 TURN 点";
+}
+
+// 掉头之间的直线作业垄不得被出口连接段污染为 TURN。
+TEST(BowPlannerTurn, StraightRidgeBetweenTurnsIsMarkedWork) {
+  BowFacade planner;
+  const BowOutput out = planner.plan(
+      RectangleField(20.0, 6.0), 2.0, 0.2, 0.5);
+  ASSERT_TRUE(out.ok());
+  ASSERT_EQ(out.waypoints.size(), out.waypoint_types.size());
+
+  size_t interior_work_points = 0;
+  size_t interior_turn_points = 0;
+  for (size_t i = 0; i < out.waypoints.size(); ++i) {
+    const double x = out.waypoints[i].x();
+    if (x <= 3.0 || x >= 17.0) {
+      continue;
+    }
+    if (out.waypoint_types[i] == kSegWork) {
+      ++interior_work_points;
+    } else {
+      ++interior_turn_points;
+    }
+  }
+  EXPECT_GT(interior_work_points, 0U);
+  EXPECT_EQ(interior_turn_points, 0U)
+      << "田块中部的直线作业垄不应包含 TURN 标签";
 }
 
 // 输入宽容度: 逆序 + 旋转起点 + 一条边上的共线点, 结果应与规范输入一致

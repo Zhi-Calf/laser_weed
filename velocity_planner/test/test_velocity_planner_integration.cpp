@@ -1,4 +1,4 @@
-// Copyright 2026. 合成点云避停节点集成测试。
+// 版权所有 2026。合成点云避停节点集成测试。
 #include "velocity_planner/velocity_planner_node.hpp"
 
 #include <chrono>

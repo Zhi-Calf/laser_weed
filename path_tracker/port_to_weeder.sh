@@ -1,29 +1,26 @@
 #!/usr/bin/env bash
-# Copyright 2026. Whole-package port of MegaTrak's RTK + coverage-planning stack
-# into the laser-weeder ROS 2 workspace.
+# 版权所有 2026。将 MegaTrak 的 RTK 和全覆盖规划软件栈整体移植到
+# 激光除草机 ROS 2 工作区。
 #
-# What this does (structural only):
-#   1. copies gnss_localization, global_path_planner and path_tracker into the
-#      weeder workspace src/
-#   2. builds them in dependency order
-# It does NOT edit any config: every value that differs between the tracked
-# tractor and the weeder (serial ports, antenna lever arm,差分 accounts, log dirs)
-# needs real hardware data that only you have. See PORT_CHECKLIST.md.
+# 本脚本只完成结构性移植：
+#   1. 将 gnss_localization、global_path_planner 和 path_tracker 复制到工作区 src/
+#   2. 按依赖顺序构建
+# 脚本不修改任何配置。串口、天线杆臂、差分账号和日志目录等参数与履带车不同，
+# 必须根据实车硬件填写，详见 PORT_CHECKLIST.md。
 #
-# Safety: refuses to overwrite an existing destination package. If a dest already
-# exists it skips and tells you, so nothing of yours is clobbered silently.
+# 安全策略：拒绝覆盖已存在的目标包。目标已存在时会跳过并提示，避免静默破坏文件。
 set -euo pipefail
 
-# ---- Set these two before running ----
-# Where the VM can see the MegaTrak checkout (the folder that CONTAINS
-# sensor_node/, navigation_node/, monitoring_node/ 等)。
-# IMPORTANT: this must sit OUTSIDE the workspace src/ (default: ~/MegaTrak-main).
-# If the whole MegaTrak tree lives inside src/, colcon finds every package in it
-# AND our top-level copies -> "Duplicate package names not supported".
+# ---- 运行前设置以下路径 ----
+# MegaTrak 仓库所在目录，该目录应包含 sensor_node/、navigation_node/、
+# monitoring_node/ 等子目录。
+# 重要：该目录必须位于工作区 src/ 之外，默认路径为 ~/MegaTrak-main。
+# 如果整个 MegaTrak 树位于 src/ 内，colcon 会同时扫描其中的包和顶层副本，
+# 导致“Duplicate package names not supported”错误。
 MEGATRAK_SRC="${MEGATRAK_SRC:-$HOME/MegaTrak-main}"
-# Where you extracted path_tracker (the folder that CONTAINS path_tracker/).
+# path_tracker 解压位置，该目录应包含 path_tracker/ 子目录。
 PATH_TRACKER_SRC="${PATH_TRACKER_SRC:-$HOME}"
-# Target workspace.
+# 目标工作区。
 WS="${WS:-$HOME/ros2_ws}"
 SRC_DIR="$WS/src"
 
@@ -32,8 +29,8 @@ echo "== path_tracker 源: $PATH_TRACKER_SRC/path_tracker"
 echo "== 目标工作区: $WS"
 echo
 
-# Guard: MEGATRAK_SRC must NOT be inside the workspace src/, or colcon will find
-# both the in-tree MegaTrak packages and our top-level copies -> duplicate names.
+# 路径保护：MEGATRAK_SRC 不得位于工作区 src/ 内，否则 colcon 会同时发现
+# MegaTrak 树内包和顶层副本，造成包名重复。
 case "$MEGATRAK_SRC/" in
   "$SRC_DIR/"*)
     echo "!! 中止：MEGATRAK_SRC ($MEGATRAK_SRC) 在工作区 src/ 内部。"
@@ -43,7 +40,7 @@ case "$MEGATRAK_SRC/" in
     ;;
 esac
 
-# Packages to copy: <dest-name> <source-path>
+# 待复制的包：<目标名称> <源路径>
 copy_pkg() {
   local dest_name="$1" src_path="$2"
   if [[ ! -d "$src_path" ]]; then
@@ -78,13 +75,11 @@ if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
 
-# The params_in_yaml test in gnss_localization / global_path_planner calls
-# ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check_params.py -- a helper shared by
-# all packages that lives in the MegaTrak repo ROOT scripts/ (not inside any
-# package). After copying packages flat into src/, that relative path resolves to
-# $WS/scripts/, so we must stage the shared scripts dir there too, or those two
-# tests fail with "check_params.py: No such file or directory". Copy the whole dir
-# in case check_params.py imports a sibling module.
+# gnss_localization 和 global_path_planner 的 params_in_yaml 测试会调用
+# ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check_params.py。该共享脚本位于
+# MegaTrak 仓库根目录的 scripts/ 中。包复制到 src/ 后，相对路径会解析为
+# $WS/scripts/，因此必须同步复制该目录，否则相关测试会报告文件不存在。
+# 这里复制整个目录，以兼容 check_params.py 导入同级模块的情况。
 if [[ -d "$MEGATRAK_SRC/scripts" ]]; then
   if [[ -e "$WS/scripts" ]]; then
     echo "!! 跳过 scripts/：$WS/scripts 已存在，不覆盖（若缺 check_params.py 请手动核对）。"

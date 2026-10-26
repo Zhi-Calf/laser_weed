@@ -27,6 +27,7 @@ ament_target_dependencies(obstacle_filter
 
 add_library(velocity_planner_node_lib SHARED
   src/velocity_planner_node.cpp
+  src/logging.cpp
 )
 target_link_libraries(velocity_planner_node_lib obstacle_filter)
 target_link_libraries(velocity_planner_node_lib spdlog::spdlog)

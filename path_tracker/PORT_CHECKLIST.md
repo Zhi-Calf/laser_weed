@@ -44,7 +44,7 @@
 | `log_dir` | `/opt/agri/logs` | 除草机日志目录（如 `~/logs`） | 🟡 |
 | `frame_id` | `gnss_link` | 保持 `gnss_link` 即可（除非除草机 TF 树另有约定） | 🟢 |
 
-**为什么杆臂 🔴 必须重标**：`calib_offset_*` 是天线安装位置的物理量，履带车 x=0.5m 是它的天线装在前部 0.5m 处。除草机天线装在别的位置，这个值就不一样。GNSS 用它做杆臂补偿把天线坐标换算到 base_link（`gnss_driver.cpp:651`）——**填错会让 `/gnss_driver/pose` 整体偏移**，下游规划和控制全跟着错，激光打偏。必须按除草机实际安装测量填入，或用 `tractor_calibration` 标定后写回。
+**为什么杆臂 🔴 必须重标**：`calib_offset_*` 是天线安装位置的物理量，履带车 x=0.5m 是它的天线装在前部 0.5m 处。除草机天线装在别的位置，这个值就不一样。GNSS 用它做杆臂补偿把天线坐标换算到 base_link（`gnss_driver.cpp:651`）——**填错会让 `/gnss_driver/pose` 整体偏移**，下游规划和控制全跟着错，激光打偏。必须按除草机实际安装测量后写入 YAML，或由 `tractor_calibration` 标定后更新 YAML，再重启节点。
 
 文件：`~/ros2_ws/src/gnss_localization/config/ntrip_client.yaml`（方案 A）
 
@@ -78,7 +78,7 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 
 | 参数 | 履带车原值 | 除草机要改成 | 级别 |
 |---|---|---|---|
-| `log_dir` | `~/.ros/logs` | 默认用户目录可写；实车固定目录按部署改 | 🟢 |
+| `log_dir` | `/opt/agri/logs` | 统一部署日志目录；不可写时回退到 ROS 日志目录 | 🟢 |
 | `path_resolution` | `0.2` | 路径插值分辨率(m)，按除草机跟踪精度调；只读参数，改后重启 | 🟡 |
 | `first_row_margin` | `0.005` | 首行离内缩边界余量；**必须与 YAML 里的 ridge_width 相容**，落在 [0.001, ridge_width/2] | 🟡 |
 
@@ -98,12 +98,15 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 | 参数 | 默认值 | 除草机要改成 | 级别 |
 |---|---|---|---|
 | `wheelbase` | `1.2` | **除草机真实前后轴距(m)** | 🔴 |
-| `steer_mode` | `0` | 与下发 VCU 的转向模式一致（0单阿克曼/1双阿克曼） | 🔴 |
-| `lqr_target_v` | `0.5` | 目标速度，建议从 0.3 起调（协议上限 1.4） | 🟡 |
+| `steer_mode` | `0` | 无有效 `waypoint_types` 时的回退模式 | 🔴 |
+| `work_speed_m_s` / `turn_speed_m_s` | `0.6/0.3` | 按路径段固定基础速度 | 🟡 |
+| `lqr_target_v` | `0.6` | 无有效分段类型时的回退速度 | 🟡 |
+| `log_dir` | `/opt/agri/logs` | 统一 spdlog 滚动日志目录 | 🟡 |
 | `lqr_Q_lateral/heading`、`lqr_R_steer` | 50/25/25 | **不能照抄履带调参值**：R 的语义从角速度代价变成了转向角代价，量纲不同，需重标 | 🟡 |
 
 `wheelbase` 填错会直接导致横向跟踪振荡或收敛过慢，是最关键的参数。
-`steer_mode=1`（双阿克曼）时节点内部自动取等效轴距 L/2；模式 2/3 会报错拒绝接管。
+`waypoint_types` 有效时节点自动切换模式，并在 TURN 模式下使用 `L/2`
+作为等效轴距；模式 2/3 不支持。
 
 ---
 
@@ -151,8 +154,7 @@ rosdep 装不了或想手动确认，这几个是硬依赖（对应 rosdep 键�
 | `eigen` | 矩阵/几何 | `libeigen3-dev` | 两个模块 + path_tracker |
 | `geographiclib` | 经纬度↔ENU 投影 | ⚠️ **Jammy/Humble 是 `libgeographic-dev`；Noble/Jazzy 是 `libgeographiclib-dev`** | 两个模块 |
 | `boost` | 多边形几何适配 | `libboost-dev` | global_path_planner |
-| `yaml-cpp` | 参数写回 | `libyaml-cpp-dev` | gnss_localization |
-| `spdlog_vendor` | 滚动日志 | ROS 包，`apt install ros-humble-spdlog-vendor` | 两个模块 |
+| `spdlog_vendor` | 滚动日志 | ROS 包，`apt install ros-humble-spdlog-vendor` | global_path_planner、path_tracker |
 
 ⚠️ **geographiclib 的包名随 Ubuntu/ROS 版本变**（表里那行），装错名字会报找不到。
 先确认你的系统：`lsb_release -a` 看 Ubuntu 版本，Humble→Jammy 用 `libgeographic-dev`。
@@ -160,7 +162,7 @@ rosdep 装不了或想手动确认，这几个是硬依赖（对应 rosdep 键�
 装完验证一下关键库在不在：
 
 ```bash
-dpkg -l | grep -E 'libeigen3|libgeographic|libboost-dev|libyaml-cpp'
+dpkg -l | grep -E 'libeigen3|libgeographic|libboost-dev'
 ros2 pkg prefix spdlog_vendor   # 能打印路径说明 spdlog_vendor 就位
 ```
 

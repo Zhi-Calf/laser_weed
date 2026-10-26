@@ -60,7 +60,8 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker
 | `velocity_planner` | 直接在 E1R 点云坐标系中执行前向矩形 ROI 判定并发布避停状态 |
 | `rslidar_sdk` | 速腾 E1R 激光雷达 ROS 2 驱动；解析 UDP 数据包并发布 `PointCloud2` |
 | `rslidar_msg` | 速腾激光雷达原始 `RslidarPacket` 消息，供驱动录制/回放 packet 使用 |
-| `sim_vehicle` | 无硬件仿真：模拟 RTK、车辆运动学、工作模式，并可一键启动完整链路 |
+| `sim_vehicle` | 无硬件四轮转向仿真：模拟 RTK、四轮转角/轮速、底盘状态和工作模式，并可一键启动完整链路 |
+| `row_nav_sdk` | 不依赖 ROS 的稻行算法库：分割、动态 BEV、行拟合与跟踪，可独立生成 C 接口与共享库 |
 | `crop_row_perception` | 独立 RowNav SDK 的 ROS 2 观察模式接入：图像输入、稻行观测、断流检测；不发布底盘指令 |
 
 稻行模块的构建、时钟/标定约定和回放方法见
@@ -70,7 +71,7 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker
 ## 路径消息
 
 `/global_path_planner/path` 使用自定义消息 `weeder_msgs/msg/Path`，
-不再发布 `nav_msgs/Path` 和逐点 `geometry_msgs/PoseStamped`：
+供 `path_tracker` 跟踪：
 
 ```text
 std_msgs/Header header
@@ -85,8 +86,16 @@ uint8[] waypoint_types
 - `1` = 掉头段
 
 规划器以 `transient_local` QoS 按 10Hz 重发该消息；LQR 控制器根据
-`x/y` 计算曲率、航向和跟踪目标。当前 `path_tracker` 不读取
-`waypoint_types`，该字段保留给后续机具/激光分段控制。
+`x/y` 计算曲率、航向和跟踪目标，并按 `waypoint_types` 在 WORK 段使用
+0.6 m/s + 单阿克曼，在 TURN 段及过渡区使用 0.3 m/s + 对称阿克曼。
+首次接收有效路径后，后续重发只刷新路径心跳；只有 `/work_mode` 实际变化
+才会重新接收路径。
+
+规划器使用 `~/work_points`（绿色）和 `~/turn_points`（橙色）分别显示
+WORK/TURN 路径点，并保留 `~/path_points` 兼容旧订阅。
+`gnss_driver` 同时发布标准 `/gnss_driver/pose_stamped`
+（`geometry_msgs/msg/PoseStamped`，Best Effort）供 RViz 显示姿态；
+自定义位姿消息仍是控制链路的主接口。
 
 ## 激光雷达与点云接口
 
@@ -247,7 +256,7 @@ bool ctrl_mode
 ```bash
 sudo apt update
 sudo apt install -y libeigen3-dev libgeographic-dev libboost-dev \
-                    libyaml-cpp-dev libpcap-dev ros-humble-spdlog-vendor \
+                    libpcap-dev ros-humble-spdlog-vendor \
                     ros-humble-rviz2
 ```
 
@@ -371,8 +380,8 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 | 差分账号 | `ntrip_client.yaml` / `sdk_client.yaml` | 按设备分别配置；SDK 1.29 还需配置 `sdk_openapi_host/port`、`sdk_oss_host/port` 和 NOSR 坐标框架/历元 |
 | ENU 原点 | `gnss_localization/config/gnss_driver.yaml` | `origin_lat` / `origin_lon` / `origin_alt`，必须等于 `poly` 第一个顶点 |
 | 田块顶点 / 垄宽 / 田边余量 | `global_path_planner/config/global_path_planner.yaml` | `poly` / `ridge_width` / `field_margin`，修改后重启规划器 |
-| `wheelbase` | `path_tracker/config/path_tracker.yaml` | 单阿克曼填真实轴距，双阿克曼填 `L/2` |
-| `steer_mode` | `path_tracker` | 由路径跟踪控制器随 `/chassis/cmd` 下发 |
+| `wheelbase` | `path_tracker/config/path_tracker.yaml` | 填真实前后轴距；对称阿克曼的等效轴距由控制器自动取 `L/2` |
+| `work/turn_steer_mode` | `path_tracker` | 默认 WORK=0（单阿克曼）、TURN=1（对称阿克曼） |
 | `cmd_topic` | 两侧配置文件 | 默认 `/chassis/cmd` |
 | `can_interface` | `weeder_base/config/weeder_base.yaml` | 仿真用 `vcan0`，实车用 `can0` |
 | 雷达型号 | `rslidar_sdk/config/config.yaml` | E1R 必须使用 `lidar_type: RSE1`，不能保留 `RSM1` |
@@ -385,19 +394,17 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 ## 安全机制
 
 `path_tracker` 任一安全门控失败都会输出零速、零转角并停车。
-下表故障码定义在 `path_tracker/include/path_tracker/fault_codes.hpp`；当前
-故障码写入节点日志，尚未通过独立 ROS 话题发布：
 
-| 门控 | 参数 | 故障码 |
-|---|---|---|
-| 工作模式必须是 UNMANNED | `work_mode_timeout_s` | 10101 |
-| RTK 位姿存在、新鲜且 `Pose.valid=true` | `pose_timeout_s` | 10102 |
-| 路径存在且新鲜 | `path_timeout_s` | 10103 |
-| 转向模式兼容阿克曼模型 | `steer_mode` | 10104 |
-| 路径未走完 | — | 10105 |
-| 未偏离跟踪目标过远 | `max_track_error_m` | 10106 |
-| ROI 内检测到障碍 | `min_obstacle_points` | 10107 |
-| 避停状态不可用、超时或感知无效 | `require_velocity_planner` / `velocity_planner_status_timeout_s` | 10108 |
+| 门控 | 参数 |
+|---|---|
+| 工作模式必须是 UNMANNED | `work_mode_timeout_s` |
+| RTK 位姿存在、新鲜且 `Pose.valid=true` | `pose_timeout_s` |
+| 路径存在且新鲜 | `path_timeout_s` |
+| 转向模式兼容阿克曼模型 | `steer_mode` |
+| 路径未走完 | — |
+| 未偏离跟踪目标过远 | `max_track_error_m` |
+| ROI 内检测到障碍 | `min_obstacle_points` |
+| 避停状态不可用、超时或感知无效 | `require_velocity_planner` / `velocity_planner_status_timeout_s` |
 
 `weeder_base` 另有：
 
@@ -417,7 +424,7 @@ colcon test-result --verbose
 `weeder_base` 覆盖协议编码、位域、有符号数、范围检查和 BMS 第二版修布局；
 `path_tracker` 覆盖四轮转向运动学、前馈、符号、闭环收敛和协议限幅；
 `global_path_planner` 覆盖弓字形规划、覆盖率、凸性校验、YAML 配置契约、严格线段相交和节点 `/path` 发布契约；
-`gnss_localization` 覆盖 GIAVP 解析、参数写回和 YAML 参数一致性。
+`gnss_localization` 覆盖 GIAVP 解析、串口组帧和 YAML 参数一致性。
 `velocity_planner` 覆盖 ROI 边界、NaN 点、障碍点数阈值、点云字段校验和停车保持；
 `path_tracker` 额外覆盖避停状态缺失、超时、无效、停车请求和正常放行。
 `rslidar_msg` 提供 `RslidarPacket` 接口生成；`rslidar_sdk` 当前没有自动化硬件

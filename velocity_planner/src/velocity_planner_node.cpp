@@ -1,120 +1,25 @@
-// Copyright 2026. 点云前向矩形避停状态节点实现。
+// 版权所有 2026。点云前向矩形避停状态节点实现。
 #include "velocity_planner/velocity_planner_node.hpp"
 
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
-#include <unistd.h>
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cstdint>
-#include <cstdlib>
 #include <exception>
-#include <filesystem>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 #include <utility>
 #include <vector>
+
+#include "velocity_planner/logging.hpp"
 
 namespace velocity_planner {
 
 namespace {
 
-constexpr const char* kNodeName = "velocity_planner";          // 节点名
-constexpr double kPublishHz     = 10.0;                        // 状态固定发布频率
-
-// 扩展日志路径中的 ~ 与环境变量。
-std::string ExpandPath(std::string path) {
-  if (path.rfind("~/", 0) == 0) {
-    const char* home = std::getenv("HOME");
-    if (home != nullptr) {
-      path = std::string(home) + path.substr(1);
-    }
-  }
-
-  std::string expanded;
-  for (size_t i = 0; i < path.size(); ++i) {
-    if (path[i] != '$') {
-      expanded += path[i];
-      continue;
-    }
-
-    size_t end = i + 1;
-    while (end < path.size() && (std::isalnum(static_cast<unsigned char>(path[end])) || path[end] == '_')) {
-      ++end;
-    }
-    const std::string name = path.substr(i + 1, end - i - 1);
-    const char* value      = name.empty() ? nullptr : std::getenv(name.c_str());
-    if (value != nullptr) {
-      expanded += value;
-    }
-    i = end - 1;
-  }
-  return expanded;
-}
-
-// 优先使用配置目录，不可写时回退到 ROS 日志目录。
-std::string ResolveLogDir(const std::string& configured) {
-  std::error_code error;
-  const std::string preferred = ExpandPath(configured);
-  if (!preferred.empty()) {
-    std::filesystem::create_directories(preferred, error);
-    if (!error && access(preferred.c_str(), W_OK) == 0) {
-      return preferred;
-    }
-  }
-
-  const char* ros_home = std::getenv("ROS_HOME");
-  const char* home     = std::getenv("HOME");
-  std::string fallback;
-  if (ros_home != nullptr && *ros_home != '\0') {
-    fallback = std::string(ros_home) + "/logs";
-  } else if (home != nullptr && *home != '\0') {
-    fallback = std::string(home) + "/.ros/logs";
-  } else {
-    return "";
-  }
-
-  std::filesystem::create_directories(fallback, error);
-  if (error || access(fallback.c_str(), W_OK) != 0) {
-    return "";
-  }
-  return fallback;
-}
-
-// 配置 spdlog 滚动文件与控制台双输出。
-void ConfigureLogger(const std::string& log_dir, size_t max_file_size_bytes, size_t max_file_count, bool enable_console, const std::string& log_level) {
-  constexpr const char* kLogPattern = "[%Y-%m-%d %H:%M:%S.%e] [%l] [%s:%#] %v";
-  const std::string directory       = ResolveLogDir(log_dir);
-  if (directory.empty()) {
-    throw std::runtime_error("没有可写的日志目录 (已尝试 \"" + log_dir + "\")");
-  }
-
-  std::vector<spdlog::sink_ptr> sinks;
-  sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>((std::filesystem::path(directory) / "velocity_planner.log").string(), max_file_size_bytes, max_file_count));
-  if (enable_console) {
-    sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
-  }
-
-  auto logger = std::make_shared<spdlog::logger>(kNodeName, sinks.begin(), sinks.end());
-  logger->set_pattern(kLogPattern);
-  const spdlog::level::level_enum level = spdlog::level::from_str(log_level);
-  if (level == spdlog::level::off && log_level != "off") {
-    logger->set_level(spdlog::level::info);
-    SPDLOG_WARN("无法识别的日志级别 \"{}\", 已回退到 info", log_level);
-  } else {
-    logger->set_level(level);
-  }
-  spdlog::set_default_logger(logger);
-  if (directory != ExpandPath(log_dir)) {
-    SPDLOG_WARN("日志目录 \"{}\" 不可写，已回退到 \"{}\"", log_dir, directory);
-  }
-  spdlog::flush_on(spdlog::level::warn);
-  spdlog::flush_every(std::chrono::seconds(3));
-}
+constexpr const char* kNodeName = "velocity_planner";   // 节点名
+constexpr double kPublishHz     = 10.0;                 // 状态固定发布频率
 
 }   // namespace
 
@@ -122,8 +27,16 @@ void ConfigureLogger(const std::string& log_dir, size_t max_file_size_bytes, siz
 VelocityPlannerNode::VelocityPlannerNode(const rclcpp::NodeOptions& options) : Node(kNodeName, options) {
   LoadLogParameters();
 
+  LogConfig log_config;
+  log_config.logger_name         = "velocity_planner";
+  log_config.log_file_name       = "velocity_planner.log";
+  log_config.log_dir             = log_dir_;
+  log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb_) * 1024U * 1024U;
+  log_config.max_file_count      = static_cast<std::size_t>(log_file_count_);
+  log_config.enable_console      = log_enable_console_;
+  log_config.log_level           = log_level_;
   try {
-    ConfigureLogger(log_dir_, static_cast<size_t>(log_file_size_mb_) * 1024U * 1024U, static_cast<size_t>(log_file_count_), log_enable_console_, log_level_);
+    ConfigureLogging(log_config);
     SPDLOG_INFO("日志配置成功");
   } catch (const std::exception& error) {
     SPDLOG_WARN("文件日志配置失败，使用默认日志器: {}", error.what());
@@ -135,7 +48,7 @@ VelocityPlannerNode::VelocityPlannerNode(const rclcpp::NodeOptions& options) : N
 
 // 声明并读取 spdlog 滚动日志参数。
 void VelocityPlannerNode::LoadLogParameters() {
-  declare_parameter("log_dir", "~/.ros/logs");
+  declare_parameter("log_dir", "/opt/agri/logs");
   declare_parameter("log_file_size_mb", 50);
   declare_parameter("log_file_count", 10);
   declare_parameter("log_enable_console", true);
@@ -179,9 +92,7 @@ void VelocityPlannerNode::LoadParameters() {
     output_status_topic_ = "/velocity_planner/status";
   }
   if (!std::isfinite(point_cloud_timeout_s_) || point_cloud_timeout_s_ <= 0.0) {
-    SPDLOG_WARN(
-      "point_cloud_timeout_s={} 非法，回退为 0.5s",
-      point_cloud_timeout_s_);
+    SPDLOG_WARN("point_cloud_timeout_s={} 非法，回退为 0.5s", point_cloud_timeout_s_);
     point_cloud_timeout_s_ = 0.5;
   }
   stop_hold_s_             = std::max(stop_hold_s_, 0.0);
@@ -268,18 +179,14 @@ void VelocityPlannerNode::PublishStatus() {
   std::size_t obstacle_points    = cached_obstacle_points_;
   float nearest_distance_m       = cached_nearest_distance_m_;
   const auto point_cloud_age     = std::chrono::steady_clock::now() - last_cloud_receive_time_;
-  const bool point_cloud_timeout =
-    has_cloud_result_ &&
-    point_cloud_age >= std::chrono::duration<double>(point_cloud_timeout_s_);
+  const bool point_cloud_timeout = has_cloud_result_ && point_cloud_age >= std::chrono::duration<double>(point_cloud_timeout_s_);
   if (!has_cloud_result_ || point_cloud_timeout) {
     sensor_valid       = false;
     stop_required      = true;
     obstacle_points    = 0;
     nearest_distance_m = -1.0F;
     if (point_cloud_timeout) {
-      SPDLOG_WARN(
-        "点云超过 {:.2f}s 未更新，输出停车请求",
-        point_cloud_timeout_s_);
+      SPDLOG_WARN("点云超过 {:.2f}s 未更新，输出停车请求", point_cloud_timeout_s_);
     } else {
       SPDLOG_WARN("尚未收到有效点云，输出停车请求");
     }

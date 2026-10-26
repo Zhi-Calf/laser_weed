@@ -9,22 +9,17 @@
 //   - VCU 状态时间戳在构造函数里对齐到启动时刻, 避免首拍被误判为超时。
 #include "weeder_base/chassis_node.hpp"
 
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
-#include <unistd.h>
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
-#include <filesystem>
 #include <stdexcept>
-#include <system_error>
 #include <utility>
 #include <vector>
+
+#include "weeder_base/logging.hpp"
 
 using namespace std::chrono_literals;
 
@@ -50,92 +45,6 @@ weeder_base::protocol::AdcuCommand01 MakeSafeStopCommand() {
 
 }   // namespace
 
-namespace detail {
-
-// 扩展路径中的环境变量 (~ 与 $VAR)
-std::string ExpandPath(std::string path) {
-  if (path.rfind("~/", 0) == 0) {
-    const char* home = std::getenv("HOME");
-    if (home)
-      path = std::string(home) + path.substr(1);
-  }
-  std::string out;
-  for (size_t i = 0; i < path.size(); ++i) {
-    if (path[i] != '$') {
-      out += path[i];
-      continue;
-    }
-    size_t j = i + 1;
-    while (j < path.size() && (std::isalnum(static_cast<unsigned char>(path[j])) || path[j] == '_'))
-      ++j;
-    const std::string name = path.substr(i + 1, j - i - 1);
-    const char* val        = name.empty() ? nullptr : std::getenv(name.c_str());
-    if (val)
-      out += val;
-    i = j - 1;
-  }
-  return out;
-}
-
-// 解析日志目录: 优先用配置的, 不可写则回退到 $ROS_HOME/logs 或 ~/.ros/logs
-std::string ResolveLogDir(const std::string& configured) {
-  std::error_code ec;
-  const std::string preferred = ExpandPath(configured);
-  if (!preferred.empty()) {
-    std::filesystem::create_directories(preferred, ec);
-    if (!ec && access(preferred.c_str(), W_OK) == 0)
-      return preferred;
-  }
-
-  const char* ros_home = std::getenv("ROS_HOME");
-  const char* home     = std::getenv("HOME");
-  std::string fallback;
-  if (ros_home && *ros_home)
-    fallback = std::string(ros_home) + "/logs";
-  else if (home && *home)
-    fallback = std::string(home) + "/.ros/logs";
-  else
-    return "";
-
-  std::filesystem::create_directories(fallback, ec);
-  if (ec || access(fallback.c_str(), W_OK) != 0)
-    return "";
-  return fallback;
-}
-
-// 配置 spdlog 滚动文件输出
-void ConfigureLogger(const std::string& log_dir, size_t max_file_size_bytes, size_t max_file_count, bool enable_console, const std::string& log_level) {
-  constexpr const char* kLogPattern = "[%Y-%m-%d %H:%M:%S.%e] [%l] [%s:%#] %v";
-  const std::string dir             = ResolveLogDir(log_dir);
-  if (dir.empty()) {
-    throw std::runtime_error("no writable log directory (tried \"" + log_dir + "\")");
-  }
-
-  std::vector<spdlog::sink_ptr> sinks;
-  sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>((std::filesystem::path(dir) / "weeder_base.log").string(), max_file_size_bytes, max_file_count));
-  if (enable_console) {
-    sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
-  }
-
-  auto logger = std::make_shared<spdlog::logger>("weeder_base", sinks.begin(), sinks.end());
-  logger->set_pattern(kLogPattern);
-  const spdlog::level::level_enum level = spdlog::level::from_str(log_level);
-  if (level == spdlog::level::off && log_level != "off") {
-    logger->set_level(spdlog::level::info);
-    SPDLOG_WARN("无法识别的日志级别 \"{}\", 已回退到 info", log_level);
-  } else {
-    logger->set_level(level);
-  }
-  spdlog::set_default_logger(logger);
-  if (dir != ExpandPath(log_dir)) {
-    SPDLOG_WARN("日志目录 \"{}\" 不可写, 已回退到 \"{}\"", log_dir, dir);
-  }
-  spdlog::flush_on(spdlog::level::warn);
-  spdlog::flush_every(3s);
-}
-
-}   // namespace detail
-
 namespace weeder_base {
 
 ChassisNode::ChassisNode(const rclcpp::NodeOptions& options) : Node("weeder_chassis", options) {
@@ -143,8 +52,16 @@ ChassisNode::ChassisNode(const rclcpp::NodeOptions& options) : Node("weeder_chas
   loadLogParameters();
 
   // 配置 spdlog 滚动文件输出
+  LogConfig log_config;
+  log_config.logger_name         = "weeder_base";
+  log_config.log_file_name       = "weeder_base.log";
+  log_config.log_dir             = log_dir_;
+  log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb_) * 1024U * 1024U;
+  log_config.max_file_count      = static_cast<std::size_t>(log_file_count_);
+  log_config.enable_console      = log_enable_console_;
+  log_config.log_level           = log_level_;
   try {
-    detail::ConfigureLogger(log_dir_, static_cast<size_t>(log_file_size_mb_) * 1024U * 1024U, static_cast<size_t>(log_file_count_), log_enable_console_, log_level_);
+    ConfigureLogging(log_config);
     SPDLOG_INFO("日志配置成功");
   } catch (const std::exception& e) {
     SPDLOG_WARN("文件日志配置失败, 使用默认日志器: {}", e.what());
@@ -191,8 +108,7 @@ ChassisNode::ChassisNode(const rclcpp::NodeOptions& options) : Node("weeder_chas
 
   // ---- 定时器 ----
   // CAN 下发按协议固定为 50 Hz (20ms); ROS 状态上报保持 10 Hz。
-  send_timer_ = create_wall_timer(std::chrono::milliseconds(protocol::timing::kAdcuCmdPeriodMs),
-                                  std::bind(&ChassisNode::sendCommand, this));
+  send_timer_ = create_wall_timer(std::chrono::milliseconds(protocol::timing::kAdcuCmdPeriodMs), std::bind(&ChassisNode::sendCommand, this));
   pub_timer_  = create_wall_timer(100ms, std::bind(&ChassisNode::publishState, this));
 
   SPDLOG_INFO("ChassisNode 启动: 接口={} 下发=50Hz 状态=10Hz", can_interface_);
