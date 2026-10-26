@@ -6,7 +6,8 @@ Panels:
       Expanded:
         - /Global Options1
         - /田块边界1
-        - /全覆盖路径1
+        - /WORK 作业段1
+        - /TURN 掉头段1
         - /仿真车1
         - /跟踪目标点1
       Splitter Ratio: 0.5
@@ -118,10 +119,10 @@ Visualization Manager:
         Value: /global_path_planner/key_points
       Value: true
 
-    # ---- 全覆盖弓字形路径（规划器发布的 Marker 点集）----
+    # ---- WORK 作业段（绿色点集）----
     - Class: rviz_default_plugins/Marker
       Enabled: true
-      Name: 全覆盖路径
+      Name: WORK 作业段
       Namespaces:
         {}
       Topic:
@@ -130,7 +131,22 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /global_path_planner/path_points
+        Value: /global_path_planner/work_points
+      Value: true
+
+    # ---- TURN 掉头段（橙色点集）----
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: TURN 掉头段
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_path_planner/turn_points
       Value: true
 
     # ---- 仿真车（绿色箭头，箭头方向 = 车头朝向）----

@@ -182,13 +182,8 @@ bool LQR::SelectSymmetricAckermann() {
   }
 
   if (turn_mode_active_ != previous_mode) {
-    const double effective_wheelbase =
-      EffectiveWheelbase(config_.wheelbase, turn_mode_active_);
-    SPDLOG_INFO(
-      "转向模式切换为 {}（{}），等效轴距 {:.3f} m",
-      turn_mode_active_ ? 1 : 0,
-      turn_mode_active_ ? "对称阿克曼" : "单阿克曼",
-      effective_wheelbase);
+    const double effective_wheelbase = EffectiveWheelbase(config_.wheelbase, turn_mode_active_);
+    SPDLOG_INFO("转向模式切换为 {}（{}），等效轴距 {:.3f} m", turn_mode_active_ ? 1 : 0, turn_mode_active_ ? "对称阿克曼" : "单阿克曼", effective_wheelbase);
   }
   return turn_mode_active_;
 }

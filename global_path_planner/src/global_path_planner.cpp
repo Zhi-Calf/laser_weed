@@ -18,6 +18,52 @@ using namespace std::chrono_literals;
 
 namespace global_path_planner {
 
+namespace {
+
+// 构造按路径类型过滤的 RViz 点集。
+// 类型数组缺失时按 WORK 处理。
+visualization_msgs::msg::Marker MakePathTypeMarker(
+  const std::vector<Point_2>& waypoints,
+  const std::vector<uint8_t>& waypoint_types,
+  uint8_t selected_type,
+  const std::string& name,
+  int id,
+  float red,
+  float green,
+  float blue,
+  const rclcpp::Time& stamp) {
+  visualization_msgs::msg::Marker marker;
+  marker.header.frame_id    = "odom";
+  marker.header.stamp       = stamp;
+  marker.ns                 = name;
+  marker.id                 = id;
+  marker.pose.orientation.w = 1.0;
+  marker.type               = visualization_msgs::msg::Marker::SPHERE_LIST;
+  marker.color.a            = 1.0F;
+  marker.color.r            = red;
+  marker.color.g            = green;
+  marker.color.b            = blue;
+  marker.scale.x            = 0.09;
+  marker.scale.y            = 0.09;
+  marker.scale.z            = 0.09;
+
+  const bool have_types = waypoint_types.size() == waypoints.size();
+  for (size_t i = 0; i < waypoints.size(); ++i) {
+    const uint8_t waypoint_type = have_types ? waypoint_types[i] : 0U;
+    if (waypoint_type != selected_type) {
+      continue;
+    }
+    geometry_msgs::msg::Point point;
+    point.x = waypoints[i][0];
+    point.y = waypoints[i][1];
+    marker.points.push_back(point);
+  }
+  marker.action = marker.points.empty() ? visualization_msgs::msg::Marker::DELETE : visualization_msgs::msg::Marker::ADD;
+  return marker;
+}
+
+}   // namespace
+
 GlobalPathPlannerNode::GlobalPathPlannerNode(const rclcpp::NodeOptions& options) : Node("global_path_planner", options) {
 
   loadLogParameters();
@@ -50,6 +96,8 @@ GlobalPathPlannerNode::GlobalPathPlannerNode(const rclcpp::NodeOptions& options)
   // 发布
   timer_                     = create_wall_timer(100ms, std::bind(&GlobalPathPlannerNode::timerCallback, this));
   path_points_pub_           = create_publisher<visualization_msgs::msg::Marker>("~/path_points", 10);
+  work_points_pub_           = create_publisher<visualization_msgs::msg::Marker>("~/work_points", 10);
+  turn_points_pub_           = create_publisher<visualization_msgs::msg::Marker>("~/turn_points", 10);
   key_points_pub_            = create_publisher<visualization_msgs::msg::Marker>("~/key_points", 10);
   boundary_points_pub_       = create_publisher<visualization_msgs::msg::Marker>("~/boundary_points", 10);
   inner_boundary_points_pub_ = create_publisher<visualization_msgs::msg::Marker>("~/inner_boundary_points", 10);
@@ -156,10 +204,12 @@ void GlobalPathPlannerNode::planGeometry() {
 
 // 100ms 定时器: 发布当前生效路径 (/global_path_planner/path) + RViz Markers。
 void GlobalPathPlannerNode::timerCallback() {
+  const rclcpp::Time stamp = get_clock()->now();
+
   // 供 RViz 显示的路径点
   visualization_msgs::msg::Marker path_point;
   path_point.header.frame_id    = "odom";
-  path_point.header.stamp       = get_clock()->now();
+  path_point.header.stamp       = stamp;
   path_point.ns                 = "path_point";
   path_point.id                 = 1;
   path_point.pose.orientation.w = 1.0;
@@ -177,10 +227,14 @@ void GlobalPathPlannerNode::timerCallback() {
     path_point.points.emplace_back(p);
   }
 
+  // 按类型分别发布点集，便于在 RViz 中独立显示和关闭。
+  const visualization_msgs::msg::Marker work_points = MakePathTypeMarker(waypoints_, waypoint_types_, 0U, "work_points", 1, 0.1F, 0.9F, 0.2F, stamp);
+  const visualization_msgs::msg::Marker turn_points = MakePathTypeMarker(waypoints_, waypoint_types_, 1U, "turn_points", 1, 1.0F, 0.35F, 0.0F, stamp);
+
   // 供 RViz 显示的关键点
   visualization_msgs::msg::Marker key_points;
   key_points.header.frame_id    = "odom";
-  key_points.header.stamp       = get_clock()->now();
+  key_points.header.stamp       = stamp;
   key_points.ns                 = "key_points";
   key_points.id                 = 1;
   key_points.pose.orientation.w = 1.0;
@@ -202,7 +256,7 @@ void GlobalPathPlannerNode::timerCallback() {
   const bool show_local_boundary = cell_.size() >= 3;
   visualization_msgs::msg::Marker boundary_points;
   boundary_points.header.frame_id    = "odom";
-  boundary_points.header.stamp       = get_clock()->now();
+  boundary_points.header.stamp       = stamp;
   boundary_points.ns                 = "boundary_points";
   boundary_points.id                 = 1;
   boundary_points.pose.orientation.w = 1.0;
@@ -228,7 +282,7 @@ void GlobalPathPlannerNode::timerCallback() {
   // 收缩后的内边界，同样以 LINE_STRIP 形式通过 boundary_points_pub_ 发布
   visualization_msgs::msg::Marker inner_boundary;
   inner_boundary.header.frame_id    = "odom";
-  inner_boundary.header.stamp       = get_clock()->now();
+  inner_boundary.header.stamp       = stamp;
   inner_boundary.ns                 = "boundary_points";
   inner_boundary.id                 = 2;
   inner_boundary.pose.orientation.w = 1.0;
@@ -256,7 +310,7 @@ void GlobalPathPlannerNode::timerCallback() {
   // ---- /path: x/y 与段类型分开存放 ----
   weeder_msgs::msg::Path path_msg;
   path_msg.header.frame_id   = "odom";
-  path_msg.header.stamp      = get_clock()->now();
+  path_msg.header.stamp      = stamp;
   const bool have_path_types = (waypoints_.size() == waypoint_types_.size());
   path_msg.x.reserve(waypoints_.size());
   path_msg.y.reserve(waypoints_.size());
@@ -268,6 +322,8 @@ void GlobalPathPlannerNode::timerCallback() {
   }
 
   path_points_pub_->publish(path_point);
+  work_points_pub_->publish(work_points);
+  turn_points_pub_->publish(turn_points);
   key_points_pub_->publish(key_points);
   boundary_points_pub_->publish(boundary_points);
   path_pub_->publish(path_msg);

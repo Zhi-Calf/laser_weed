@@ -21,7 +21,8 @@ path_tracker:
 
     # 真实前后轴距 (m)。控制器按转向模式自动选择 L 或 L/2 作为等效轴距。
     # 填错会直接导致横向跟踪振荡或收敛过慢。
-    wheelbase: 1.2
+    # 默认值与 Laser-Weeding-Sim 的 Isaac 底盘一致。
+    wheelbase: 1.521
 
     # 根据 global_path_planner 的 waypoint_types 自动切换模式：
     # WORK(0) 使用单阿克曼，TURN(1) 使用对称阿克曼。

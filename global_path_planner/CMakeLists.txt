@@ -225,7 +225,12 @@ if(BUILD_TESTING)
   # 节点级集成测试: 启动真实 GlobalPathPlannerNode, 验证 /path 发布、类型数组长度与坐标系。
   ament_add_gtest(test_global_path_planner_node test/test_global_path_planner_node.cpp)
   target_link_libraries(test_global_path_planner_node ${PROJECT_NAME}_lib)
-  ament_target_dependencies(test_global_path_planner_node rclcpp weeder_msgs)
+  ament_target_dependencies(
+    test_global_path_planner_node
+    rclcpp
+    visualization_msgs
+    weeder_msgs
+  )
 endif()
 
 ament_package()

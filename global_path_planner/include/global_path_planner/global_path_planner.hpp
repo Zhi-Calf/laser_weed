@@ -98,9 +98,10 @@ inline bool parseFirstRowMarginForRidge(double first_row_margin, double ridge_wi
 ///
 /// 发布以下话题 (均为节点相对名, 完整名为 /global_path_planner/<topic>):
 ///   ~/path                  全局路径 (weeder_msgs/Path, transient_local; x/y + waypoint_types,
-///                           0=作业 / 1=掉头), 供 path_tracker 跟踪; 它当前只读 x/y,
-///                           waypoint_types 预留给机具/激光分段控制
+///                           0=作业 / 1=掉头), 供 path_tracker 跟踪并选择速度与转向模式
 ///   ~/path_points           路径点的 RViz marker
+///   ~/work_points           WORK(0) 路径点的 RViz marker (绿色)
+///   ~/turn_points           TURN(1) 路径点的 RViz marker (橙色)
 ///   ~/key_points            关键点的 RViz marker (每条垄的两个端点)
 ///   ~/boundary_points       地块边界点的 RViz marker
 ///   ~/inner_boundary_points 内缩 field_margin_ 后边界点的 RViz marker
@@ -119,6 +120,8 @@ private:
 private:
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr path_points_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr work_points_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr turn_points_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr key_points_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr boundary_points_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr inner_boundary_points_pub_;

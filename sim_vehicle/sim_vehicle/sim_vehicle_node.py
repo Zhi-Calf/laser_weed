@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""仿真车辆节点（激光除草机联调仿真用）
+"""仿真车辆节点（激光除草机四轮转向联调仿真用）
 
 替代真实的 gnss_localization + 底盘，构成一个闭环：
 
@@ -10,13 +10,13 @@
     /gnss_driver/origin  (NavSatFix, latched)  ENU 投影原点
     /work_mode           (WorkMode, latched)   手动/无人模式切换
 
-运动学：按转向模式选择等效轴距的自行车模型
+运动学：按转向模式选择等效轴距的自行车模型，并反解四轮转角和轮速
     x'   = v·cos(yaw)
     y'   = v·sin(yaw)
     yaw' = (v/L_eff)·tan(delta)
 
     mode 0：L_eff = L（单阿克曼）
-    mode 1：L_eff = L/2（前后轮反向等角的对称阿克曼）
+    mode 1：L_eff = L/2（前后轮反向转动的对称阿克曼）
 
 ⚠️ 这是**理想模型**：无轮胎侧偏、无执行器延迟、无噪声、无打滑。
 它验证的是"控制律与话题链路是否正确"，**不能**用来评估实车跟踪精度。
@@ -33,8 +33,24 @@ from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy,
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool
 from tf2_msgs.msg import TFMessage
-from weeder_msgs.msg import ChassisCmd, Path, Pose, WorkMode
+from weeder_msgs.msg import (
+    ChassisCmd,
+    ChassisState,
+    Path,
+    Pose,
+    WorkMode,
+)
 from visualization_msgs.msg import Marker
+
+from sim_vehicle.kinematics import (
+    CORNERS,
+    MAX_SPEED_M_S,
+    MAX_STEER_RAD,
+    WHEELBASE_M,
+    WHEEL_RADIUS_M,
+    WHEEL_TRACK_M,
+    four_wheel_state,
+)
 
 TWO_PI = 2.0 * math.pi
 
@@ -51,13 +67,15 @@ class SimVehicleNode(Node):
         # ---- 车辆参数：wheelbase 必须与 path_tracker 的 wheelbase 一致，
         #      否则仿真的"真实车辆"和控制器假设的模型不是同一台车，
         #      跟踪误差会收敛到一个非零稳态值，看起来像控制器调不好。
-        self.declare_parameter("wheelbase", 1.2)
+        self.declare_parameter("wheelbase", WHEELBASE_M)
+        self.declare_parameter("wheel_track", WHEEL_TRACK_M)
+        self.declare_parameter("wheel_radius_m", WHEEL_RADIUS_M)
         self.declare_parameter("sim_hz", 50.0)
-        self.declare_parameter("max_speed_m_s", 1.4)
-        # 自行车模型在 delta -> ±90° 时 tan() 发散。真实车辆也不会边跑边打满
-        # 90°，所以这里夹到 60°，既避免 inf/nan 又不至于掩盖控制器的异常输出。
-        self.declare_parameter("max_plant_steer_deg", 60.0)
-        self.declare_parameter("cmd_timeout_s", 0.5)
+        self.declare_parameter("max_speed_m_s", MAX_SPEED_M_S)
+        self.declare_parameter(
+            "max_plant_steer_deg", math.degrees(MAX_STEER_RAD)
+        )
+        self.declare_parameter("cmd_timeout_s", 0.3)
         self.declare_parameter("cmd_topic", "/chassis/cmd")
 
         # ---- 初始位姿（ENU，单位 m）。默认在原点，即田块西南角附近。
@@ -84,14 +102,25 @@ class SimVehicleNode(Node):
         #      设为 false 则用 init_x/init_y/init_yaw 指定的绝对位姿。
         self.declare_parameter("align_to_path_start", True)
         # 对齐时故意留的初始横向偏差（m），用来观察控制器收敛。0 = 完美对齐。
-        self.declare_parameter("align_lateral_offset", 0.8)
+        self.declare_parameter("align_lateral_offset", 0.2)
 
         self.wheelbase = max(self.get_parameter("wheelbase").value, 0.05)
+        self.wheel_track = max(
+            self.get_parameter("wheel_track").value, 0.05)
+        self.wheel_radius = max(
+            self.get_parameter("wheel_radius_m").value, 0.01)
         self.dt = 1.0 / max(self.get_parameter("sim_hz").value, 1.0)
-        self.max_speed = self.get_parameter("max_speed_m_s").value
-        self.max_plant_steer = math.radians(
-            max(self.get_parameter("max_plant_steer_deg").value, 1.0))
-        self.cmd_timeout_s = self.get_parameter("cmd_timeout_s").value
+        self.max_speed = min(
+            max(self.get_parameter("max_speed_m_s").value, 0.0),
+            MAX_SPEED_M_S,
+        )
+        self.max_plant_steer = min(
+            max(math.radians(
+                self.get_parameter("max_plant_steer_deg").value), 0.01),
+            MAX_STEER_RAD,
+        )
+        self.cmd_timeout_s = max(
+            self.get_parameter("cmd_timeout_s").value, 0.0)
         self.cmd_topic = self.get_parameter("cmd_topic").value
         # ---- 车辆状态
         self.x = self.get_parameter("init_x").value
@@ -108,6 +137,20 @@ class SimVehicleNode(Node):
         self.aligned = False   # 是否已完成对齐（只对齐一次）
 
         self.last_cmd_time = self.get_clock().now()
+        self.cmd_gear = 0
+        self.cmd_release_brake = False
+        self.cmd_estop = False
+        self.cmd_ctrl_mode = False
+        self.alive_counter = 0
+        self.wheel_state = four_wheel_state(
+            0.0,
+            0.0,
+            0,
+            self.wheelbase,
+            self.wheel_track,
+            self.wheel_radius,
+            self.max_plant_steer,
+        )
 
         # ---- QoS：必须与下游订阅端匹配，否则一条都收不到 ----
         # path_tracker 用 SensorDataQoS 订阅 pose
@@ -141,9 +184,13 @@ class SimVehicleNode(Node):
         self.tf_pub = self.create_publisher(TFMessage, "/tf", 10)
         self.marker_pub = self.create_publisher(
             Marker, "/sim_vehicle/marker", 10)
+        self.chassis_state_pub = self.create_publisher(
+            ChassisState, "/chassis/state", 10)
 
         # ---- 定时器：物理积分 + pose 发布（同频）----
         self.create_timer(self.dt, self.tick)
+        # ---- 定时器：模拟真实 VCU 的 10Hz 状态反馈 ----
+        self.create_timer(0.1, self.publish_chassis_state)
         # ---- 定时器：latched 话题 1Hz 重发（模拟 gnss_driver 与 APP 行为，
         #      也让 planner/lqr 的超时判定不会误触发）----
         self.create_timer(1.0, self.publish_slow_topics)
@@ -151,9 +198,11 @@ class SimVehicleNode(Node):
         self.publish_slow_topics()   # 立刻发一次，免得下游等 1 秒
 
         self.get_logger().info(
-            "仿真车辆已启动: 轴距=%.3fm dt=%.3fs 初始位姿=(%.2f, %.2f, %.1f°) "
+            "四轮转向仿真车辆已启动: 轴距=%.3fm 轮距=%.3fm "
+            "轮半径=%.3fm dt=%.3fs 初始位姿=(%.2f, %.2f, %.1f°) "
             "模式=%s"
-            % (self.wheelbase, self.dt, self.x, self.y,
+            % (self.wheelbase, self.wheel_track, self.wheel_radius,
+               self.dt, self.x, self.y,
                math.degrees(self.yaw),
                "UNMANNED" if self.unmanned else "MANUAL"))
         self.get_logger().info(
@@ -166,10 +215,28 @@ class SimVehicleNode(Node):
     def on_chassis_cmd(self, msg):
         """速度与转角来自同一控制周期，保证仿真车辆执行一致的运动学组合。"""
         self.last_cmd_time = self.get_clock().now()
+        self.cmd_gear = msg.gear
+        self.cmd_release_brake = msg.release_brake
+        self.cmd_estop = msg.estop
+        self.cmd_ctrl_mode = msg.ctrl_mode
+
+        command_inhibited = (
+            msg.estop
+            or msg.gear != 1
+            or not msg.release_brake
+            or not msg.ctrl_mode
+            or not math.isfinite(msg.speed_m_s)
+            or not math.isfinite(msg.steer_angle_rad)
+        )
+        if command_inhibited:
+            self.v_cmd = 0.0
+            self.delta_cmd = 0.0
+            return
+
         if msg.steer_mode > 1:
             if self.steer_mode != msg.steer_mode:
                 self.get_logger().warn(
-                    "仿真仅支持 steer_mode 0/1，收到 %d，车辆停车"
+                    "四轮转向仿真仅支持 steer_mode 0/1，收到 %d，车辆停车"
                     % msg.steer_mode)
             self.steer_mode = msg.steer_mode
             self.v_cmd = 0.0
@@ -244,7 +311,7 @@ class SimVehicleNode(Node):
             self.v_cmd = 0.0
             self.delta_cmd = 0.0
 
-        # 输入为前轴中心等效角；根据当前模式选择运动学增益。
+        # 输入为等效自行车转角；根据当前模式选择运动学增益。
         self.v = self.v_cmd
         if self.v > 1e-6:
             self.x += self.v * math.cos(self.yaw) * self.dt
@@ -256,6 +323,15 @@ class SimVehicleNode(Node):
                 * math.tan(self.delta_cmd)
                 * self.dt)
 
+        self.wheel_state = four_wheel_state(
+            self.v,
+            self.delta_cmd,
+            self.steer_mode,
+            self.wheelbase,
+            self.wheel_track,
+            self.wheel_radius,
+            self.max_plant_steer,
+        )
         self.publish_pose()
         self.publish_tf()
         self.publish_marker()
@@ -327,6 +403,36 @@ class SimVehicleNode(Node):
         m.color.b = 0.2
         m.color.a = 1.0
         self.marker_pub.publish(m)
+
+    def publish_chassis_state(self):
+        """发布与 weeder_base 对齐的四轮转角、轮速和指令状态。"""
+        state = ChassisState()
+        state.header.stamp = self.get_clock().now().to_msg()
+        state.header.frame_id = "base_link"
+        state.state01_valid = True
+        state.gear = self.cmd_gear
+        state.steer_mode = self.steer_mode
+        state.estop = self.cmd_estop
+        state.release_brake = self.cmd_release_brake
+        state.ctrl_mode = self.cmd_ctrl_mode
+        state.speed_raw = int(round(self.v * 1000.0))
+        state.speed_m_s = self.v
+        state.wheel_track_cm = int(round(self.wheel_track * 100.0))
+        state.alive_counter = self.alive_counter
+        self.alive_counter = (self.alive_counter + 1) & 0xFF
+
+        state.state02_valid = True
+        state.motor_speed_rpm = [
+            int(round(
+                self.wheel_state.wheel_rad_s[corner] * 60.0 / TWO_PI))
+            for corner in CORNERS
+        ]
+        state.state03_valid = True
+        state.steer_angle_deg = [
+            math.degrees(self.wheel_state.steer_rad[corner])
+            for corner in CORNERS
+        ]
+        self.chassis_state_pub.publish(state)
 
     def publish_slow_topics(self):
         """1Hz 重发 latched 话题。

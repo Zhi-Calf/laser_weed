@@ -60,7 +60,7 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker
 | `velocity_planner` | 直接在 E1R 点云坐标系中执行前向矩形 ROI 判定并发布避停状态 |
 | `rslidar_sdk` | 速腾 E1R 激光雷达 ROS 2 驱动；解析 UDP 数据包并发布 `PointCloud2` |
 | `rslidar_msg` | 速腾激光雷达原始 `RslidarPacket` 消息，供驱动录制/回放 packet 使用 |
-| `sim_vehicle` | 无硬件仿真：模拟 RTK、车辆运动学、工作模式，并可一键启动完整链路 |
+| `sim_vehicle` | 无硬件四轮转向仿真：模拟 RTK、四轮转角/轮速、底盘状态和工作模式，并可一键启动完整链路 |
 
 ## 路径消息
 
@@ -85,7 +85,8 @@ uint8[] waypoint_types
 首次接收有效路径后，后续重发只刷新路径心跳；只有 `/work_mode` 实际变化
 才会重新接收路径。
 
-规划器使用 `~/path_points` 等 Marker 话题在 RViz 中显示路径。
+规划器使用 `~/work_points`（绿色）和 `~/turn_points`（橙色）分别显示
+WORK/TURN 路径点，并保留 `~/path_points` 兼容旧订阅。
 `gnss_driver` 同时发布标准 `/gnss_driver/pose_stamped`
 （`geometry_msgs/msg/PoseStamped`，Best Effort）供 RViz 显示姿态；
 自定义位姿消息仍是控制链路的主接口。
