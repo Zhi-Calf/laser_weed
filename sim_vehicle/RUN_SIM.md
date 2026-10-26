@@ -10,6 +10,7 @@ global_path_planner（YAML poly 首个顶点为原点）──/path──► pat
 ```
 
 `sim_vehicle` 同时扮演三个角色：GNSS 定位、四轮转向车辆运动学和工作模式管理。
+`sim_vehicle` 和 `sim_orchestrator` 均使用 C++20 实现。
 `global_path_planner` 启动时直接从 YAML 读取田块和几何参数，不再需要
 `set_source` 服务。
 
@@ -20,6 +21,9 @@ global_path_planner（YAML poly 首个顶点为原点）──/path──► pat
 | `wheelbase` | `1.521 m` | 前后轴距，同时传给 `path_tracker` |
 | `wheel_track` | `1.306 m` | 左右轮中心距 |
 | `wheel_radius` | `0.29 m` | 车轮半径 |
+| `vehicle_length` | `1.8 m` | 车体本体长度，不含车轮外伸部分 |
+| `vehicle_width` | `1.2 m` | 车体本体宽度，不含车轮外伸部分 |
+| `vehicle_height` | `0.5 m` | 车体本体高度 |
 | `max_plant_steer_deg` | `90°` | 单轮最大转向角 |
 | `cmd_timeout_s` | `0.3 s` | 指令超时停车，与 `weeder_base` 一致 |
 
@@ -30,7 +34,7 @@ global_path_planner（YAML poly 首个顶点为原点）──/path──► pat
 四轮运动学单元测试：
 
 ```bash
-colcon test --packages-select sim_vehicle --python-testing pytest
+colcon test --packages-select sim_vehicle
 colcon test-result --test-result-base build/sim_vehicle --verbose
 ```
 
@@ -164,7 +168,7 @@ ros2 topic pub --once /sim/unmanned std_msgs/msg/Bool "{data: true}"
 | WORK 作业段（绿色） | `/global_path_planner/work_points` |
 | TURN 掉头段（橙色） | `/global_path_planner/turn_points` |
 | 原始完整路径点 | `/global_path_planner/path_points` |
-| 仿真车 | `/sim_vehicle/marker` |
+| 仿真车（车体、黄色车头、四个转向轮） | RViz 显示：`/sim_vehicle/marker`；数据：`/sim_vehicle/marker_array` |
 | 跟踪目标点 | `/path_tracker/target_point` |
 | 四轮转角与轮速 | `/chassis/state` |
 
@@ -180,7 +184,7 @@ ros2 topic pub --once /sim/unmanned std_msgs/msg/Bool "{data: true}"
 | 控制器接管 | 日志从“未使能/等待路径”变为跟踪输出 |
 | 转向收敛 | `steer_angle_rad` 从初始偏差逐渐减小 |
 | 车在动 | `ros2 run tf2_ros tf2_echo odom base_link` 坐标持续变化 |
-| 跟踪正常 | RViz 中绿箭头贴合路径，橙球随车前进 |
+| 跟踪正常 | RViz 中绿色车体贴合路径，橙球随车前进 |
 
 ## 七、常见问题
 

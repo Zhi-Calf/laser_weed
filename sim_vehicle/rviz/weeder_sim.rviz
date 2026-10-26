@@ -149,7 +149,7 @@ Visualization Manager:
         Value: /global_path_planner/turn_points
       Value: true
 
-    # ---- 仿真车（绿色箭头，箭头方向 = 车头朝向）----
+    # ---- 仿真车（订阅配套的 /sim_vehicle/marker_array）----
     - Class: rviz_default_plugins/Marker
       Enabled: true
       Name: 仿真车

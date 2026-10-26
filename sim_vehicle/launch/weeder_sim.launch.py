@@ -45,6 +45,12 @@ def generate_launch_description():
         LaunchConfiguration('wheel_track'), value_type=float)
     wheel_radius = ParameterValue(
         LaunchConfiguration('wheel_radius'), value_type=float)
+    vehicle_length = ParameterValue(
+        LaunchConfiguration('vehicle_length'), value_type=float)
+    vehicle_width = ParameterValue(
+        LaunchConfiguration('vehicle_width'), value_type=float)
+    vehicle_height = ParameterValue(
+        LaunchConfiguration('vehicle_height'), value_type=float)
     max_plant_steer = ParameterValue(
         LaunchConfiguration('max_plant_steer_deg'), value_type=float)
     cmd_timeout = ParameterValue(
@@ -75,6 +81,15 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'wheel_radius', default_value='0.29',
             description='Isaac 底盘车轮半径(m)'),
+        DeclareLaunchArgument(
+            'vehicle_length', default_value='1.8',
+            description='Isaac 车体长度(m)'),
+        DeclareLaunchArgument(
+            'vehicle_width', default_value='1.2',
+            description='Isaac 车体宽度(m)'),
+        DeclareLaunchArgument(
+            'vehicle_height', default_value='0.5',
+            description='Isaac 车体高度(m)'),
         DeclareLaunchArgument(
             'ridge_width', default_value='2.5',
             description='垄宽/行距(m)，决定弓字形行距与地头掉头半径(=垄宽/2)'),
@@ -113,6 +128,9 @@ def generate_launch_description():
                 'wheelbase': wheelbase,
                 'wheel_track': wheel_track,
                 'wheel_radius_m': wheel_radius,
+                'vehicle_length_m': vehicle_length,
+                'vehicle_width_m': vehicle_width,
+                'vehicle_height_m': vehicle_height,
                 'max_plant_steer_deg': max_plant_steer,
                 'cmd_timeout_s': cmd_timeout,
                 'align_to_path_start': True,
