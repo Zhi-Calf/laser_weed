@@ -4,8 +4,8 @@
 `/crop_row/observation`（`weeder_msgs/CropRowObservation`）。
 本包没有底盘指令发布者，不修改工作模式、GNSS 或全局路径。
 可选只读订阅已有 `/gnss_driver/pose`，按图像时间匹配姿态；可只检查静态 BEV 的
-有效范围，也可通过 SDK 0.2 逐帧重算动态 BEV。动态代码已加入，最终 SDK/ROS 重跑
-因 MyUbuntu 连接中断尚未完成；默认关闭，不代表现场补偿已验收。配置与失效规则见
+有效范围，也可通过 SDK 0.2 逐帧重算动态 BEV。迁入后 SDK/ROS 测试已重跑通过；
+默认关闭，合成/契约测试不代表现场补偿已验收。配置与失效规则见
 [INTEGRATION.md](INTEGRATION.md)。
 
 ### 2026-10-26：已有定位姿态门控验证（动态扩展前）
@@ -32,10 +32,10 @@
 
 ## 仓库与依赖
 
-整车接入代码保存在本仓库；训练、模型转换、标定工具和算法实现在独立 `rk` 仓库。
-不使用源码复制或 Git submodule。版本记录在 `dependencies/row_nav.lock.json`。
-当前算法仓库没有配置 Git remote，清单中的 `source_url` 明确为空；在真实地址确定前，
-使用同级 `../rk` 或 SDK 发布包，不提供虚假的自动下载入口。
+运行算法源码在本仓库 `row_nav_sdk/`，不再要求同级 `../rk` 或预先准备 SDK 安装包。
+训练、模型转换、数据及实验资料继续留在 `rk`；运行算法不在两边重复维护。
+本仓库 Git 提交统一记录 SDK 和适配层版本，导入基线见 `dependencies/row_nav.lock.json`
+和 `row_nav_sdk/migration-origin.json`，不使用 Git submodule。
 
 SDK 需提供 `include/rk_row_nav.h`、动态库和 `lib/cmake/RowNav/RowNavConfig.cmake`。
 通过 `find_package(RowNav 0.2 CONFIG)`、`RowNav::rk_row_nav` 链接。
@@ -43,16 +43,17 @@ SDK 需提供 `include/rk_row_nav.h`、动态库和 `lib/cmake/RowNav/RowNavConf
 开发机使用 x86_64/ONNX SDK，RK 板使用 ARM64/RKNN SDK；二者不可混用。
 模型必须匹配 SDK 的 Rockchip YOLOv8-seg 解码器，不保证任意 Ultralytics 导出可用。
 
-SDK 从固定提交、干净工作树构建，并通过算法仓库的 `scripts/package_sdk.py` 打包。
-该包应含 `package-info.json` 和 `SHA256SUMS`。构建入口检查提交号、工作树和文件校验：
+统一入口从本仓库源码构建 SDK、消息包和感知模块，并运行对应测试：
 
 ```bash
 source /opt/ros/humble/setup.bash
-bash scripts/build_crop_row.sh /absolute/path/to/row-nav-sdk
-source install/crop-row/setup.bash
+bash scripts/build_crop_row.sh
+source install/crop-row-source/setup.bash
 ```
 
-此脚本只构建 `weeder_msgs` 和 `crop_row_perception`，不会启动任何节点。
+此脚本只构建 `row_nav_sdk`、`weeder_msgs` 和 `crop_row_perception`，不会启动任何节点。
+SDK 本身不依赖 ROS，可用普通 CMake 独立编译；详见 `../row_nav_sdk/README.md`。
+首次使用需安装 OpenCV 开发包，不只是 Python OpenCV 或运行库。
 动态库依赖由平台提供；运行前检查 SDK 的 `ldd` 没有 `not found`。
 构建会在安装模块的 RPATH 中保留独立 SDK 的库路径，因此该 SDK 前缀需持续存在。
 若部署时更换 SDK 安装位置，应重新构建，或明确配置新的库搜索路径，
