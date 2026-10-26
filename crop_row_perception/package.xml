@@ -10,6 +10,7 @@
   <depend>rcl_interfaces</depend>
   <depend>sensor_msgs</depend>
   <depend>weeder_msgs</depend>
+  <depend>row_nav_sdk</depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>launch_ros</exec_depend>

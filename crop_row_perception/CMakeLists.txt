@@ -18,7 +18,7 @@ if(CROP_ROW_TEST_ONLY)
   find_path(ROW_NAV_HEADER_DIR rk_row_nav.h REQUIRED)
   set(SDK_INCLUDE_DIRS ${ROW_NAV_HEADER_DIR})
 else()
-  # Install the independent SDK first; pass its prefix via CMAKE_PREFIX_PATH.
+  # colcon builds the in-repository plain-CMake row_nav_sdk dependency first.
   find_package(RowNav 0.2 REQUIRED CONFIG)
   set(SDK_INCLUDE_DIRS $<TARGET_PROPERTY:RowNav::rk_row_nav,INTERFACE_INCLUDE_DIRECTORIES>)
 endif()
