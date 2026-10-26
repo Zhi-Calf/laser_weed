@@ -15,8 +15,11 @@ crop_row_perception:
     detection_confidence: 0.25
     navigation_confidence: 0.35
     max_frame_age_ms: 250.0
+    # Must match dynamic_bev.enabled in the SDK BEV YAML (requires SDK >= 0.2).
+    dynamic_bev:
+      enabled: false
     # Optional read-only input from the existing GIAVP navigation driver.
-    # A validity gate for STATIC BEV, NOT dynamic attitude compensation.
+    # Required for dynamic mode too: validates/snapshots the pose for each image.
     attitude_gate:
       enabled: false
       pose_topic: /gnss_driver/pose
@@ -28,6 +31,7 @@ crop_row_perception:
       reference_roll_rad: 0.0
       reference_pitch_rad: 0.0
       # Example limits only; require field validation, not an accuracy guarantee.
+      # Dynamic mode can use a verified wider envelope (up to 0.175 rad delta).
       max_delta_rad: 0.035
       max_sample_age_ms: 50.0
     replay: false

@@ -48,5 +48,21 @@ int main() {
   bool failed = false;
   try {RowNavSdk sdk(config);} catch (const std::runtime_error &) {failed = true;}
   CHECK(failed);
+  config.model_path = "fake"; config.bev_path = "dynamic-fake";
+  {
+    RowNavSdk sdk(config); CHECK(sdk.dynamicBevEnabled());
+    rk_row_nav_frame_t frame; rk_row_nav_frame_init(&frame);
+    uint8_t pixel = 0; frame.data = &pixel; frame.capture_time_ns = rk_row_nav_now_ns();
+    rk_row_nav_attitude_t pose; rk_row_nav_attitude_init(&pose);
+    pose.valid = 1; pose.sample_time_ns = frame.capture_time_ns-1000000;
+    pose.roll_rad = .02; pose.pitch_rad = -.01;
+    rk_row_nav_result_t result;
+    CHECK(sdk.process(frame, result) == RK_ROW_NAV_INVALID_ARGUMENT);  // no static fallback
+    CHECK(sdk.process(frame, pose, result) == 0 && usable(result));
+    CHECK(std::abs(result.lateral_error_m-.14)<1e-12);
+    CHECK(std::abs(result.heading_error_rad+.04)<1e-12);
+    pose.sample_time_ns = frame.capture_time_ns+1;
+    CHECK(sdk.process(frame, pose, result) == RK_ROW_NAV_INVALID_ARGUMENT && !usable(result));
+  }
   std::cout << "clock/queue/SDK lifecycle/error/NaN/sign contracts passed\n";
 }

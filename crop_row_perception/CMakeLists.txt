@@ -19,7 +19,7 @@ if(CROP_ROW_TEST_ONLY)
   set(SDK_INCLUDE_DIRS ${ROW_NAV_HEADER_DIR})
 else()
   # Install the independent SDK first; pass its prefix via CMAKE_PREFIX_PATH.
-  find_package(RowNav 0.1 REQUIRED CONFIG)
+  find_package(RowNav 0.2 REQUIRED CONFIG)
   set(SDK_INCLUDE_DIRS $<TARGET_PROPERTY:RowNav::rk_row_nav,INTERFACE_INCLUDE_DIRECTORIES>)
 endif()
 

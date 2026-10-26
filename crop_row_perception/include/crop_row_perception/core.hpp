@@ -14,6 +14,7 @@
 namespace crop_row_perception
 {
 static_assert(RK_ROW_NAV_ABI_VERSION == 1, "Review adapter before upgrading SDK ABI");
+static_assert(RK_ROW_NAV_HAS_DYNAMIC_BEV == 1, "RowNav >= 0.2 required");
 // ROS capture stamps may only be mapped when producer and consumer share the
 // same ROS clock. A clock discontinuity latches a fault until node restart.
 class FrameClockMapper
@@ -103,6 +104,13 @@ public:
   int32_t process(const rk_row_nav_frame_t & frame, rk_row_nav_result_t & result) {
     rk_row_nav_result_init(&result);
     return rk_row_nav_process(handle_, &frame, &result);
+  }
+  bool dynamicBevEnabled() const {return rk_row_nav_dynamic_bev_enabled(handle_) == 1;}
+  int32_t process(const rk_row_nav_frame_t & frame, const rk_row_nav_attitude_t & attitude,
+    rk_row_nav_result_t & result)
+  {
+    rk_row_nav_result_init(&result);
+    return rk_row_nav_process_with_attitude(handle_, &frame, &attitude, &result);
   }
 private:
   rk_row_nav_handle_t handle_{nullptr};

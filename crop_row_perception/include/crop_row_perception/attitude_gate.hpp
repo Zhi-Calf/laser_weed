@@ -10,8 +10,9 @@
 
 namespace crop_row_perception
 {
-// A validity gate for a STATIC calibrated BEV, not an attitude estimator or
-// dynamic homography correction. Samples are already in vehicle ROS axes.
+// Shared pose validity/time/envelope checks for static and dynamic BEV modes.
+// This class itself performs no estimation or geometry correction.
+// Samples are already in vehicle ROS axes.
 struct AttitudeGateConfig {
   double reference_roll_rad{0}, reference_pitch_rad{0};
   double max_delta_rad{0.035}, max_sample_age_ms{50};
@@ -24,6 +25,8 @@ struct AttitudeSample {
 struct AttitudeDecision {
   bool usable{false};
   double age_ms{0}, roll_delta_rad{0}, pitch_delta_rad{0};
+  int64_t sample_stamp_ns{0};
+  double roll_rad{0}, pitch_rad{0};
   std::string reason;
 };
 
@@ -72,6 +75,8 @@ public:
     for (auto it = samples_.rbegin(); it != samples_.rend(); ++it) {
       if (it->stamp_ns > image_stamp_ns) {continue;}
       out.age_ms = static_cast<double>(image_stamp_ns - it->stamp_ns) / 1e6;
+      out.sample_stamp_ns = it->stamp_ns;
+      out.roll_rad = it->roll_rad; out.pitch_rad = it->pitch_rad;
       if (out.age_ms > config_.max_sample_age_ms) {
         out.reason = "attitude sample too old for image"; return out;
       }

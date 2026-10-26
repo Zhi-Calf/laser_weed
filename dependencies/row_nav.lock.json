@@ -1,10 +1,10 @@
 {
   "name": "RowNav",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "abi_version": 1,
-  "source_commit": "1cf533d911a7fbca3525eb627f1e7f24f63b089e",
+  "source_commit": "12692314930a3297dc336c42d802eb473e56dcf8",
   "source_url": null,
   "development_source": "../rk",
   "delivery": "Independent SDK install prefix; SDK repository currently has no Git remote configured. Set the real remote before adding automated source fetching.",
-  "target": "Build separate x86_64/ONNX and aarch64/RKNN packages; runtime hardware acceptance pending."
+  "target": "SDK 0.2 dynamic BEV development source; final SDK/ROS tests interrupted by MyUbuntu FRP disconnect. Rebuild and verify separate x86_64/ONNX and aarch64/RKNN packages before deployment; runtime hardware acceptance pending."
 }

@@ -20,6 +20,7 @@ class ObserverNode::Impl
     Image::ConstSharedPtr image;
     uint64_t capture_ns, sequence;
     std::string attitude_detail;
+    std::optional<rk_row_nav_attitude_t> attitude;
   };
 public:
   explicit Impl(ObserverNode & node) : node_(node) {
@@ -43,6 +44,10 @@ public:
     const auto detection = node_.declare_parameter<double>("detection_confidence", 0.25);
     const auto navigation = node_.declare_parameter<double>("navigation_confidence", 0.35);
     const bool attitude_enabled = node_.declare_parameter<bool>("attitude_gate.enabled", false);
+    dynamic_bev_ = node_.declare_parameter<bool>("dynamic_bev.enabled", false);
+    if (dynamic_bev_ && !attitude_enabled) {
+      throw std::invalid_argument("dynamic BEV requires attitude_gate.enabled");
+    }
     const auto pose_topic = node_.declare_parameter<std::string>(
       "attitude_gate.pose_topic", "/gnss_driver/pose");
     pose_frame_ = node_.declare_parameter<std::string>("attitude_gate.pose_frame", "odom");
@@ -87,6 +92,9 @@ public:
     config.minimum_navigation_confidence = static_cast<float>(navigation);
     config.max_frame_age_ms = max_age_ms_;
     sdk_ = std::make_unique<RowNavSdk>(config);
+    if (sdk_->dynamicBevEnabled() != dynamic_bev_) {
+      throw std::invalid_argument("dynamic BEV mode must match accepted SDK BEV calibration");
+    }
     session_ = std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) +
       "-" + std::to_string(rk_row_nav_now_ns());
     // Volatile QoS: late subscribers must never inherit a cached VALID result.
@@ -168,6 +176,7 @@ private:
     }
     last_stamp_ = stamp;
     std::string attitude_detail;
+    std::optional<rk_row_nav_attitude_t> attitude;
     if (attitude_gate_) {
       const auto decision = attitude_gate_->at(stamp);
       const auto publishers = pose_sub_->get_publisher_count();
@@ -179,8 +188,21 @@ private:
       attitude_detail = decision.reason + "; age_ms=" + std::to_string(decision.age_ms) +
         "; roll_delta_rad=" + std::to_string(decision.roll_delta_rad) +
         "; pitch_delta_rad=" + std::to_string(decision.pitch_delta_rad);
+      if (dynamic_bev_) {
+        const auto delta_ns = static_cast<uint64_t>(stamp-decision.sample_stamp_ns);
+        if (delta_ns >= *mapped) {
+          reject(seq, *image, "attitude cannot map to local monotonic clock"); return;
+        }
+        rk_row_nav_attitude_t sample;
+        rk_row_nav_attitude_init(&sample);
+        sample.sample_time_ns = *mapped-delta_ns;
+        sample.roll_rad = decision.roll_rad; sample.pitch_rad = decision.pitch_rad; sample.valid = 1;
+        attitude = sample;
+        attitude_detail = "dynamic BEV attitude applied; age_ms=" + std::to_string(decision.age_ms) +
+          "; roll_rad=" + std::to_string(sample.roll_rad) + "; pitch_rad=" + std::to_string(sample.pitch_rad);
+      }
     }
-    queue_.put(Pending{std::move(image), *mapped, seq, std::move(attitude_detail)});
+    queue_.put(Pending{std::move(image), *mapped, seq, std::move(attitude_detail), attitude});
   }
   void work() {
     while (auto pending = queue_.take()) {
@@ -193,7 +215,8 @@ private:
       frame.pixel_format = image.encoding == "bgr8" ? RK_ROW_NAV_BGR888 : RK_ROW_NAV_RGB888;
       frame.capture_time_ns = pending->capture_ns; frame.frame_id = pending->sequence;
       rk_row_nav_result_t result;
-      const auto code = sdk_->process(frame, result);
+      const auto code = pending->attitude ? sdk_->process(frame, *pending->attitude, result) :
+        sdk_->process(frame, result);
       auto msg = empty(Observation::SDK_ERROR,
         code == RK_ROW_NAV_OK ? pending->attitude_detail : rk_row_nav_get_last_error());
       msg.sdk_return_code = code;
@@ -275,6 +298,7 @@ private:
   int64_t last_stamp_{0};
   double max_age_ms_{250};
   bool replay_{false};
+  bool dynamic_bev_{false};
   bool has_result_{false};
   std::string expected_frame_, vehicle_frame_, calibration_id_, session_, pose_frame_;
   Observation last_result_;

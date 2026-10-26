@@ -3,11 +3,12 @@
 相机/回放 `sensor_msgs/Image` → 本包 → 独立 RowNav SDK →
 `/crop_row/observation`（`weeder_msgs/CropRowObservation`）。
 本包没有底盘指令发布者，不修改工作模式、GNSS 或全局路径。
-可选只读订阅已有 `/gnss_driver/pose`，按图像时间匹配姿态，限制静态 BEV 的
-有效使用范围；默认关闭，不代表动态姿态补偿已完成。配置与失效规则见
-[INTEGRATION.md](INTEGRATION.md#已有-gnss-姿态接入静态-bev-有效性门控)。
+可选只读订阅已有 `/gnss_driver/pose`，按图像时间匹配姿态；可只检查静态 BEV 的
+有效范围，也可通过 SDK 0.2 逐帧重算动态 BEV。动态代码已加入，最终 SDK/ROS 重跑
+因 MyUbuntu 连接中断尚未完成；默认关闭，不代表现场补偿已验收。配置与失效规则见
+[INTEGRATION.md](INTEGRATION.md)。
 
-### 2026-10-26：已有定位姿态接入验证
+### 2026-10-26：已有定位姿态门控验证（动态扩展前）
 
 - 增加独立 `AttitudeGate` 类与有界时间缓存；ROS 适配器只读订阅 `weeder_msgs/Pose`。
   SDK C ABI、定位驱动、TF 广播和车辆控制均未修改。
@@ -37,7 +38,8 @@
 使用同级 `../rk` 或 SDK 发布包，不提供虚假的自动下载入口。
 
 SDK 需提供 `include/rk_row_nav.h`、动态库和 `lib/cmake/RowNav/RowNavConfig.cmake`。
-通过 `find_package(RowNav 0.1 CONFIG)`、`RowNav::rk_row_nav` 链接。
+通过 `find_package(RowNav 0.2 CONFIG)`、`RowNav::rk_row_nav` 链接。
+0.2 新增逐帧姿态入口，既有 ABI v1 结构不变；不能混用新头文件与旧动态库。
 开发机使用 x86_64/ONNX SDK，RK 板使用 ARM64/RKNN SDK；二者不可混用。
 模型必须匹配 SDK 的 Rockchip YOLOv8-seg 解码器，不保证任意 Ultralytics 导出可用。
 

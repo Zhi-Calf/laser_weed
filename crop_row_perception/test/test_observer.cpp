@@ -19,15 +19,18 @@ class ObserverTest : public ::testing::Test
 {
 protected:
   virtual bool gateEnabled() const {return false;}
+  virtual bool dynamicEnabled() const {return false;}
   static void SetUpTestSuite() {rclcpp::init(0, nullptr);}
   static void TearDownTestSuite() {rclcpp::shutdown();}
   void SetUp() override {
     rclcpp::NodeOptions options;
     options.parameter_overrides({
-      {"model_path", "fake"}, {"intrinsic_path", "fake"}, {"bev_path", "fake"},
+      {"model_path", "fake"}, {"intrinsic_path", "fake"},
+      {"bev_path", dynamicEnabled() ? "dynamic-fake" : "fake"},
       {"calibration_id", "test-only"}, {"max_frame_age_ms", 200.0},
       {"image_topic", "/crop_row_test/image"},
       {"attitude_gate.enabled", gateEnabled()},
+      {"dynamic_bev.enabled", dynamicEnabled()},
       {"attitude_gate.pose_topic", "/crop_row_test/pose"},
       {"attitude_gate.reference_measured", true},
       {"attitude_gate.vehicle_axes_confirmed", true},
@@ -190,12 +193,12 @@ protected:
     ASSERT_TRUE(wait([this] {return pose_pub->get_subscription_count() == 1;}));
   }
   void poseFor(const Image & image, bool valid = true, double roll = 0,
-    int64_t offset_ns = -1000000, const std::string & frame = "odom")
+    int64_t offset_ns = -1000000, const std::string & frame = "odom", double pitch = 0)
   {
     weeder_msgs::msg::Pose pose;
     pose.header.stamp = rclcpp::Time(image.header.stamp) +
       rclcpp::Duration(std::chrono::nanoseconds(offset_ns));
-    pose.header.frame_id = frame; pose.valid = valid; pose.roll = roll;
+    pose.header.frame_id = frame; pose.valid = valid; pose.roll = roll; pose.pitch = pitch;
     pose_pub->publish(pose);
     wait([] {return false;}, 30ms);  // deliver pose before image; no callback ordering assumptions
   }
@@ -233,10 +236,48 @@ TEST_F(AttitudeObserverTest, InvalidStaleTiltAndWrongFrameNeverPublishValid) {
   }
 }
 
+class DynamicObserverTest : public AttitudeObserverTest
+{
+protected:
+  bool dynamicEnabled() const override {return true;}
+};
+
+TEST_F(DynamicObserverTest, MatchedPoseReachesSdkWithMappedMonotonicTime) {
+  for (double roll : {-0.02,0.02}) {
+    messages.clear(); const auto input = image();
+    poseFor(input,true,roll,-1000000,"odom",-0.01); pub->publish(input);
+    ASSERT_TRUE(wait([this] {return has(Observation::VALID);}));
+    const auto & msg = *std::find_if(messages.begin(), messages.end(), [](const auto & m) {
+      return m.status == Observation::VALID;
+    });
+    EXPECT_DOUBLE_EQ(msg.lateral_error_m,0.12+roll);
+    EXPECT_DOUBLE_EQ(msg.heading_error_rad,-0.04);
+    EXPECT_NE(msg.detail.find("dynamic BEV attitude applied"),std::string::npos);
+    EXPECT_EQ(msg.header.stamp,input.header.stamp);
+  }
+}
+
+TEST_F(DynamicObserverTest, MissingPoseNeverFallsBackToStaticSdk) {
+  pub->publish(image());
+  ASSERT_TRUE(wait([this] {return has(Observation::INVALID_INPUT);}));
+  EXPECT_FALSE(has(Observation::VALID));
+}
+
 TEST(AttitudeConfigTest, EnablingWithoutMeasuredReferenceFailsBeforeSdkCreation) {
   rclcpp::init(0, nullptr);
   rclcpp::NodeOptions options;
   options.parameter_overrides({{"attitude_gate.enabled", true}});
   EXPECT_THROW(std::make_shared<crop_row_perception::ObserverNode>(options), std::invalid_argument);
+  rclcpp::shutdown();
+}
+
+TEST(AttitudeConfigTest, DynamicModeMismatchAndMissingGateRejectStartup) {
+  rclcpp::init(0,nullptr);
+  rclcpp::NodeOptions options;
+  options.parameter_overrides({{"dynamic_bev.enabled",true}});
+  EXPECT_THROW(std::make_shared<crop_row_perception::ObserverNode>(options),std::invalid_argument);
+  options.parameter_overrides({{"model_path","fake"},{"intrinsic_path","fake"},
+    {"bev_path","dynamic-fake"},{"calibration_id","fake"}});
+  EXPECT_THROW(std::make_shared<crop_row_perception::ObserverNode>(options),std::invalid_argument);
   rclcpp::shutdown();
 }
