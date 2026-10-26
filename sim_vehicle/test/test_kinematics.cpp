@@ -40,6 +40,16 @@ TEST(KinematicsTest, GeometryMatchesIsaacStage) {
   ExpectNear(kVehicleHeightM, 0.5);
 }
 
+// 验证可视化轮位始终以车体几何中心为原点。
+TEST(KinematicsTest, CenteredWheelPositionsDoNotChangeWithMode) {
+  const auto positions =
+    ComputeCenteredWheelPositions(kWheelbaseM, kWheelTrackM);
+  ExpectNear(positions[FrontLeft].x_m, kWheelbaseM * 0.5);
+  ExpectNear(positions[RearLeft].x_m, -kWheelbaseM * 0.5);
+  ExpectNear(positions[FrontLeft].y_m, kWheelTrackM * 0.5);
+  ExpectNear(positions[FrontRight].y_m, -kWheelTrackM * 0.5);
+}
+
 // 验证两种转向模式使用不同的底盘参考点。
 TEST(KinematicsTest, WheelPositionsFollowReferencePoint) {
   const auto rear_reference = ComputeWheelPositions(0);

@@ -25,6 +25,7 @@ LQRConfig makeConfig(double wheelbase = 1.2)
   LQRConfig config;
   config.wheelbase = wheelbase;
   config.max_steer_rad = 90.0 * M_PI / 180.0;
+  config.pose_at_vehicle_center = false;  // 既有测试使用后轴中心
   return config;
 }
 
@@ -72,6 +73,51 @@ std::vector<TrajectoryPoint> straightLine(double length = 20.0, double step = 0.
 // ---------------------------------------------------------------------------
 // 前馈：与差速驱动模型的核心差异。
 // ---------------------------------------------------------------------------
+
+// 单阿克曼下自动换算到后轴；双阿克曼保持中心。
+TEST(LqrReferencePoint, AutoSelectsPoseReferenceBySteerMode)
+{
+  constexpr double kWheelbase = 1.2;
+  constexpr double kTargetY = 5.0;
+  constexpr double kCenterX = 0.2;
+
+  auto build_path = [](uint8_t waypoint_type) {
+    std::vector<TrajectoryPoint> pts;
+    for (int i = 0; i <= 100; ++i) {
+      TrajectoryPoint p;
+      p.x = 0.0;
+      p.y = 0.1 * static_cast<double>(i);
+      p.heading = M_PI / 2.0;
+      p.kappa = 0.0;
+      p.s = 0.1 * static_cast<double>(i);
+      p.waypoint_type = waypoint_type;
+      pts.push_back(p);
+    }
+    return pts;
+  };
+
+  LQRConfig config = makeConfig(kWheelbase);
+  config.pose_at_vehicle_center = true;
+  config.snap_forward_points = 100;
+  RobotState center_state;
+  center_state.x = kCenterX;
+  center_state.y = kTargetY;
+  center_state.heading = 0.0;
+  center_state.linear_v = 0.5;
+
+  LQR single_ackermann;
+  single_ackermann.Configure(config);
+  single_ackermann.SetTrajectory(build_path(0));
+  const auto single_output = RunControl(single_ackermann, center_state);
+  EXPECT_NEAR(
+    single_output.lateral_error, kWheelbase * 0.5 - kCenterX, 1e-9);
+
+  LQR symmetric_ackermann;
+  symmetric_ackermann.Configure(config);
+  symmetric_ackermann.SetTrajectory(build_path(1));
+  const auto symmetric_output = RunControl(symmetric_ackermann, center_state);
+  EXPECT_NEAR(symmetric_output.lateral_error, -kCenterX, 1e-9);
+}
 
 // 定曲率稳态前馈必须使用 atan(L*kappa)，不能在大转角时继续用 L*kappa。
 TEST(LqrFeedforward, OnConstantCurvatureUsesExactAckermannFeedforward)

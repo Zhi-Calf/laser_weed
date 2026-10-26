@@ -53,6 +53,21 @@ std::array<WheelPosition, kWheelCount> ComputeWheelPositions(
   }};
 }
 
+// 返回以车体几何中心为原点的四轮位置。
+std::array<WheelPosition, kWheelCount> ComputeCenteredWheelPositions(
+  double wheelbase_m, double wheel_track_m) {
+  wheelbase_m = std::max(wheelbase_m, kMinGeometryM);
+  wheel_track_m = std::max(wheel_track_m, kMinGeometryM);
+  const double half_wheelbase = wheelbase_m * 0.5;
+  const double half_track = wheel_track_m * 0.5;
+  return {{
+    {half_wheelbase, half_track},
+    {half_wheelbase, -half_track},
+    {-half_wheelbase, half_track},
+    {-half_wheelbase, -half_track},
+  }};
+}
+
 // 由统一速度与等效转角反解四轮转向角和轮速。
 FourWheelState ComputeFourWheelState(double speed_m_s, double steer_angle_rad,
                                      int steer_mode, double wheelbase_m,

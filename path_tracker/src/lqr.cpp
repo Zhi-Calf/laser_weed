@@ -48,6 +48,19 @@ void LQR::SetTrajectory(const std::vector<TrajectoryPoint>& points) {
   goal_             = path_[0];
 }
 
+// 将固定车体中心位姿转换为当前转向模型的控制参考点。
+RobotState LQR::ControlStateForMode(bool symmetric_ackermann) const {
+  RobotState control_state = robot_state_;
+  if (!config_.pose_at_vehicle_center || symmetric_ackermann) {
+    return control_state;
+  }
+
+  const double half_wheelbase = config_.wheelbase * 0.5;
+  control_state.x -= half_wheelbase * std::cos(control_state.heading);
+  control_state.y -= half_wheelbase * std::sin(control_state.heading);
+  return control_state;
+}
+
 // 更新最近点
 void LQR::UpdateTargetIndex() {
   const size_t search_start_idx = target_idx_;
@@ -198,12 +211,14 @@ bool LQR::ComputeCommand(const LQRInput& input, LQROutput& output) {
   }
 
   const bool symmetric_ackermann   = SelectSymmetricAckermann();
+  robot_state_                     = ControlStateForMode(symmetric_ackermann);
   const double effective_wheelbase = EffectiveWheelbase(config_.wheelbase, symmetric_ackermann);
   output                           = ComputeFeedbackControl(effective_wheelbase);
   output.steer_mode                = symmetric_ackermann ? 1 : 0;
   output.effective_wheelbase       = effective_wheelbase;
   output.target_index              = target_idx_;
-  output.distance_to_goal          = std::hypot(robot_state_.x - goal_.x, robot_state_.y - goal_.y);
+  output.distance_to_goal =
+    std::hypot(input.robot_state.x - goal_.x, input.robot_state.y - goal_.y);
   return true;
 }
 

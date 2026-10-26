@@ -58,6 +58,7 @@ struct LQRConfig {
   double turn_speed               = 0.3;      // TURN 段目标速度（米/秒）
   double turn_speed_preview_m     = 1.0;      // TURN 前预览距离（米）
   double turn_speed_hold_m        = 0.5;      // TURN 后低速保持距离（米）
+  bool pose_at_vehicle_center = true;  // 位姿参考点是否为车体中心
 };
 
 /// 运动学自行车（阿克曼）模型的离散 LQR。
@@ -90,6 +91,8 @@ private:
   bool HasTurnNear(double before_m, double after_m) const;
 
   bool SelectSymmetricAckermann();
+
+  RobotState ControlStateForMode(bool symmetric_ackermann) const;
 
   LQROutput ComputeFeedbackControl(double effective_wheelbase) const;
 

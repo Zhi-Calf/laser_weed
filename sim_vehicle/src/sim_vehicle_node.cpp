@@ -254,10 +254,18 @@ void SimVehicleNode::Tick() {
 
   speed_m_s_ = speed_cmd_m_s_;
   if (speed_m_s_ > kZeroSpeedMps) {
-    x_m_ += speed_m_s_ * std::cos(yaw_rad_) * dt_s_;
-    y_m_ += speed_m_s_ * std::sin(yaw_rad_) * dt_s_;
-    yaw_rad_ = WrapAngle(yaw_rad_ + speed_m_s_ / EffectiveWheelbase() *
-                                      std::tan(steer_cmd_rad_) * dt_s_);
+    const double yaw_rate =
+      speed_m_s_ / EffectiveWheelbase() * std::tan(steer_cmd_rad_);
+    double center_velocity_x = speed_m_s_ * std::cos(yaw_rad_);
+    double center_velocity_y = speed_m_s_ * std::sin(yaw_rad_);
+    if (steer_mode_ == 0) {
+      const double half_wheelbase = wheelbase_m_ * 0.5;
+      center_velocity_x -= half_wheelbase * yaw_rate * std::sin(yaw_rad_);
+      center_velocity_y += half_wheelbase * yaw_rate * std::cos(yaw_rad_);
+    }
+    x_m_ += center_velocity_x * dt_s_;
+    y_m_ += center_velocity_y * dt_s_;
+    yaw_rad_ = WrapAngle(yaw_rad_ + yaw_rate * dt_s_);
   }
   wheel_state_ = ComputeFourWheelState(speed_m_s_, steer_cmd_rad_, steer_mode_,
                                        wheelbase_m_, wheel_track_m_,
@@ -325,11 +333,9 @@ void SimVehicleNode::PublishMarker() {
 // 向 MarkerArray 添加绿色车体和黄色车头标识。
 void SimVehicleNode::AppendBodyMarkers(
   visualization_msgs::msg::MarkerArray& markers) {
-  const double body_center_x_m = steer_mode_ == 0 ? wheelbase_m_ * 0.5 : 0.0;
-
   auto body = CreateMarker(static_cast<int32_t>(kBodyMarkerId),
                            visualization_msgs::msg::Marker::CUBE);
-  const auto [body_x_m, body_y_m] = LocalToWorld(body_center_x_m, 0.0);
+  const auto [body_x_m, body_y_m] = LocalToWorld(0.0, 0.0);
   body.pose.position.x = body_x_m;
   body.pose.position.y = body_y_m;
   body.pose.position.z = wheel_radius_m_ + vehicle_height_m_ * 0.5;
@@ -346,7 +352,7 @@ void SimVehicleNode::AppendBodyMarkers(
   auto bumper =
     CreateMarker(kBumperMarkerId, visualization_msgs::msg::Marker::CUBE);
   const auto [bumper_x_m, bumper_y_m] =
-    LocalToWorld(body_center_x_m + vehicle_length_m_ * 0.5 - 0.05, 0.0);
+    LocalToWorld(vehicle_length_m_ * 0.5 - 0.05, 0.0);
   bumper.pose.position.x = bumper_x_m;
   bumper.pose.position.y = bumper_y_m;
   bumper.pose.position.z = body.pose.position.z + vehicle_height_m_ * 0.5;
@@ -365,7 +371,7 @@ void SimVehicleNode::AppendBodyMarkers(
 void SimVehicleNode::AppendWheelMarkers(
   visualization_msgs::msg::MarkerArray& markers) {
   const auto positions =
-    ComputeWheelPositions(steer_mode_, wheelbase_m_, wheel_track_m_);
+    ComputeCenteredWheelPositions(wheelbase_m_, wheel_track_m_);
   // 可视化时将车轮放到车体顶面之上，避免俯视遮挡。
   const double wheel_visual_z_m =
     wheel_radius_m_ + vehicle_height_m_ + wheel_radius_m_ * 0.05;

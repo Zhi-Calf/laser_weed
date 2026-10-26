@@ -51,6 +51,10 @@ path_tracker:
     lqr_Q_lateral: 50.0        # 横向误差权重
     lqr_Q_heading: 25.0        # 航向误差权重
     lqr_R_steer: 25.0          # 转向角控制代价
+    # GNSS 位姿固定为车体几何中心。
+    # 单阿克曼时自动换算到后轴；
+    # 双阿克曼仍使用车体中心。
+    pose_at_vehicle_center: true
     # 路径分段速度（米/秒），始终启用。
     work_speed_m_s: 0.6
     turn_speed_m_s: 0.3

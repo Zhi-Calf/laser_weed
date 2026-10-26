@@ -30,6 +30,8 @@ global_path_planner（YAML poly 首个顶点为原点）──/path──► pat
 `sim_vehicle` 根据 `steer_mode` 输出四个轮子的转角和轮速，并发布
 `/chassis/state`。当前只实现路径跟踪使用的 `steer_mode=0` 单阿克曼和
 `steer_mode=1` 对称阿克曼；`2/3` 因统一指令中缺少明确的横移/自转语义而停车。
+`/gnss_driver/pose`、TF 和车辆 Marker 始终使用车体几何中心；
+`path_tracker` 在单阿克曼模式下自动换算到后轴控制点。
 
 四轮运动学单元测试：
 

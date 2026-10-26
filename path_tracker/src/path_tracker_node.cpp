@@ -106,6 +106,8 @@ void PathTrackerNode::loadParameters() {
   const double lqr_q_lateral  = declare_parameter<double>("lqr_Q_lateral", 50.0);
   const double lqr_q_heading  = declare_parameter<double>("lqr_Q_heading", 25.0);
   const double lqr_r_steer    = declare_parameter<double>("lqr_R_steer", 25.0);
+  const bool pose_at_vehicle_center =
+    declare_parameter<bool>("pose_at_vehicle_center", true);
 
   LQRConfig lqr_config;
   lqr_config.dt                   = 1.0 / control_hz_;
@@ -123,6 +125,7 @@ void PathTrackerNode::loadParameters() {
   lqr_config.turn_speed           = turn_speed_;
   lqr_config.turn_speed_preview_m = turn_speed_preview_m_;
   lqr_config.turn_speed_hold_m    = turn_speed_hold_m_;
+  lqr_config.pose_at_vehicle_center = pose_at_vehicle_center;
   lqr_->Configure(lqr_config);
 
   SPDLOG_INFO(
@@ -165,13 +168,15 @@ void PathTrackerNode::loadParameters() {
     viz_);
   SPDLOG_INFO(
     "LQR 参数: dt={:.3f}s eps={:g} max_iter={} "
-    "Q_lateral={:.1f} Q_heading={:.1f} R_steer={:.1f}",
+    "Q_lateral={:.1f} Q_heading={:.1f} R_steer={:.1f} "
+    "pose_at_vehicle_center={}",
     lqr_config.dt,
     lqr_config.eps,
     lqr_config.max_iteration,
     lqr_config.q_lateral,
     lqr_config.q_heading,
-    lqr_config.r_steer);
+    lqr_config.r_steer,
+    pose_at_vehicle_center);
 }
 
 void PathTrackerNode::setupInterfaces() {

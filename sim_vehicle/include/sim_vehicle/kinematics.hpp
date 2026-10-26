@@ -41,6 +41,10 @@ std::array<WheelPosition, kWheelCount> ComputeWheelPositions(
   int steer_mode, double wheelbase_m = kWheelbaseM,
   double wheel_track_m = kWheelTrackM);
 
+std::array<WheelPosition, kWheelCount> ComputeCenteredWheelPositions(
+  double wheelbase_m = kWheelbaseM,
+  double wheel_track_m = kWheelTrackM);
+
 FourWheelState ComputeFourWheelState(double speed_m_s, double steer_angle_rad,
                                      int steer_mode,
                                      double wheelbase_m = kWheelbaseM,
