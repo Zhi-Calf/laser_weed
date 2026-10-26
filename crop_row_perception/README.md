@@ -2,7 +2,28 @@
 
 相机/回放 `sensor_msgs/Image` → 本包 → 独立 RowNav SDK →
 `/crop_row/observation`（`weeder_msgs/CropRowObservation`）。
-本包没有底盘指令发布者，也没有订阅/修改工作模式、GNSS 或全局路径。
+本包没有底盘指令发布者，不修改工作模式、GNSS 或全局路径。
+可选只读订阅已有 `/gnss_driver/pose`，按图像时间匹配姿态，限制静态 BEV 的
+有效使用范围；默认关闭，不代表动态姿态补偿已完成。配置与失效规则见
+[INTEGRATION.md](INTEGRATION.md#已有-gnss-姿态接入静态-bev-有效性门控)。
+
+### 2026-10-26：已有定位姿态接入验证
+
+- 增加独立 `AttitudeGate` 类与有界时间缓存；ROS 适配器只读订阅 `weeder_msgs/Pose`。
+  SDK C ABI、定位驱动、TF 广播和车辆控制均未修改。
+- macOS 上 `test_attitude_gate.cpp` 与原 `test_core.cpp` 经 ASan/UBSan 测试通过。
+  覆盖因果时间匹配、过期、无效姿态、roll/pitch 超限、NaN、源时间故障锁定、
+  缓存上限、参数检查以及原有队列/时钟/SDK 契约。
+- MyUbuntu 原隔离 Ubuntu 22.04 / ROS2 Humble 容器中，真实 SDK 链接的生产模块
+  和测试均重新编译通过；7 个 CTest 测试组通过，ROS 节点 GTest 共 11 个用例通过。
+  `colcon test-result` 汇总 18 项、0 errors、0 failures、0 skipped（包含组与内部用例，
+  不是 18 次实机推理）。新增 ROS 用例使用 fake SDK，验证缺姿态拒绝/恢复、
+  无效/过期/倾斜/帧名错误拒绝，以及未确认标定参考姿态不能启用。
+- 首次编译发现测试时间构造方法不兼容 Humble，改用 `std::chrono::nanoseconds`
+  后重跑通过。测试工作区仍为 `/tmp/laser-weed-crop-row.8uhjNA`，
+  容器 `laser-weed-crop-row-check-env`，不在宿主机全局安装 ROS。
+- 未验证真实相机与 GNSS 同步、实际安装轴、现场阈值或动态补偿效果。
+  功能默认关闭；只能在现场确认参考姿态及坐标轴后按配置启用。
 当前 `path_tracker` 尚未消费此消息，启动本包不会启用视觉转向。
 整车侧接入与职责说明见 [INTEGRATION.md](INTEGRATION.md)。
 只读观测记录工具 `record_observations.py` 可保存标准 JSONL，检查时间、序号、

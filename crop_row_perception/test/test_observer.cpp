@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <sensor_msgs/msg/image.hpp>
 #include <weeder_msgs/msg/crop_row_observation.hpp>
+#include <weeder_msgs/msg/pose.hpp>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -17,6 +18,7 @@ extern "C" bool fake_sdk_busy();
 class ObserverTest : public ::testing::Test
 {
 protected:
+  virtual bool gateEnabled() const {return false;}
   static void SetUpTestSuite() {rclcpp::init(0, nullptr);}
   static void TearDownTestSuite() {rclcpp::shutdown();}
   void SetUp() override {
@@ -25,6 +27,10 @@ protected:
       {"model_path", "fake"}, {"intrinsic_path", "fake"}, {"bev_path", "fake"},
       {"calibration_id", "test-only"}, {"max_frame_age_ms", 200.0},
       {"image_topic", "/crop_row_test/image"},
+      {"attitude_gate.enabled", gateEnabled()},
+      {"attitude_gate.pose_topic", "/crop_row_test/pose"},
+      {"attitude_gate.reference_measured", true},
+      {"attitude_gate.vehicle_axes_confirmed", true},
       {"observation_topic", "/crop_row_test/observation"}, {"replay", true}});
     observer = std::make_shared<crop_row_perception::ObserverNode>(options);
     client = std::make_shared<rclcpp::Node>("crop_row_test_client");
@@ -171,4 +177,66 @@ TEST_F(ObserverTest, RuntimeCalibrationOrClockChangesAreRejected) {
   EXPECT_EQ(observer->get_parameter("vehicle_frame").as_string(), "base_link");
   EXPECT_FALSE(observer->set_parameters_atomically({
     rclcpp::Parameter("use_sim_time", true)}).successful);
+}
+
+class AttitudeObserverTest : public ObserverTest
+{
+protected:
+  bool gateEnabled() const override {return true;}
+  void SetUp() override {
+    ObserverTest::SetUp();
+    pose_pub = client->create_publisher<weeder_msgs::msg::Pose>(
+      "/crop_row_test/pose", rclcpp::SensorDataQoS());
+    ASSERT_TRUE(wait([this] {return pose_pub->get_subscription_count() == 1;}));
+  }
+  void poseFor(const Image & image, bool valid = true, double roll = 0,
+    int64_t offset_ns = -1000000, const std::string & frame = "odom")
+  {
+    weeder_msgs::msg::Pose pose;
+    pose.header.stamp = rclcpp::Time(image.header.stamp) +
+      rclcpp::Duration(std::chrono::nanoseconds(offset_ns));
+    pose.header.frame_id = frame; pose.valid = valid; pose.roll = roll;
+    pose_pub->publish(pose);
+    wait([] {return false;}, 30ms);  // deliver pose before image; no callback ordering assumptions
+  }
+  rclcpp::Publisher<weeder_msgs::msg::Pose>::SharedPtr pose_pub;
+};
+
+TEST_F(AttitudeObserverTest, NoPoseRejectsAndFreshPoseRecovers) {
+  pub->publish(image());
+  ASSERT_TRUE(wait([this] {return has(Observation::INVALID_INPUT);}));
+  EXPECT_FALSE(has(Observation::VALID));
+  messages.clear();
+  const auto input = image(); poseFor(input); pub->publish(input);
+  ASSERT_TRUE(wait([this] {return has(Observation::VALID);}));
+  const auto & msg = *std::find_if(messages.begin(), messages.end(), [](const auto & m) {
+    return m.status == Observation::VALID;
+  });
+  EXPECT_NE(msg.detail.find("static BEV, no dynamic compensation"), std::string::npos);
+}
+
+TEST_F(AttitudeObserverTest, InvalidStaleTiltAndWrongFrameNeverPublishValid) {
+  for (int failure = 0; failure < 4; ++failure) {
+    messages.clear(); const auto input = image();
+    poseFor(input, failure != 0, failure == 2 ? 0.1 : 0.0,
+      failure == 1 ? -100000000 : -1000000, failure == 3 ? "wrong" : "odom");
+    pub->publish(input);
+    ASSERT_TRUE(wait([this, &input] {
+      return std::any_of(messages.begin(), messages.end(), [&input](const auto & msg) {
+        return msg.status == Observation::INVALID_INPUT && msg.header.stamp == input.header.stamp;
+      });
+    }));
+    EXPECT_FALSE(has(Observation::VALID));
+    EXPECT_TRUE(std::isnan(messages.back().lateral_error_m));
+    EXPECT_EQ(messages.back().confidence, 0);
+    wait([] {return false;}, 120ms);  // keep even stale test source stamps increasing
+  }
+}
+
+TEST(AttitudeConfigTest, EnablingWithoutMeasuredReferenceFailsBeforeSdkCreation) {
+  rclcpp::init(0, nullptr);
+  rclcpp::NodeOptions options;
+  options.parameter_overrides({{"attitude_gate.enabled", true}});
+  EXPECT_THROW(std::make_shared<crop_row_perception::ObserverNode>(options), std::invalid_argument);
+  rclcpp::shutdown();
 }

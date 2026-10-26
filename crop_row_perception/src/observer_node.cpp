@@ -1,8 +1,10 @@
 #include "crop_row_perception/observer_node.hpp"
 #include "crop_row_perception/core.hpp"
+#include "crop_row_perception/attitude_gate.hpp"
 #include <sensor_msgs/msg/image.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <weeder_msgs/msg/crop_row_observation.hpp>
+#include <weeder_msgs/msg/pose.hpp>
 #include <chrono>
 #include <limits>
 #include <thread>
@@ -17,6 +19,7 @@ class ObserverNode::Impl
   struct Pending {
     Image::ConstSharedPtr image;
     uint64_t capture_ns, sequence;
+    std::string attitude_detail;
   };
 public:
   explicit Impl(ObserverNode & node) : node_(node) {
@@ -39,6 +42,29 @@ public:
     const auto height = node_.declare_parameter<int>("model_height", 640);
     const auto detection = node_.declare_parameter<double>("detection_confidence", 0.25);
     const auto navigation = node_.declare_parameter<double>("navigation_confidence", 0.35);
+    const bool attitude_enabled = node_.declare_parameter<bool>("attitude_gate.enabled", false);
+    const auto pose_topic = node_.declare_parameter<std::string>(
+      "attitude_gate.pose_topic", "/gnss_driver/pose");
+    pose_frame_ = node_.declare_parameter<std::string>("attitude_gate.pose_frame", "odom");
+    const bool reference_measured = node_.declare_parameter<bool>(
+      "attitude_gate.reference_measured", false);
+    const bool axes_confirmed = node_.declare_parameter<bool>(
+      "attitude_gate.vehicle_axes_confirmed", false);
+    AttitudeGateConfig attitude_config;
+    attitude_config.reference_roll_rad = node_.declare_parameter<double>(
+      "attitude_gate.reference_roll_rad", 0.0);
+    attitude_config.reference_pitch_rad = node_.declare_parameter<double>(
+      "attitude_gate.reference_pitch_rad", 0.0);
+    attitude_config.max_delta_rad = node_.declare_parameter<double>(
+      "attitude_gate.max_delta_rad", 0.035);
+    attitude_config.max_sample_age_ms = node_.declare_parameter<double>(
+      "attitude_gate.max_sample_age_ms", 50.0);
+    if (attitude_enabled) {
+      if (!reference_measured || !axes_confirmed || pose_topic.empty() || pose_frame_.empty()) {
+        throw std::invalid_argument("attitude gate requires measured BEV reference attitude and confirmed vehicle axes");
+      }
+      attitude_gate_ = std::make_unique<AttitudeGate>(attitude_config);
+    }
     if (input.empty() || output.empty() || expected_frame_.empty() || vehicle_frame_.empty() ||
       calibration_id_.empty() || model.empty() || intrinsics.empty() || bev.empty() ||
       !std::isfinite(max_age_ms_) || max_age_ms_ <= 0 || max_age_ms_ > 5000 ||
@@ -65,6 +91,19 @@ public:
       "-" + std::to_string(rk_row_nav_now_ns());
     // Volatile QoS: late subscribers must never inherit a cached VALID result.
     pub_ = node_.create_publisher<Observation>(output, rclcpp::QoS(1).reliable().durability_volatile());
+    if (attitude_gate_) {
+      pose_sub_ = node_.create_subscription<weeder_msgs::msg::Pose>(
+        pose_topic, rclcpp::SensorDataQoS().keep_last(128),
+        [this](weeder_msgs::msg::Pose::ConstSharedPtr pose) {
+          const int64_t stamp = static_cast<int64_t>(pose->header.stamp.sec) * 1000000000LL +
+            pose->header.stamp.nanosec;
+          const bool valid = pose->valid && pose->header.frame_id == pose_frame_ &&
+            pose->header.stamp.nanosec < 1000000000u;
+          attitude_gate_->add({stamp, pose->roll, pose->pitch, valid}, node_.now().nanoseconds());
+        });
+    } else {
+      RCLCPP_WARN(node_.get_logger(), "Attitude gate disabled: static BEV has no tilt protection/compensation");
+    }
     sub_ = node_.create_subscription<Image>(input, rclcpp::SensorDataQoS().keep_last(1),
       [this](Image::ConstSharedPtr image) {receive(std::move(image));});
     timer_ = node_.create_wall_timer(std::chrono::milliseconds(50), [this] {watchdog();});
@@ -128,7 +167,20 @@ private:
       return;
     }
     last_stamp_ = stamp;
-    queue_.put(Pending{std::move(image), *mapped, seq});
+    std::string attitude_detail;
+    if (attitude_gate_) {
+      const auto decision = attitude_gate_->at(stamp);
+      const auto publishers = pose_sub_->get_publisher_count();
+      if (publishers != 1 || !decision.usable) {
+        reject(seq, *image, publishers != 1 ?
+          "attitude requires exactly one pose publisher" : decision.reason);
+        return;
+      }
+      attitude_detail = decision.reason + "; age_ms=" + std::to_string(decision.age_ms) +
+        "; roll_delta_rad=" + std::to_string(decision.roll_delta_rad) +
+        "; pitch_delta_rad=" + std::to_string(decision.pitch_delta_rad);
+    }
+    queue_.put(Pending{std::move(image), *mapped, seq, std::move(attitude_detail)});
   }
   void work() {
     while (auto pending = queue_.take()) {
@@ -142,7 +194,8 @@ private:
       frame.capture_time_ns = pending->capture_ns; frame.frame_id = pending->sequence;
       rk_row_nav_result_t result;
       const auto code = sdk_->process(frame, result);
-      auto msg = empty(Observation::SDK_ERROR, code == RK_ROW_NAV_OK ? "" : rk_row_nav_get_last_error());
+      auto msg = empty(Observation::SDK_ERROR,
+        code == RK_ROW_NAV_OK ? pending->attitude_detail : rk_row_nav_get_last_error());
       msg.sdk_return_code = code;
       msg.header.stamp = image.header.stamp;
       msg.has_capture_time = true;
@@ -213,6 +266,7 @@ private:
   }
   ObserverNode & node_;
   std::unique_ptr<RowNavSdk> sdk_;
+  std::unique_ptr<AttitudeGate> attitude_gate_;
   LatestFrameQueue<Pending> queue_;
   FrameClockMapper clock_;
   std::thread worker_;
@@ -222,10 +276,11 @@ private:
   double max_age_ms_{250};
   bool replay_{false};
   bool has_result_{false};
-  std::string expected_frame_, vehicle_frame_, calibration_id_, session_;
+  std::string expected_frame_, vehicle_frame_, calibration_id_, session_, pose_frame_;
   Observation last_result_;
   rclcpp::Publisher<Observation>::SharedPtr pub_;
   rclcpp::Subscription<Image>::SharedPtr sub_;
+  rclcpp::Subscription<weeder_msgs::msg::Pose>::SharedPtr pose_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameter_guard_;
 };

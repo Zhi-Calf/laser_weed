@@ -48,6 +48,10 @@ endif()
 
 if(BUILD_TESTING)
   enable_testing()
+  add_executable(test_crop_row_attitude test/test_attitude_gate.cpp)
+  target_include_directories(test_crop_row_attitude PRIVATE include)
+  target_link_libraries(test_crop_row_attitude Threads::Threads)
+  add_test(NAME crop_row_attitude COMMAND test_crop_row_attitude)
   add_executable(test_crop_row_core test/test_core.cpp test/fake_sdk.cpp)
   target_include_directories(test_crop_row_core PRIVATE include)
   # Headers only. The test backend must never enter the installed observer.

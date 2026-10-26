@@ -15,5 +15,20 @@ crop_row_perception:
     detection_confidence: 0.25
     navigation_confidence: 0.35
     max_frame_age_ms: 250.0
+    # Optional read-only input from the existing GIAVP navigation driver.
+    # A validity gate for STATIC BEV, NOT dynamic attitude compensation.
+    attitude_gate:
+      enabled: false
+      pose_topic: /gnss_driver/pose
+      pose_frame: odom
+      # Set true only after measuring roll/pitch during BEV calibration and
+      # verifying the GNSS orientation axes match vehicle_frame on this rig.
+      reference_measured: false
+      vehicle_axes_confirmed: false
+      reference_roll_rad: 0.0
+      reference_pitch_rad: 0.0
+      # Example limits only; require field validation, not an accuracy guarantee.
+      max_delta_rad: 0.035
+      max_sample_age_ms: 50.0
     replay: false
     use_sim_time: false
