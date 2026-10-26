@@ -1,0 +1,14 @@
+# SYNTHETIC TEST DATA ONLY - never use this file for vehicle navigation.
+image_u,image_v,forward_m,left_m,role
+100,700,0.99,2.20,fit
+540,700,0.99,-2.20,fit
+150,550,2.49,1.70,fit
+490,550,2.49,-1.70,fit
+200,400,3.99,1.20,fit
+440,400,3.99,-1.20,fit
+240,250,5.49,0.80,fit
+400,250,5.49,-0.80,fit
+320,650,1.49,0.00,check
+320,500,2.99,0.00,check
+280,350,4.49,0.40,check
+360,350,4.49,-0.40,check

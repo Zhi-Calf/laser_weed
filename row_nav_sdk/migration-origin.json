@@ -1,0 +1,305 @@
+{
+  "source_repository": "rk (local)",
+  "source_commit": "12692314930a3297dc336c42d802eb473e56dcf8",
+  "source_date": "2026-10-26",
+  "canonical_runtime_location": "laser_weed/row_nav_sdk",
+  "purpose": "Historical import audit, not a mutable-source build lock. All later runtime maintenance happens here.",
+  "files": [
+    {
+      "path": "include/rk_row_nav.h",
+      "sha256_at_import": "5be111edd62fd6d9fff1ea5ea0b9c96e15405453c9c12138e35d71568217d565"
+    },
+    {
+      "path": "include/rk_nav/calibration/camera_calibration.hpp",
+      "sha256_at_import": "fb947820e39f1f86bc39c40b33e11ae01facb16683dbcf815abd3e2f7e361e38"
+    },
+    {
+      "path": "include/rk_nav/core/frame.hpp",
+      "sha256_at_import": "161d758cce06e8fb432154a818a2443fa7ffc4d08785ce17c1efe399d4bde9d3"
+    },
+    {
+      "path": "include/rk_nav/core/result.hpp",
+      "sha256_at_import": "c83f162ee156ff2935159bf1c79cf78f22cae0585a70d605572e8aa30442948d"
+    },
+    {
+      "path": "include/rk_nav/core/row_tracking.hpp",
+      "sha256_at_import": "b50a518b64bcc433e80523f46bce191da3ff453d801608667bd7554f56af6ac5"
+    },
+    {
+      "path": "include/rk_nav/core/status.hpp",
+      "sha256_at_import": "0386e42907676db98aeef892daad5db1a00cac1fe35db431c31914c370c59c59"
+    },
+    {
+      "path": "include/rk_nav/geometry/bev_calibration.hpp",
+      "sha256_at_import": "b42bee4f204942ad5e846d420fdce31bea970359edf07f827d235cdd564f4c11"
+    },
+    {
+      "path": "include/rk_nav/geometry/bev_projector.hpp",
+      "sha256_at_import": "1190585f30871e643707fe0531173c500e2f5bcde54610c29a728bcc2656aef6"
+    },
+    {
+      "path": "include/rk_nav/geometry/centerline_fitter.hpp",
+      "sha256_at_import": "180aa632860595d9bacafeed0fcd8c25d6418765f0c33257eed5c6e9798a586d"
+    },
+    {
+      "path": "include/rk_nav/geometry/dynamic_bev.hpp",
+      "sha256_at_import": "357ef636c11f18055ee811dc72c91c15cca6ba48b993d619b9d4576b81bdfe3c"
+    },
+    {
+      "path": "include/rk_nav/inference/onnx_yolov8_segmenter.hpp",
+      "sha256_at_import": "b6ae9f795f703ea081ffedce376985da01c7eae3ce2c7ddf13562873bb018900"
+    },
+    {
+      "path": "include/rk_nav/inference/rknn_yolov8_segmenter.hpp",
+      "sha256_at_import": "91de72dff5981686c02844bbba94bb0d52778dbc077dd7987c061eedf7a33390"
+    },
+    {
+      "path": "include/rk_nav/inference/segmenter.hpp",
+      "sha256_at_import": "79d59858e9dc2d5b3d7693375d637843438ae05a131c94945775c0af354701ab"
+    },
+    {
+      "path": "include/rk_nav/inference/yolov8_seg_postprocess.hpp",
+      "sha256_at_import": "60575d2e240764ec318af162899e5fb54a08106547a5166dca8efd6b4e94d34f"
+    },
+    {
+      "path": "include/rk_nav/perception/multi_row.hpp",
+      "sha256_at_import": "412680a38cbbd4d3aab64856ab18df6a525c4830e701af7d855e9642f2859e74"
+    },
+    {
+      "path": "include/rk_nav/perception/row_extractor.hpp",
+      "sha256_at_import": "c06b51f03eeeef64a6ed30b00b7f75b47489df81c530bf8e8f86bcb822579038"
+    },
+    {
+      "path": "include/rk_nav/perception/row_temporal_tracker.hpp",
+      "sha256_at_import": "3c1005e92ac9ad29d52cec15b09189306e726a3828be6c0e695f0f4bdfef3550"
+    },
+    {
+      "path": "include/rk_nav/pipeline/perception_pipeline.hpp",
+      "sha256_at_import": "82e5975d65d74d1e932784a65b2d3e59b39acac41b7602a9092daea44c8f1cb6"
+    },
+    {
+      "path": "src/calibration/camera_calibration.cpp",
+      "sha256_at_import": "56675718fb9f9c41c9e9a087f3477b6b79fcece19b7bfed646258c3cf6d1d32d"
+    },
+    {
+      "path": "src/geometry/bev_calibration.cpp",
+      "sha256_at_import": "e38085d247d8ea347c4e80b59de59d57029098161b9f4f6427f0d174149ce4d8"
+    },
+    {
+      "path": "src/geometry/bev_projector.cpp",
+      "sha256_at_import": "1988ff1c3c3ab6ba9869efd534fd00c0cc83399860a85c2490885114b766c599"
+    },
+    {
+      "path": "src/geometry/centerline_fitter.cpp",
+      "sha256_at_import": "44736ba586b80c0912715104f4391992d15829b841ea3a4c6b3288b90bd16564"
+    },
+    {
+      "path": "src/geometry/dynamic_bev.cpp",
+      "sha256_at_import": "0d2a481bfb1477f66d99f7ae5324ceca6ddbd62af2a00e3763f021656be17fd6"
+    },
+    {
+      "path": "src/inference/onnx_yolov8_segmenter.cpp",
+      "sha256_at_import": "aa66f03ce6183659af5a8cc871760211576fd88bdb192de2253534cd141ca3b7"
+    },
+    {
+      "path": "src/inference/rknn_yolov8_segmenter.cpp",
+      "sha256_at_import": "3d2b7a47e189e1bc5addf5edc5a451f6998662c86301d88a3defc4c5ff3b98bd"
+    },
+    {
+      "path": "src/inference/yolov8_seg_postprocess.cpp",
+      "sha256_at_import": "2bc1318341b213cb0663648fd273316972819a37de34b0f6c525351da179d373"
+    },
+    {
+      "path": "src/perception/row_extractor.cpp",
+      "sha256_at_import": "13bf8ffa88be68c2af0a0e93661ff4303a2035c484a7c126bedbd9568481c064"
+    },
+    {
+      "path": "src/perception/row_candidate_extractor.cpp",
+      "sha256_at_import": "117abdc817ae1e2ca5858c8cbb838a54a1aa82bafffae50342664be906616449"
+    },
+    {
+      "path": "src/perception/multi_row_associator.cpp",
+      "sha256_at_import": "661f6adcab2565f7efaabbdfa7ba834722c6d1715fa0b2c5d84d627361ecde13"
+    },
+    {
+      "path": "src/perception/row_boundary_fitter.cpp",
+      "sha256_at_import": "99b179350212fd13f98796dcefc72974ef0ac69c6ef191fcd9bf2cfe6326cb2d"
+    },
+    {
+      "path": "src/perception/row_temporal_tracker.cpp",
+      "sha256_at_import": "4e35ca99878db1ba5c136eb108c90bc60fa2ee55ff2b4828774ab7e9451c19f1"
+    },
+    {
+      "path": "src/pipeline/perception_pipeline.cpp",
+      "sha256_at_import": "5755b8e7ac0418e9511ba3ac9495ce33a237d0f4ad21eaa2cd7e8afc4976f9eb"
+    },
+    {
+      "path": "src/pipeline/tracked_perception_pipeline.cpp",
+      "sha256_at_import": "c7c4383423595d176e2a66fe208395b7aee2e4b48d59df6bd33c69e78b53abf6"
+    },
+    {
+      "path": "src/sdk/rk_row_nav_c_api.cpp",
+      "sha256_at_import": "58a8cd7f77602d7abc995165d9c3d1275dbdffbea518ce6a07608fc653966b90"
+    },
+    {
+      "path": "tests/unit/bev_calibration_test.cpp",
+      "sha256_at_import": "1506731e756b825b2723ab9e88ddd8bd691e9c4ab5e6c1859bb5287c5a9fc9e0"
+    },
+    {
+      "path": "tests/unit/bev_projector_test.cpp",
+      "sha256_at_import": "52e297154b56469282f3a9a409e6c5333d4cdfaabf0ccb6d66e07db851b4df79"
+    },
+    {
+      "path": "tests/unit/camera_calibration_test.cpp",
+      "sha256_at_import": "0eaf9ffa97999940cfe5846dce3de983c25aec8609707d8b8a90dfa0f65486c0"
+    },
+    {
+      "path": "tests/unit/centerline_fitter_test.cpp",
+      "sha256_at_import": "8cb41d8943dd96084ca250d7555698532acb125f76ff23cb964d232b526897df"
+    },
+    {
+      "path": "tests/unit/dynamic_bev_test.cpp",
+      "sha256_at_import": "31f332eeb728e93f638daba915b588430625a2c14f33e8a3f3e2c7600b73a1b8"
+    },
+    {
+      "path": "tests/unit/multi_row_test.cpp",
+      "sha256_at_import": "15da361275e4f721d2240b2c804848a7950a2bd339a491674da6e2f8144050b6"
+    },
+    {
+      "path": "tests/unit/perception_pipeline_test.cpp",
+      "sha256_at_import": "c87d536403fa4232ad05f54e82d397924bf41ebae39b393604b39ada53b4eeeb"
+    },
+    {
+      "path": "tests/unit/row_extractor_test.cpp",
+      "sha256_at_import": "7a96fe730506d2f9a67c1e373d311840eb529576022239d8471173a52cb8da90"
+    },
+    {
+      "path": "tests/unit/row_temporal_tracker_test.cpp",
+      "sha256_at_import": "df3fd06636507603b835a54eb7c55a1d9a4cc6c2ddad6ca0ce8263c783b2f046"
+    },
+    {
+      "path": "tests/unit/status_test.cpp",
+      "sha256_at_import": "ab8183a3810049c02ecf8f187e7f5244d5e397a3adee8a6b46ab2aee8fc01d28"
+    },
+    {
+      "path": "tests/test_main.cpp",
+      "sha256_at_import": "85107af78c7c095ddb511c1ea5150e69e84df00a52ee0a966d3f5286d4fb9d85"
+    },
+    {
+      "path": "tests/test_framework.hpp",
+      "sha256_at_import": "d2080141c6f4bd5f196eca0d60e384e5acc02183adeb61e9ed76336258c13375"
+    },
+    {
+      "path": "tests/dynamic_bev_fixture.hpp",
+      "sha256_at_import": "eac7f0a2adda7002afbf94c3e06ee5ae46a4a22bc3cf884c08151fc2678f56ac"
+    },
+    {
+      "path": "tests/support/row_scenes.hpp",
+      "sha256_at_import": "ef9b03705f653f84909b43e6da6b95fd79921a4134918ed1019958562784d2e6"
+    },
+    {
+      "path": "tests/support/row_sequences.hpp",
+      "sha256_at_import": "48a5efc5e22e0a413d6d898a3b421712ec313a1080302d180d8e27173e5cc025"
+    },
+    {
+      "path": "tests/sdk/c_header_test.c",
+      "sha256_at_import": "98a6b103ebe58f761c079c53612218bf82b0a91b0ca6951f13815be3cd7e7f9e"
+    },
+    {
+      "path": "tests/sdk/contract_test.cpp",
+      "sha256_at_import": "3865f7156ace5278042f60b5aa78ae914c13712726ce39cc9c8023776b828542"
+    },
+    {
+      "path": "tests/sdk/dynamic_contract_test.cpp",
+      "sha256_at_import": "906dcc55397707fdf1f6184cf4d4b87376e42989efd1929749e2ea043e84fda4"
+    },
+    {
+      "path": "tests/sdk/fake_segmenter.cpp",
+      "sha256_at_import": "52b0632bee223b629132191bc5673c59ddf270590d7f3972473ba063e1c5d5ce"
+    },
+    {
+      "path": "tests/fixtures/bev_points_synthetic.csv",
+      "sha256_at_import": "63c6dab02a2a4921670db6b6847b8b9ac9b0de3bb353205109aed5ae97bd4315"
+    },
+    {
+      "path": "cmake/RowNavConfig.cmake.in",
+      "sha256_at_import": "467c464ca79c5e8e9fc52030057b000aefde71144a492ecb9d61e32131d59580"
+    },
+    {
+      "path": "cmake/sdk-build-info.txt.in",
+      "sha256_at_import": "5c09c0f559beb7e10edde618d61615dd065e49c47d5e6d449ae0cf168ca96c09"
+    },
+    {
+      "path": "cmake/sdk-symbols.apple",
+      "sha256_at_import": "d40e90ff91fe6856fe65f065dcce263738f43e3f889e881cc72a2c5115fca769"
+    },
+    {
+      "path": "cmake/sdk-symbols.map",
+      "sha256_at_import": "217c512ef7c343011895670d0b9998cb016df0487c78e4ba30cf5a0d1b48931e"
+    },
+    {
+      "path": "cmake/FindRKNN.cmake",
+      "sha256_at_import": "6f3504da293b076a68f60eb77bf9b55da8fed90d0c09a2f394b658f2c2ca9eec"
+    },
+    {
+      "path": "cmake/toolchains/awu202-aarch64.cmake",
+      "sha256_at_import": "d4e57fcefd68b37670ce3a6fec9ad3f7e7cdb8a4769bc8cfb1dbbe97b98de9f5"
+    },
+    {
+      "path": "examples/sdk/CMakeLists.txt",
+      "sha256_at_import": "4b969ad59233633cd6ad72f3b606b7588b0e49c971f317e2b615dc54f8cc33c5"
+    },
+    {
+      "path": "examples/sdk/integration_example.c",
+      "sha256_at_import": "e4b692428ea59e7000ecbced39b45aae141b924782ca1d583efc67bbb62c5024"
+    },
+    {
+      "path": "configs/bev.example.yaml",
+      "sha256_at_import": "57184eeaf12ea0d9e6ba838e3894903c02e6b430d72904eed8d3fe19c6e1dbdd"
+    },
+    {
+      "path": "configs/camera-calibration.example.yaml",
+      "sha256_at_import": "e02d4d52735a7f93e22f50f4b0f6074a19e2d8f191a8e5860ee977c2ae05b91c"
+    },
+    {
+      "path": "docs/sdk-integration.md",
+      "sha256_at_import": "87e893c951c0a3b4da57379753a62cda2d0c3d7265dabe693c29e274e61bc49f"
+    },
+    {
+      "path": "docs/sdk-validation-20261013.md",
+      "sha256_at_import": "322ca2326f4c49796a656c18dde5c940cbd661ced84fbab8cbf3abfea16bd2b9"
+    },
+    {
+      "path": "docs/multi-row-geometry-20261020.md",
+      "sha256_at_import": "e8604f3707b6837bc0b409e5b4abbbfafa166336866abf8410bedbabf3398b07"
+    },
+    {
+      "path": "docs/temporal-row-tracking-20261020.md",
+      "sha256_at_import": "3822b133c5fe19342d8e9a1c0d9ba376737bdb42180c5b38d72d3547c53d2133"
+    },
+    {
+      "path": "docs/dynamic-bev-20261026.md",
+      "sha256_at_import": "6c0f6ae7f7cf6974911d8e9b6aba5ceb110e5f0ae5ea991c03f211b3aa2c4ee8"
+    },
+    {
+      "path": "scripts/package_sdk.py",
+      "sha256_at_import": "6205c8d071883a7217959a088af876049d92163ebecc601dbc00127400176683"
+    },
+    {
+      "path": "apps/bev_calibrate.cpp",
+      "sha256_at_import": "1c267d24c96e0cf6cbf414f6970f575186b5918d62351374e13fbae73ffe3b93"
+    },
+    {
+      "path": "apps/bev_calibration_visualize.cpp",
+      "sha256_at_import": "8a8e69efabf94586cb40a68bc4841db48f5f8e95c4bd13aebd3efb9974e4d745"
+    },
+    {
+      "path": "include/rk_nav/io/navigation_output.hpp",
+      "sha256_at_import": "3623e155c4897b6e4f19ca2c95aa395f95a529b77a32f809a106f59a949babf4"
+    },
+    {
+      "path": "src/io/navigation_output.cpp",
+      "sha256_at_import": "e7e8aedde83dc3578df1b906460bf3eaa7d7955ec97c2d5475f017e022750e79"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>row_nav_sdk</name>
+  <version>0.2.0</version>
+  <description>ROS-independent crop-row C SDK; plain CMake build registered for colcon.</description>
+  <maintainer email="dev@weeder.local">dev</maintainer>
+  <license>LicenseRef-Project-Internal</license>
+  <buildtool_depend>cmake</buildtool_depend>
+  <depend>libopencv-dev</depend>
+  <export><build_type>cmake</build_type></export>
+</package>

@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(row_nav_consumer LANGUAGES C)
+find_package(RowNav 0.1 REQUIRED CONFIG)
+add_executable(integration_example integration_example.c)
+target_link_libraries(integration_example PRIVATE RowNav::rk_row_nav)

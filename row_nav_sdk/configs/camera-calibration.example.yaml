@@ -1,0 +1,18 @@
+%YAML:1.0
+---
+schema_version: 1
+camera_name: "CMD108-P200A-H120"
+image_width: 1920
+image_height: 1080
+# Placeholder values: do not use for navigation. Replace with a real Charuco result.
+camera_matrix: !!opencv-matrix
+   rows: 3
+   cols: 3
+   dt: d
+   data: [ 1000., 0., 960., 0., 1000., 540., 0., 0., 1. ]
+distortion_coefficients: !!opencv-matrix
+   rows: 1
+   cols: 5
+   dt: d
+   data: [ 0., 0., 0., 0., 0. ]
+reprojection_rms_px: 0.

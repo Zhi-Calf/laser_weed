@@ -1,0 +1,9 @@
+SDK=@PROJECT_VERSION@
+ABI=1
+system=@CMAKE_SYSTEM_NAME@
+processor=@CMAKE_SYSTEM_PROCESSOR@
+compiler=@CMAKE_CXX_COMPILER_ID@ @CMAKE_CXX_COMPILER_VERSION@
+opencv=@OpenCV_VERSION@
+rknn_enabled=@RK_NAV_WITH_RKNN@
+rknn_library=@RKNN_LIBRARY@
+Build metadata is not a board validation report.
