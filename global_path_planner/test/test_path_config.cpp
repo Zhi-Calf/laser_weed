@@ -28,10 +28,8 @@ using global_path_planner::parsePolygonVertices;
 
 // 合法: 3 个顶点也能受理 (地块边界最少 3 个点), 分量按 (lat, lon, alt) 逐位落位, reason 被清空。
 TEST(PolygonVertices, ParsesFlatArrayIntoLatLonAltTriples) {
-  std::string reason = "上一个请求留下的脏串";
-  const auto vertices = parsePolygonVertices(3, {34.70316078, 112.39118753, 102.0,
-                                                 34.70316002, 112.39133512, 202.0,
-                                                 34.70320482, 112.39131299, 101.0}, reason);
+  std::string reason  = "上一个请求留下的脏串";
+  const auto vertices = parsePolygonVertices(3, {34.70316078, 112.39118753, 102.0, 34.70316002, 112.39133512, 202.0, 34.70320482, 112.39131299, 101.0}, reason);
   ASSERT_EQ(vertices.size(), 3u);
   EXPECT_DOUBLE_EQ(vertices[0][0], 34.70316078);
   EXPECT_DOUBLE_EQ(vertices[0][1], 112.39118753);
@@ -72,10 +70,11 @@ TEST(PolygonVertices, RejectsTooManyVertices) {
 
 // 两个字段必须自洽: 只给 count 不给数组 / 少一个分量 / 多一个分量一律拒 (现场拼脚本最容易错在这儿)。
 TEST(PolygonVertices, RejectsCountAndLengthMismatch) {
-  for (const std::vector<double>& poly : {std::vector<double>{},      // 只给了 poly_count
-                                          std::vector<double>{34.7, 112.3},  // 连一个顶点都不够
-                                          std::vector<double>(8, 1.0),       // 3 个顶点少一个分量
-                                          std::vector<double>(12, 1.0)}) {   // 3 个顶点多一个分量
+  for (const std::vector<double>& poly :
+       {std::vector<double>{},              // 只给了 poly_count
+        std::vector<double>{34.7, 112.3},   // 连一个顶点都不够
+        std::vector<double>(8, 1.0),        // 3 个顶点少一个分量
+        std::vector<double>(12, 1.0)}) {    // 3 个顶点多一个分量
     std::string reason;
     EXPECT_TRUE(parsePolygonVertices(3, poly, reason).empty()) << "poly 长度 " << poly.size() << " 不该被接受";
     EXPECT_NE(reason.find("poly 长度"), std::string::npos) << reason;
@@ -84,8 +83,8 @@ TEST(PolygonVertices, RejectsCountAndLengthMismatch) {
 
 // 任何一个分量不是有限数 (NaN / inf, 现场常见于上游把空字段解析成 inf): 拒收, 不交给几何引擎。
 TEST(PolygonVertices, RejectsNonFiniteComponents) {
-  const double nan = std::numeric_limits<double>::quiet_NaN();
-  const double inf = std::numeric_limits<double>::infinity();
+  const double nan                           = std::numeric_limits<double>::quiet_NaN();
+  const double inf                           = std::numeric_limits<double>::infinity();
   const std::vector<std::vector<double>> bad = {
     {nan, 112.3, 102.0, 34.8, 112.4, 202.0, 34.9, 112.5, 302.0},   // lat
     {34.7, inf, 102.0, 34.8, 112.4, 202.0, 34.9, 112.5, 302.0},    // lon

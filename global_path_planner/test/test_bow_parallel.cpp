@@ -52,10 +52,10 @@ std::vector<BowInput> MakeInputs() {
   std::vector<BowInput> inputs;
   for (int i = 0; i < 8; ++i) {
     BowInput in;
-    in.ridge_width       = 0.6 + 0.3 * static_cast<double>(i);
-    in.path_resolution   = 0.1 + 0.05 * static_cast<double>(i % 3);
-    in.field_margin      = 0.2 * static_cast<double>(i % 4);
-    in.first_row_margin  = 0.005;
+    in.ridge_width      = 0.6 + 0.3 * static_cast<double>(i);
+    in.path_resolution  = 0.1 + 0.05 * static_cast<double>(i % 3);
+    in.field_margin     = 0.2 * static_cast<double>(i % 4);
+    in.first_row_margin = 0.005;
     if (i % 2 == 0)
       in.cell = Rect(20.0 + static_cast<double>(i), 8.0 + 0.5 * static_cast<double>(i));
     else
@@ -71,10 +71,10 @@ std::vector<BowInput> MakeInputs() {
 TEST(BowParallel, PerInstanceSameInputIsBitIdentical) {
   PlanBowShapedPath engine;   // 主线程基准用 (状态在对象里, 所以不能给线程们共用)
   BowInput in;
-  in.cell              = Rect(20.0, 8.0);
-  in.ridge_width       = 1.0;
-  in.path_resolution   = 0.2;
-  in.field_margin      = 0.5;
+  in.cell                  = Rect(20.0, 8.0);
+  in.ridge_width           = 1.0;
+  in.path_resolution       = 0.2;
+  in.field_margin          = 0.5;
   const BowInput in_before = in;
 
   const BowOutput reference = engine.plan(in);   // 单线程基准
@@ -109,7 +109,6 @@ TEST(BowParallel, PerInstanceSameInputIsBitIdentical) {
   EXPECT_TRUE(SameBits(in.first_row_margin, in_before.first_row_margin));
   EXPECT_TRUE(SamePath(in.cell, in_before.cell));
 }
-
 
 // ②: 混合输入并发 —— 8 个不同输入 × 8 线程 (每线程一个实例) 交错, 每组都要与自己的基准逐位一致。
 TEST(BowParallel, MixedInputsInterleavedStayBitIdentical) {

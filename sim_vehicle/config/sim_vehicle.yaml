@@ -1,0 +1,15 @@
+sim_vehicle:
+  ros__parameters:
+    # 车辆几何参数（米）
+    wheelbase: 1.521        # 前后轴距 (m)
+    wheel_track: 1.306      # 左右轮中心距 (m)
+    wheel_radius_m: 0.29    # 车轮半径 (m)
+    vehicle_length_m: 1.8   # 车体长度 (m, 不含车轮外伸)
+    vehicle_width_m: 1.2    # 车体宽度 (m, 不含车轮外伸)
+    vehicle_height_m: 0.5   # 车体高度 (m)
+
+    # 车辆运动限制
+    max_speed_m_s: 1.4      # 最大线速度 (m/s); 运行期上限由代码固定为 1.4
+    # 90 度，对应 pi/2 弧度
+    max_plant_steer_deg: 90.0
+    wheel_count: 4          # 当前四轮运动学仅支持 4

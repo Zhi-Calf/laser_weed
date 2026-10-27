@@ -82,13 +82,10 @@ bool ParseDouble(const std::string& text, double* value) {
 
 bool IsValidUtcTime(const std::string& text) {
   const std::size_t dot = text.find('.');
-  if (dot != std::string::npos &&
-      (dot + 1 == text.size() ||
-       text.find('.', dot + 1) != std::string::npos)) {
+  if (dot != std::string::npos && (dot + 1 == text.size() || text.find('.', dot + 1) != std::string::npos)) {
     return false;
   }
-  const std::string whole =
-      dot == std::string::npos ? text : text.substr(0, dot);
+  const std::string whole = dot == std::string::npos ? text : text.substr(0, dot);
   if (whole.size() != 6) {
     return false;
   }
@@ -111,13 +108,9 @@ bool IsValidUtcTime(const std::string& text) {
   return hour <= 23 && minute <= 59 && second <= 60;
 }
 
-bool IsValidCoordinate(
-    const std::string& text, std::size_t degree_digits,
-    double maximum_degrees) {
+bool IsValidCoordinate(const std::string& text, std::size_t degree_digits, double maximum_degrees) {
   const std::size_t dot = text.find('.');
-  if (dot == std::string::npos || dot + 1 == text.size() ||
-      text.find('.', dot + 1) != std::string::npos ||
-      dot != degree_digits + 2) {
+  if (dot == std::string::npos || dot + 1 == text.size() || text.find('.', dot + 1) != std::string::npos || dot != degree_digits + 2) {
     return false;
   }
   for (char character : text) {
@@ -131,14 +124,12 @@ bool IsValidCoordinate(
   if (!ParseInt(degrees_text, &degrees)) {
     return false;
   }
-  const std::string minutes_text =
-      text.substr(degree_digits, 2) + text.substr(dot);
+  const std::string minutes_text = text.substr(degree_digits, 2) + text.substr(dot);
   double minutes                 = 0.0;
   if (!ParseDouble(minutes_text, &minutes) || minutes >= 60.0) {
     return false;
   }
-  if (degrees > static_cast<int>(maximum_degrees) ||
-      (degrees == static_cast<int>(maximum_degrees) && minutes > 0.0)) {
+  if (degrees > static_cast<int>(maximum_degrees) || (degrees == static_cast<int>(maximum_degrees) && minutes > 0.0)) {
     return false;
   }
   return true;
@@ -152,10 +143,7 @@ bool IsValidStationId(const std::string& text) {
     return false;
   }
   for (char character : text) {
-    const bool valid =
-        IsAsciiDigit(character) ||
-        (character >= 'A' && character <= 'Z') ||
-        (character >= 'a' && character <= 'z');
+    const bool valid = IsAsciiDigit(character) || (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z');
     if (!valid) {
       return false;
     }
@@ -188,40 +176,28 @@ bool IsValidGga(const std::string& sentence) {
     return false;
   }
 
-  const std::vector<std::string> fields =
-      SplitFields(sentence.substr(1, star - 1));
+  const std::vector<std::string> fields = SplitFields(sentence.substr(1, star - 1));
   if (fields.size() < kMinimumGgaFields || fields.size() > kMaximumGgaFields) {
     return false;
   }
   const std::string& type = fields[0];
-  if (type.size() != 5 || type.compare(2, 3, "GGA") != 0 ||
-      !IsUpperTalkerCharacter(type[0]) ||
-      !IsUpperTalkerCharacter(type[1])) {
+  if (type.size() != 5 || type.compare(2, 3, "GGA") != 0 || !IsUpperTalkerCharacter(type[0]) || !IsUpperTalkerCharacter(type[1])) {
     return false;
   }
-  if (!IsValidUtcTime(fields[1]) ||
-      !IsValidCoordinate(fields[2], 2, 90.0) ||
-      (fields[3] != "N" && fields[3] != "S") ||
-      !IsValidCoordinate(fields[4], 3, 180.0) ||
-      (fields[5] != "E" && fields[5] != "W")) {
+  if (!IsValidUtcTime(fields[1]) || !IsValidCoordinate(fields[2], 2, 90.0) || (fields[3] != "N" && fields[3] != "S") || !IsValidCoordinate(fields[4], 3, 180.0) || (fields[5] != "E" && fields[5] != "W")) {
     return false;
   }
 
   int fix_quality     = 0;
   int satellite_count = 0;
-  if (!ParseInt(fields[6], &fix_quality) ||
-      fix_quality < 1 || fix_quality > 8 ||
-      !ParseInt(fields[7], &satellite_count) ||
-      satellite_count < 0) {
+  if (!ParseInt(fields[6], &fix_quality) || fix_quality < 1 || fix_quality > 8 || !ParseInt(fields[7], &satellite_count) || satellite_count < 0) {
     return false;
   }
 
   double numeric = 0.0;
-  if (!ParseDouble(fields[8], &numeric) || numeric < 0.0 ||
-      !ParseDouble(fields[9], &numeric) ||
-      (fields[10] != "M" && fields[10] != "m") ||
-      !ParseDouble(fields[11], &numeric) ||
-      (fields[12] != "M" && fields[12] != "m")) {
+  if (
+    !ParseDouble(fields[8], &numeric) || numeric < 0.0 || !ParseDouble(fields[9], &numeric) || (fields[10] != "M" && fields[10] != "m") || !ParseDouble(fields[11], &numeric) ||
+    (fields[12] != "M" && fields[12] != "m")) {
     return false;
   }
 

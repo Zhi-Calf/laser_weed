@@ -85,7 +85,7 @@ install(TARGETS sim_vehicle sim_orchestrator
 install(DIRECTORY include/
   DESTINATION include
 )
-install(DIRECTORY launch rviz
+install(DIRECTORY launch rviz config
   DESTINATION share/${PROJECT_NAME}
 )
 if(BUILD_TESTING)

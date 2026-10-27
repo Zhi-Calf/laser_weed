@@ -15,6 +15,8 @@ global_path_planner（YAML poly 首个顶点为原点）──/path──► pat
 `set_source` 服务。
 
 车辆几何默认与 `Laser-Weeding-Sim` 的 Isaac 场景一致：
+这些参数的默认值集中在 `config/sim_vehicle.yaml`，`weeder_sim.launch.py`
+会直接读取该文件，并继续支持通过 launch 参数临时覆盖。
 
 | 参数 | 默认值 | 说明 |
 |---|---:|---|
@@ -24,7 +26,9 @@ global_path_planner（YAML poly 首个顶点为原点）──/path──► pat
 | `vehicle_length` | `1.8 m` | 车体本体长度，不含车轮外伸部分 |
 | `vehicle_width` | `1.2 m` | 车体本体宽度，不含车轮外伸部分 |
 | `vehicle_height` | `0.5 m` | 车体本体高度 |
+| `max_speed_m_s` | `1.4 m/s` | 底盘最大速度 |
 | `max_plant_steer_deg` | `90°` | 单轮最大转向角 |
+| `wheel_count` | `4` | 四轮运动学轮数；当前实现固定按四轮数组计算 |
 | `cmd_timeout_s` | `0.3 s` | 指令超时停车，与 `weeder_base` 一致 |
 
 `sim_vehicle` 根据 `steer_mode` 输出四个轮子的转角和轮速，并发布
@@ -122,9 +126,7 @@ sim_orchestrator 切 UNMANNED → path_tracker 开始驱动
 ```bash
 source install/setup.bash
 ros2 run sim_vehicle sim_vehicle --ros-args \
-  -p wheelbase:=1.521 \
-  -p wheel_track:=1.306 \
-  -p wheel_radius_m:=0.29 \
+  --params-file install/sim_vehicle/share/sim_vehicle/config/sim_vehicle.yaml \
   -p cmd_timeout_s:=0.3 \
   -p align_to_path_start:=true \
   -p align_lateral_offset:=0.2

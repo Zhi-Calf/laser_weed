@@ -7,20 +7,16 @@
 namespace sim_vehicle {
 namespace {
 
-constexpr std::size_t FrontLeft =
-  static_cast<std::size_t>(WheelIndex::kFrontLeft);
-constexpr std::size_t FrontRight =
-  static_cast<std::size_t>(WheelIndex::kFrontRight);
-constexpr std::size_t RearLeft =
-  static_cast<std::size_t>(WheelIndex::kRearLeft);
-constexpr std::size_t RearRight =
-  static_cast<std::size_t>(WheelIndex::kRearRight);
+constexpr std::size_t FrontLeft  = static_cast<std::size_t>(WheelIndex::kFrontLeft);
+constexpr std::size_t FrontRight = static_cast<std::size_t>(WheelIndex::kFrontRight);
+constexpr std::size_t RearLeft   = static_cast<std::size_t>(WheelIndex::kRearLeft);
+constexpr std::size_t RearRight  = static_cast<std::size_t>(WheelIndex::kRearRight);
 
 void ExpectNear(double actual, double expected) {
   EXPECT_NEAR(actual, expected, 1e-9);
 }
 
-}  // namespace
+}   // namespace
 
 // 验证角度归一化保持零值并处理正负边界。
 TEST(KinematicsTest, WrapAngleUsesHalfTurnOffset) {
@@ -42,8 +38,7 @@ TEST(KinematicsTest, GeometryMatchesIsaacStage) {
 
 // 验证可视化轮位始终以车体几何中心为原点。
 TEST(KinematicsTest, CenteredWheelPositionsDoNotChangeWithMode) {
-  const auto positions =
-    ComputeCenteredWheelPositions(kWheelbaseM, kWheelTrackM);
+  const auto positions = ComputeCenteredWheelPositions(kWheelbaseM, kWheelTrackM);
   ExpectNear(positions[FrontLeft].x_m, kWheelbaseM * 0.5);
   ExpectNear(positions[RearLeft].x_m, -kWheelbaseM * 0.5);
   ExpectNear(positions[FrontLeft].y_m, kWheelTrackM * 0.5);
@@ -52,7 +47,7 @@ TEST(KinematicsTest, CenteredWheelPositionsDoNotChangeWithMode) {
 
 // 验证两种转向模式使用不同的底盘参考点。
 TEST(KinematicsTest, WheelPositionsFollowReferencePoint) {
-  const auto rear_reference = ComputeWheelPositions(0);
+  const auto rear_reference   = ComputeWheelPositions(0);
   const auto center_reference = ComputeWheelPositions(1);
 
   ExpectNear(rear_reference[RearLeft].x_m, 0.0);
@@ -76,7 +71,7 @@ TEST(KinematicsTest, StraightMotionKeepsWheelsStraight) {
 
 // 验证单阿克曼模式仅前轮转向。
 TEST(KinematicsTest, SingleAckermannSteersFrontWheels) {
-  const double steer_rad = 15.0 * 3.14159265358979323846 / 180.0;
+  const double steer_rad     = 15.0 * 3.14159265358979323846 / 180.0;
   const FourWheelState state = ComputeFourWheelState(0.6, steer_rad, 0);
   EXPECT_GT(state.steer_rad[FrontLeft], 0.0);
   EXPECT_GT(state.steer_rad[FrontRight], 0.0);
@@ -88,7 +83,7 @@ TEST(KinematicsTest, SingleAckermannSteersFrontWheels) {
 
 // 验证对称阿克曼模式前后轮反向转动。
 TEST(KinematicsTest, SymmetricAckermannTurnsOpposite) {
-  const double steer_rad = 15.0 * 3.14159265358979323846 / 180.0;
+  const double steer_rad     = 15.0 * 3.14159265358979323846 / 180.0;
   const FourWheelState state = ComputeFourWheelState(0.6, steer_rad, 1);
   EXPECT_GT(state.steer_rad[FrontLeft], 0.0);
   EXPECT_GT(state.steer_rad[FrontRight], 0.0);
@@ -117,4 +112,4 @@ TEST(KinematicsTest, ZeroSpeedStopsWheelRotation) {
   }
 }
 
-}  // namespace sim_vehicle
+}   // namespace sim_vehicle

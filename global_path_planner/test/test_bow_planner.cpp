@@ -32,49 +32,37 @@ using bow_test::BowFacade;
 
 class BowPlannerTestAccess {
 public:
-  static void Configure(PlanBowShapedPath& planner, double ridge_width,
-                        double path_resolution, double field_margin,
-                        const Polygon_2& field) {
-    planner.ridge_width_      = ridge_width;
-    planner.path_resolution_  = path_resolution;
-    planner.field_margin_     = field_margin;
-    planner.field_            = field;
+  static void Configure(PlanBowShapedPath& planner, double ridge_width, double path_resolution, double field_margin, const Polygon_2& field) {
+    planner.ridge_width_     = ridge_width;
+    planner.path_resolution_ = path_resolution;
+    planner.field_margin_    = field_margin;
+    planner.field_           = field;
   }
 
-  static std::vector<Point_2> BuildHalfCircleTurn(
-      PlanBowShapedPath& planner, const Point_2& P1, const Point_2& P2,
-      const Point_2& P3, const Point_2& P4) {
+  static std::vector<Point_2> BuildHalfCircleTurn(PlanBowShapedPath& planner, const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4) {
     const auto geometry = planner.makeTurnGeometry(P1, P2, P3, P4);
     if (!geometry)
       return {};
     return planner.buildHalfCircleTurn(*geometry);
   }
 
-  static std::vector<Point_2> BuildTurn(PlanBowShapedPath& planner,
-                                        const Point_2& P1, const Point_2& P2,
-                                        const Point_2& P3,
-                                        const Point_2& P4) {
+  static std::vector<Point_2> BuildTurn(PlanBowShapedPath& planner, const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4) {
     return planner.buildTurn(P1, P2, P3, P4);
   }
 
-  static std::vector<Point_2> SmoothTurns(PlanBowShapedPath& planner,
-                                          const std::vector<Point_2>& keys,
-                                          std::vector<uint8_t>* types) {
+  static std::vector<Point_2> SmoothTurns(PlanBowShapedPath& planner, const std::vector<Point_2>& keys, std::vector<uint8_t>* types) {
     return planner.smoothTurns(keys, types);
   }
 
-  static double MaxOverrun(PlanBowShapedPath& planner,
-                           const std::vector<Point_2>& pts) {
+  static double MaxOverrun(PlanBowShapedPath& planner, const std::vector<Point_2>& pts) {
     return planner.maxOverrunOf(pts);
   }
 
-  static double TurnCross(const Point_2& P1, const Point_2& P2,
-                          const Point_2& P3, const Point_2& P4) {
+  static double TurnCross(const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4) {
     const Point_2 in_dir  = (P2 - P1).normalized();
     const Point_2 out_dir = (P4 - P3).normalized();
     return std::abs(in_dir.x() * out_dir.y() - in_dir.y() * out_dir.x());
   }
-
 };
 
 namespace {
@@ -584,8 +572,7 @@ TEST(BowPlannerInset, UniformMarginShrinksPolygon) {
 // 非平行垄也统一使用半圆。
 TEST(BowPlannerTurn, NonParallelRowsUseHalfCircle) {
   PlanBowShapedPath planner;
-  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0),
-                        Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
+  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0), Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
   BowPlannerTestAccess::Configure(planner, 1.0, 0.2, 0.5, field);
 
   const Point_2 P1(0.0, 0.0);
@@ -594,7 +581,7 @@ TEST(BowPlannerTurn, NonParallelRowsUseHalfCircle) {
   const Point_2 P4(0.0, 3.0);
 
   const auto half_circle = BowPlannerTestAccess::BuildHalfCircleTurn(planner, P1, P2, P3, P4);
-  const auto built = BowPlannerTestAccess::BuildTurn(planner, P1, P2, P3, P4);
+  const auto built       = BowPlannerTestAccess::BuildTurn(planner, P1, P2, P3, P4);
   ASSERT_EQ(built.size(), half_circle.size());
   for (size_t i = 0; i < built.size(); ++i) {
     EXPECT_NEAR((built[i] - half_circle[i]).norm(), 0.0, 1e-12) << "第 " << i << " 个点";
@@ -604,8 +591,7 @@ TEST(BowPlannerTurn, NonParallelRowsUseHalfCircle) {
 // base_center 的半圆越界时, 应沿垄向地块内部搜索, 而不是把圆弧直接留在界外。
 TEST(BowPlannerTurn, BaseArcOutsideFieldShiftsInward) {
   PlanBowShapedPath planner;
-  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(60.0, 0.0),
-                        Point_2(40.0, 20.0), Point_2(0.0, 20.0)};
+  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(60.0, 0.0), Point_2(40.0, 20.0), Point_2(0.0, 20.0)};
   BowPlannerTestAccess::Configure(planner, 3.0, 0.2, 0.0, field);
 
   const Point_2 P1(54.0, 1.5);
@@ -630,8 +616,7 @@ TEST(BowPlannerTurn, BaseArcOutsideFieldShiftsInward) {
 // base 半圆本身安全时保持在 base_center, 不再为覆盖垄端向外推。
 TEST(BowPlannerTurn, SafeBaseArcStaysAtBaseCenter) {
   PlanBowShapedPath planner;
-  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0),
-                        Point_2(12.0, 4.0), Point_2(0.0, 4.0)};
+  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0), Point_2(12.0, 4.0), Point_2(0.0, 4.0)};
   BowPlannerTestAccess::Configure(planner, 2.0, 0.2, 0.0, field);
 
   const Point_2 P1(4.0, 0.0);
@@ -653,10 +638,10 @@ TEST(BowPlannerTurn, SafeBaseArcStaysAtBaseCenter) {
 TEST(BowPlannerTurn, FallbackRowTransitionUsesHalfCircle) {
   PlanBowShapedPath planner;
   BowInput in;
-  in.cell            = {Point_2(0.0, 0.0), Point_2(20.0, 0.0), Point_2(0.0, 10.0)};
-  in.ridge_width     = 1.0;
-  in.path_resolution = 0.2;
-  in.field_margin    = 0.5;
+  in.cell             = {Point_2(0.0, 0.0), Point_2(20.0, 0.0), Point_2(0.0, 10.0)};
+  in.ridge_width      = 1.0;
+  in.path_resolution  = 0.2;
+  in.field_margin     = 0.5;
   const BowOutput out = planner.plan(in);
   ASSERT_TRUE(out.ok());
 
@@ -671,7 +656,7 @@ TEST(BowPlannerTurn, FallbackRowTransitionUsesHalfCircle) {
     }
     ++nonparallel;
 
-    const auto half   = BowPlannerTestAccess::BuildHalfCircleTurn(planner, P1, P2, P3, P4);
+    const auto half  = BowPlannerTestAccess::BuildHalfCircleTurn(planner, P1, P2, P3, P4);
     const auto built = BowPlannerTestAccess::BuildTurn(planner, P1, P2, P3, P4);
     ASSERT_EQ(built.size(), half.size());
     for (size_t k = 0; k < built.size(); ++k) {
@@ -684,10 +669,8 @@ TEST(BowPlannerTurn, FallbackRowTransitionUsesHalfCircle) {
 // 平行垄也使用半圆。
 TEST(BowPlannerTurn, ParallelRowsUseHalfCircle) {
   PlanBowShapedPath planner;
-  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0),
-                        Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
-  BowPlannerTestAccess::Configure(
-    planner, 1.0, 0.2, 0.5, field);
+  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0), Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
+  BowPlannerTestAccess::Configure(planner, 1.0, 0.2, 0.5, field);
 
   const Point_2 P1(0.0, 0.0);
   const Point_2 P2(10.0, 0.0);
@@ -705,21 +688,17 @@ TEST(BowPlannerTurn, ParallelRowsUseHalfCircle) {
 // 直线兜底必须把连接段标成 TURN, 同时保持两端垄端点为 WORK。
 TEST(BowPlannerTurn, StraightFallbackIsMarkedTurn) {
   PlanBowShapedPath planner;
-  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0),
-                        Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
+  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0), Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
   BowPlannerTestAccess::Configure(planner, 1.0, 0.2, 0.5, field);
 
-  const std::vector<Point_2> keys{
-    Point_2(0.0, 0.0), Point_2(10.0, 0.0),
-    Point_2(20.0, 0.0000005), Point_2(0.0, 0.0000005)};
+  const std::vector<Point_2> keys{Point_2(0.0, 0.0), Point_2(10.0, 0.0), Point_2(20.0, 0.0000005), Point_2(0.0, 0.0000005)};
   std::vector<uint8_t> types;
   const auto path = BowPlannerTestAccess::SmoothTurns(planner, keys, &types);
   ASSERT_EQ(path.size(), types.size());
   ASSERT_GE(path.size(), 4u);
   EXPECT_EQ(types.front(), kSegWork);
   EXPECT_EQ(types.back(), kSegWork);
-  EXPECT_NE(std::find(types.begin(), types.end(), kSegTurn), types.end())
-      << "直线连接段应包含 TURN 点";
+  EXPECT_NE(std::find(types.begin(), types.end(), kSegTurn), types.end()) << "直线连接段应包含 TURN 点";
   for (size_t i = 1; i < path.size(); ++i) {
     EXPECT_GT((path[i] - path[i - 1]).norm(), 1e-9) << "路径不应插入重复点";
   }
@@ -728,29 +707,23 @@ TEST(BowPlannerTurn, StraightFallbackIsMarkedTurn) {
 // 非平行半圆的出口连接段是作业垄, t2 及其后的直线连接段必须标 WORK。
 TEST(BowPlannerTurn, NonParallelHalfExitStartsWork) {
   PlanBowShapedPath planner;
-  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0),
-                        Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
+  const Polygon_2 field{Point_2(0.0, 0.0), Point_2(12.0, 0.0), Point_2(12.0, 3.0), Point_2(0.0, 3.0)};
   BowPlannerTestAccess::Configure(planner, 1.0, 0.2, 0.5, field);
 
-  const std::vector<Point_2> keys{
-    Point_2(0.0, 0.0), Point_2(10.0, 0.0),
-    Point_2(10.0, 2.0), Point_2(0.0, 3.0)};
+  const std::vector<Point_2> keys{Point_2(0.0, 0.0), Point_2(10.0, 0.0), Point_2(10.0, 2.0), Point_2(0.0, 3.0)};
   std::vector<uint8_t> types;
   const auto path = BowPlannerTestAccess::SmoothTurns(planner, keys, &types);
   ASSERT_EQ(path.size(), types.size());
   ASSERT_GE(path.size(), 3u);
   EXPECT_EQ(types.back(), kSegWork);
-  EXPECT_EQ(types[types.size() - 2], kSegWork)
-      << "非平行半圆出口后的连接段应标 WORK";
-  EXPECT_NE(std::find(types.begin(), types.end(), kSegTurn), types.end())
-      << "掉头圆弧本身仍应包含 TURN 点";
+  EXPECT_EQ(types[types.size() - 2], kSegWork) << "非平行半圆出口后的连接段应标 WORK";
+  EXPECT_NE(std::find(types.begin(), types.end(), kSegTurn), types.end()) << "掉头圆弧本身仍应包含 TURN 点";
 }
 
 // 掉头之间的直线作业垄不得被出口连接段污染为 TURN。
 TEST(BowPlannerTurn, StraightRidgeBetweenTurnsIsMarkedWork) {
   BowFacade planner;
-  const BowOutput out = planner.plan(
-      RectangleField(20.0, 6.0), 2.0, 0.2, 0.5);
+  const BowOutput out = planner.plan(RectangleField(20.0, 6.0), 2.0, 0.2, 0.5);
   ASSERT_TRUE(out.ok());
   ASSERT_EQ(out.waypoints.size(), out.waypoint_types.size());
 
@@ -768,8 +741,7 @@ TEST(BowPlannerTurn, StraightRidgeBetweenTurnsIsMarkedWork) {
     }
   }
   EXPECT_GT(interior_work_points, 0U);
-  EXPECT_EQ(interior_turn_points, 0U)
-      << "田块中部的直线作业垄不应包含 TURN 标签";
+  EXPECT_EQ(interior_turn_points, 0U) << "田块中部的直线作业垄不应包含 TURN 标签";
 }
 
 // 输入宽容度: 逆序 + 旋转起点 + 一条边上的共线点, 结果应与规范输入一致
@@ -925,9 +897,15 @@ TEST(PlanStatusFaultCode, MapsEveryFailureStatusToItsOwnCode) {
   EXPECT_EQ(planStatusFaultCode(PlanStatus::kInternal), static_cast<uint32_t>(global_path_planner::FAULT_PLAN_INTERNAL));
 
   // 8 个失败状态 -> 8 个互不相同的码, 且都不是"无故障"或通用失败码 (否则细分就白加了)
-  const PlanStatus failures[] =
-    {PlanStatus::kInputTooFew, PlanStatus::kDedupTooFew, PlanStatus::kHullTooFew, PlanStatus::kNonConvex, PlanStatus::kSelfIntersecting,
-     PlanStatus::kBadFieldMargin, PlanStatus::kBadRidgeWidth, PlanStatus::kInternal};
+  const PlanStatus failures[] = {
+    PlanStatus::kInputTooFew,
+    PlanStatus::kDedupTooFew,
+    PlanStatus::kHullTooFew,
+    PlanStatus::kNonConvex,
+    PlanStatus::kSelfIntersecting,
+    PlanStatus::kBadFieldMargin,
+    PlanStatus::kBadRidgeWidth,
+    PlanStatus::kInternal};
   std::vector<uint32_t> codes;
   for (const PlanStatus status : failures) {
     const uint32_t code = planStatusFaultCode(status);

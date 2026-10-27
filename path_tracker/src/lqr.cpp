@@ -217,8 +217,7 @@ bool LQR::ComputeCommand(const LQRInput& input, LQROutput& output) {
   output.steer_mode                = symmetric_ackermann ? 1 : 0;
   output.effective_wheelbase       = effective_wheelbase;
   output.target_index              = target_idx_;
-  output.distance_to_goal =
-    std::hypot(input.robot_state.x - goal_.x, input.robot_state.y - goal_.y);
+  output.distance_to_goal          = std::hypot(input.robot_state.x - goal_.x, input.robot_state.y - goal_.y);
   return true;
 }
 

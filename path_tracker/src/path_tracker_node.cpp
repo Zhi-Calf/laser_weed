@@ -101,30 +101,29 @@ void PathTrackerNode::loadParameters() {
   cmd_topic_                         = declare_parameter<std::string>("cmd_topic", "/chassis/cmd");
   viz_                               = declare_parameter<bool>("viz", true);
 
-  const double lqr_eps        = declare_parameter<double>("lqr_eps", 1e-6);
-  const int lqr_max_iteration = static_cast<int>(declare_parameter<int64_t>("lqr_max_iteration", 1000));
-  const double lqr_q_lateral  = declare_parameter<double>("lqr_Q_lateral", 50.0);
-  const double lqr_q_heading  = declare_parameter<double>("lqr_Q_heading", 25.0);
-  const double lqr_r_steer    = declare_parameter<double>("lqr_R_steer", 25.0);
-  const bool pose_at_vehicle_center =
-    declare_parameter<bool>("pose_at_vehicle_center", true);
+  const double lqr_eps              = declare_parameter<double>("lqr_eps", 1e-6);
+  const int lqr_max_iteration       = static_cast<int>(declare_parameter<int64_t>("lqr_max_iteration", 1000));
+  const double lqr_q_lateral        = declare_parameter<double>("lqr_Q_lateral", 50.0);
+  const double lqr_q_heading        = declare_parameter<double>("lqr_Q_heading", 25.0);
+  const double lqr_r_steer          = declare_parameter<double>("lqr_R_steer", 25.0);
+  const bool pose_at_vehicle_center = declare_parameter<bool>("pose_at_vehicle_center", true);
 
   LQRConfig lqr_config;
-  lqr_config.dt                   = 1.0 / control_hz_;
-  lqr_config.eps                  = lqr_eps;
-  lqr_config.max_iteration        = lqr_max_iteration;
-  lqr_config.q_lateral            = lqr_q_lateral;
-  lqr_config.q_heading            = lqr_q_heading;
-  lqr_config.r_steer              = lqr_r_steer;
-  lqr_config.wheelbase            = wheelbase_;
-  lqr_config.turn_mode_enter_m    = turn_mode_enter_m_;
-  lqr_config.turn_mode_exit_m     = turn_mode_exit_m_;
-  lqr_config.max_steer_rad        = max_steer_deg_ / kRad2Deg;
-  lqr_config.snap_forward_points  = snap_forward_points_;
-  lqr_config.work_speed           = work_speed_;
-  lqr_config.turn_speed           = turn_speed_;
-  lqr_config.turn_speed_preview_m = turn_speed_preview_m_;
-  lqr_config.turn_speed_hold_m    = turn_speed_hold_m_;
+  lqr_config.dt                     = 1.0 / control_hz_;
+  lqr_config.eps                    = lqr_eps;
+  lqr_config.max_iteration          = lqr_max_iteration;
+  lqr_config.q_lateral              = lqr_q_lateral;
+  lqr_config.q_heading              = lqr_q_heading;
+  lqr_config.r_steer                = lqr_r_steer;
+  lqr_config.wheelbase              = wheelbase_;
+  lqr_config.turn_mode_enter_m      = turn_mode_enter_m_;
+  lqr_config.turn_mode_exit_m       = turn_mode_exit_m_;
+  lqr_config.max_steer_rad          = max_steer_deg_ / kRad2Deg;
+  lqr_config.snap_forward_points    = snap_forward_points_;
+  lqr_config.work_speed             = work_speed_;
+  lqr_config.turn_speed             = turn_speed_;
+  lqr_config.turn_speed_preview_m   = turn_speed_preview_m_;
+  lqr_config.turn_speed_hold_m      = turn_speed_hold_m_;
   lqr_config.pose_at_vehicle_center = pose_at_vehicle_center;
   lqr_->Configure(lqr_config);
 

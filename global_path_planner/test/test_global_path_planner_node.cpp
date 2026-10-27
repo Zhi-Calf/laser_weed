@@ -1,20 +1,18 @@
 // 节点级契约: 用一组有效的 YAML 参数启动 GlobalPathPlannerNode, 验证它确实发布
 // /global_path_planner/path, 且路径、类型数组和坐标系与发布端约定一致。
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <rclcpp/executors/single_threaded_executor.hpp>
+#include <rclcpp/rclcpp.hpp>
 #include <string>
 #include <thread>
 #include <vector>
-
-#include <unistd.h>
-
-#include <rclcpp/executors/single_threaded_executor.hpp>
-#include <rclcpp/rclcpp.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
 #include "global_path_planner/bow.hpp"
@@ -25,17 +23,25 @@ namespace {
 
 // 20 m x 10 m 的矩形，靠近 YAML 默认仿真区域；第一个顶点同时是 ENU 原点。
 std::vector<double> TestPolygon() {
-  constexpr double lat0 = 34.62;
-  constexpr double lon0 = 112.45;
+  constexpr double lat0               = 34.62;
+  constexpr double lon0               = 112.45;
   constexpr double meters_per_deg_lat = 111320.0;
-  const double meters_per_deg_lon       = meters_per_deg_lat * std::cos(lat0 * M_PI / 180.0);
-  const double dlat                     = 10.0 / meters_per_deg_lat;
-  const double dlon                     = 20.0 / meters_per_deg_lon;
+  const double meters_per_deg_lon     = meters_per_deg_lat * std::cos(lat0 * M_PI / 180.0);
+  const double dlat                   = 10.0 / meters_per_deg_lat;
+  const double dlon                   = 20.0 / meters_per_deg_lon;
   return {
-    lat0, lon0, 100.0,
-    lat0, lon0 + dlon, 100.0,
-    lat0 + dlat, lon0 + dlon, 100.0,
-    lat0 + dlat, lon0, 100.0,
+    lat0,
+    lon0,
+    100.0,
+    lat0,
+    lon0 + dlon,
+    100.0,
+    lat0 + dlat,
+    lon0 + dlon,
+    100.0,
+    lat0 + dlat,
+    lon0,
+    100.0,
   };
 }
 
@@ -63,8 +69,7 @@ struct TempDirGuard {
 }   // namespace
 
 TEST_F(GlobalPathPlannerNodeTest, PublishesPathWithMatchingTypesAndFrame) {
-  const std::filesystem::path log_dir = std::filesystem::temp_directory_path() /
-                                        ("global_path_planner_node_test_" + std::to_string(::getpid()));
+  const std::filesystem::path log_dir = std::filesystem::temp_directory_path() / ("global_path_planner_node_test_" + std::to_string(::getpid()));
   TempDirGuard cleanup{log_dir};
 
   auto options = rclcpp::NodeOptions();
@@ -85,28 +90,21 @@ TEST_F(GlobalPathPlannerNodeTest, PublishesPathWithMatchingTypesAndFrame) {
   weeder_msgs::msg::Path::SharedPtr received;
   visualization_msgs::msg::Marker::SharedPtr work_points;
   visualization_msgs::msg::Marker::SharedPtr turn_points;
-  auto subscription = listener->create_subscription<weeder_msgs::msg::Path>(
-    "/global_path_planner/path", rclcpp::QoS(1).transient_local(),
-    [&received](weeder_msgs::msg::Path::SharedPtr msg) { received = std::move(msg); });
-  auto work_subscription =
-    listener->create_subscription<visualization_msgs::msg::Marker>(
-      "/global_path_planner/work_points", 10,
-      [&work_points](visualization_msgs::msg::Marker::SharedPtr msg) {
-        work_points = std::move(msg);
-      });
-  auto turn_subscription =
-    listener->create_subscription<visualization_msgs::msg::Marker>(
-      "/global_path_planner/turn_points", 10,
-      [&turn_points](visualization_msgs::msg::Marker::SharedPtr msg) {
-        turn_points = std::move(msg);
-      });
+  auto subscription      = listener->create_subscription<weeder_msgs::msg::Path>("/global_path_planner/path", rclcpp::QoS(1).transient_local(), [&received](weeder_msgs::msg::Path::SharedPtr msg) {
+    received = std::move(msg);
+  });
+  auto work_subscription = listener->create_subscription<visualization_msgs::msg::Marker>("/global_path_planner/work_points", 10, [&work_points](visualization_msgs::msg::Marker::SharedPtr msg) {
+    work_points = std::move(msg);
+  });
+  auto turn_subscription = listener->create_subscription<visualization_msgs::msg::Marker>("/global_path_planner/turn_points", 10, [&turn_points](visualization_msgs::msg::Marker::SharedPtr msg) {
+    turn_points = std::move(msg);
+  });
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(planner_node);
   executor.add_node(listener);
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while ((!received || !work_points || !turn_points) &&
-         std::chrono::steady_clock::now() < deadline) {
+  while ((!received || !work_points || !turn_points) && std::chrono::steady_clock::now() < deadline) {
     executor.spin_some(std::chrono::milliseconds(50));
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
@@ -121,9 +119,7 @@ TEST_F(GlobalPathPlannerNodeTest, PublishesPathWithMatchingTypesAndFrame) {
   EXPECT_EQ(received->header.frame_id, "odom");
   ASSERT_EQ(received->x.size(), received->y.size());
   ASSERT_EQ(received->x.size(), received->waypoint_types.size());
-  EXPECT_NE(std::find(received->waypoint_types.begin(), received->waypoint_types.end(), kSegTurn),
-            received->waypoint_types.end())
-    << "20x10 地块应至少包含一段掉头";
+  EXPECT_NE(std::find(received->waypoint_types.begin(), received->waypoint_types.end(), kSegTurn), received->waypoint_types.end()) << "20x10 地块应至少包含一段掉头";
   for (size_t i = 0; i < received->x.size(); ++i) {
     EXPECT_TRUE(std::isfinite(received->x[i])) << "第 " << i << " 个 x 不是有限数";
     EXPECT_TRUE(std::isfinite(received->y[i])) << "第 " << i << " 个 y 不是有限数";
@@ -139,6 +135,5 @@ TEST_F(GlobalPathPlannerNodeTest, PublishesPathWithMatchingTypesAndFrame) {
   EXPECT_EQ(turn_points->action, visualization_msgs::msg::Marker::ADD);
   EXPECT_GT(work_points->color.g, work_points->color.r);
   EXPECT_GT(turn_points->color.r, turn_points->color.g);
-  EXPECT_EQ(work_points->points.size() + turn_points->points.size(),
-            received->x.size());
+  EXPECT_EQ(work_points->points.size() + turn_points->points.size(), received->x.size());
 }

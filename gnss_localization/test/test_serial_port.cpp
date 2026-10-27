@@ -1,8 +1,7 @@
+#include <fcntl.h>
 #include <gtest/gtest.h>
 #include <spdlog/sinks/ostream_sink.h>
 #include <spdlog/spdlog.h>
-
-#include <fcntl.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -17,7 +16,7 @@
 namespace {
 
 class PtyPair {
- public:
+public:
   PtyPair() {
     master_fd_ = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (master_fd_ < 0) {
@@ -52,16 +51,15 @@ class PtyPair {
     return slave_path_;
   }
 
- private:
-  int master_fd_ = -1;  // PTY 主端
-  std::string slave_path_;  // PTY 从端路径
+private:
+  int master_fd_ = -1;       // PTY 主端
+  std::string slave_path_;   // PTY 从端路径
 };
 
 bool WriteAll(int fd, const std::string& data) {
   std::size_t written = 0;
   while (written < data.size()) {
-    const ssize_t count =
-        write(fd, data.data() + written, data.size() - written);
+    const ssize_t count = write(fd, data.data() + written, data.size() - written);
     if (count > 0) {
       written += static_cast<std::size_t>(count);
       continue;
@@ -75,12 +73,8 @@ bool WriteAll(int fd, const std::string& data) {
 }
 
 class ScopedLogCapture {
- public:
-  ScopedLogCapture()
-      : sink_(std::make_shared<spdlog::sinks::ostream_sink_mt>(stream_)),
-        logger_(std::make_shared<spdlog::logger>(
-            "serial_port_test", sink_)),
-        previous_(spdlog::default_logger()) {
+public:
+  ScopedLogCapture() : sink_(std::make_shared<spdlog::sinks::ostream_sink_mt>(stream_)), logger_(std::make_shared<spdlog::logger>("serial_port_test", sink_)), previous_(spdlog::default_logger()) {
     logger_->set_pattern("%l|%v");
     logger_->set_level(spdlog::level::trace);
     spdlog::set_default_logger(logger_);
@@ -95,14 +89,14 @@ class ScopedLogCapture {
     return stream_.str();
   }
 
- private:
-  std::ostringstream stream_;  // 日志文本
-  std::shared_ptr<spdlog::sinks::ostream_sink_mt> sink_;  // 测试 sink
-  std::shared_ptr<spdlog::logger> logger_;  // 测试日志器
-  std::shared_ptr<spdlog::logger> previous_;  // 原默认日志器
+private:
+  std::ostringstream stream_;                              // 日志文本
+  std::shared_ptr<spdlog::sinks::ostream_sink_mt> sink_;   // 测试 sink
+  std::shared_ptr<spdlog::logger> logger_;                 // 测试日志器
+  std::shared_ptr<spdlog::logger> previous_;               // 原默认日志器
 };
 
-}  // namespace
+}   // namespace
 
 TEST(SerialPort, RejectsUnsupportedBaudRate) {
   PtyPair pty;
@@ -112,8 +106,7 @@ TEST(SerialPort, RejectsUnsupportedBaudRate) {
   gnss_localization::SerialPort port;
   EXPECT_FALSE(port.open(pty.slave_path(), 12345));
   EXPECT_FALSE(port.is_open());
-  EXPECT_NE(
-      logs.Text().find("不支持的串口波特率 12345"), std::string::npos);
+  EXPECT_NE(logs.Text().find("不支持的串口波特率 12345"), std::string::npos);
 }
 
 TEST(SerialPort, InvalidBaudRateKeepsExistingConnection) {
@@ -157,9 +150,10 @@ TEST(SerialPort, FlushesCachedLineAtNextDollar) {
   std::vector<std::string> lines;
   ASSERT_TRUE(WriteAll(pty.master_fd(), "$PART$GOOD\r\n"));
   EXPECT_EQ(
-      port.read_lines(
-          [&lines](const std::string& line) { lines.push_back(line); }),
-      2);
+    port.read_lines([&lines](const std::string& line) {
+      lines.push_back(line);
+    }),
+    2);
 
   ASSERT_EQ(lines.size(), 2u);
   EXPECT_EQ(lines[0], "$PART");
@@ -175,9 +169,7 @@ TEST(SerialPort, ClosedPortReturnsNoLines) {
   port.close();
 
   EXPECT_FALSE(port.is_open());
-  EXPECT_EQ(
-      port.read_lines([](const std::string&) {}),
-      0);
+  EXPECT_EQ(port.read_lines([](const std::string&) {}), 0);
 }
 
 TEST(SerialPort, WritesRawBytes) {
@@ -220,8 +212,7 @@ TEST(SerialPort, InvalidDeviceLeavesPortClosed) {
   gnss_localization::SerialPort port;
   EXPECT_FALSE(port.open("/dev/does-not-exist", 115200));
   EXPECT_FALSE(port.is_open());
-  EXPECT_NE(
-      logs.Text().find("/dev/does-not-exist"), std::string::npos);
+  EXPECT_NE(logs.Text().find("/dev/does-not-exist"), std::string::npos);
 }
 
 TEST(SerialPort, InvalidTerminalLeavesPortClosed) {
@@ -229,7 +220,5 @@ TEST(SerialPort, InvalidTerminalLeavesPortClosed) {
   gnss_localization::SerialPort port;
   EXPECT_FALSE(port.open("/dev/null", 115200));
   EXPECT_FALSE(port.is_open());
-  EXPECT_NE(
-      logs.Text().find("读取串口 /dev/null 参数失败"),
-      std::string::npos);
+  EXPECT_NE(logs.Text().find("读取串口 /dev/null 参数失败"), std::string::npos);
 }

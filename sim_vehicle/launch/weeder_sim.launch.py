@@ -18,6 +18,8 @@
 #    所以所有数值型覆盖都用 ParameterValue(..., value_type=float/int) 显式转换。
 import os
 
+import yaml
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -32,9 +34,14 @@ def generate_launch_description():
     planner_share = get_package_share_directory('global_path_planner')
     tracker_share = get_package_share_directory('path_tracker')
 
+    sim_params = os.path.join(sim_share, 'config', 'sim_vehicle.yaml')
     rviz_config = os.path.join(sim_share, 'rviz', 'weeder_sim.rviz')
     planner_params = os.path.join(planner_share, 'config', 'global_path_planner.yaml')
     tracker_params = os.path.join(tracker_share, 'config', 'path_tracker.yaml')
+
+    # launch 参数默认值统一从 sim_vehicle.yaml 读取，命令行仍可覆盖。
+    with open(sim_params, encoding='utf-8') as stream:
+        sim_defaults = yaml.safe_load(stream)['sim_vehicle']['ros__parameters']
 
     # ---- 启动参数 ----
     # wheelbase 同时传给仿真车辆与控制器，两者**必须一致**：否则仿真的"真实车辆"
@@ -53,6 +60,8 @@ def generate_launch_description():
         LaunchConfiguration('vehicle_height'), value_type=float)
     max_plant_steer = ParameterValue(
         LaunchConfiguration('max_plant_steer_deg'), value_type=float)
+    max_speed = ParameterValue(
+        LaunchConfiguration('max_speed_m_s'), value_type=float)
     cmd_timeout = ParameterValue(
         LaunchConfiguration('cmd_timeout_s'), value_type=float)
     # 垄宽决定弓字形行距，也决定地头掉头半径（= 垄宽/2）。
@@ -73,22 +82,22 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            'wheelbase', default_value='1.521',
+            'wheelbase', default_value=str(sim_defaults['wheelbase']),
             description='Isaac 底盘前后轴距(m)，车辆与控制器共用'),
         DeclareLaunchArgument(
-            'wheel_track', default_value='1.306',
+            'wheel_track', default_value=str(sim_defaults['wheel_track']),
             description='Isaac 底盘左右轮中心距(m)'),
         DeclareLaunchArgument(
-            'wheel_radius', default_value='0.29',
+            'wheel_radius', default_value=str(sim_defaults['wheel_radius_m']),
             description='Isaac 底盘车轮半径(m)'),
         DeclareLaunchArgument(
-            'vehicle_length', default_value='1.8',
+            'vehicle_length', default_value=str(sim_defaults['vehicle_length_m']),
             description='Isaac 车体长度(m)'),
         DeclareLaunchArgument(
-            'vehicle_width', default_value='1.2',
+            'vehicle_width', default_value=str(sim_defaults['vehicle_width_m']),
             description='Isaac 车体宽度(m)'),
         DeclareLaunchArgument(
-            'vehicle_height', default_value='0.5',
+            'vehicle_height', default_value=str(sim_defaults['vehicle_height_m']),
             description='Isaac 车体高度(m)'),
         DeclareLaunchArgument(
             'ridge_width', default_value='2.5',
@@ -106,8 +115,13 @@ def generate_launch_description():
             'align_offset', default_value='0.2',
             description='对齐路径起点时故意留的初始横向偏差(m)，用于观察收敛'),
         DeclareLaunchArgument(
-            'max_plant_steer_deg', default_value='90.0',
+            'max_plant_steer_deg',
+            default_value=str(sim_defaults['max_plant_steer_deg']),
             description='仿真底盘单轮最大转向角(deg)'),
+        DeclareLaunchArgument(
+            'max_speed_m_s',
+            default_value=str(sim_defaults['max_speed_m_s']),
+            description='仿真底盘最大速度(m/s)'),
         DeclareLaunchArgument(
             'cmd_timeout_s', default_value='0.3',
             description='底盘指令超时(s)，与 weeder_base 默认值一致'),
@@ -124,7 +138,7 @@ def generate_launch_description():
             executable='sim_vehicle',
             name='sim_vehicle',
             output='screen',
-            parameters=[{
+            parameters=[sim_params, {
                 'wheelbase': wheelbase,
                 'wheel_track': wheel_track,
                 'wheel_radius_m': wheel_radius,
@@ -132,6 +146,7 @@ def generate_launch_description():
                 'vehicle_width_m': vehicle_width,
                 'vehicle_height_m': vehicle_height,
                 'max_plant_steer_deg': max_plant_steer,
+                'max_speed_m_s': max_speed,
                 'cmd_timeout_s': cmd_timeout,
                 'align_to_path_start': True,
                 'align_lateral_offset': align_offset,
