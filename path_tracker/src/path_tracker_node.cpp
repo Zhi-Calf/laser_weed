@@ -1,4 +1,4 @@
-// 版权所有 2026。四轮转向 LQR 的 ROS 2 节点实现。
+// 版权所有 2026。四轮转向 LQR/PID 的 ROS 2 节点实现。
 #include "path_tracker/path_tracker_node.hpp"
 
 #include <spdlog/spdlog.h>
@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <stdexcept>
 #include <utility>
 
 #include "path_tracker/logging.hpp"
@@ -17,6 +18,16 @@ constexpr double kRad2Deg = 57.29577951308232;
 
 /// 日志中使用的节点名称。
 constexpr const char* kNodeName = "path_tracker";
+
+double NormalizeAngle(double angle) {
+  while (angle > M_PI) {
+    angle -= 2.0 * M_PI;
+  }
+  while (angle < -M_PI) {
+    angle += 2.0 * M_PI;
+  }
+  return angle;
+}
 
 }   // namespace
 
@@ -54,13 +65,16 @@ PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNod
     max_steer_deg_,
     control_hz_);
   SPDLOG_INFO(
-    "订阅 位姿={} 路径={} 工作模式={} 避停状态={} | 发布 {} | 避停门控={}",
+    "订阅 位姿={} 路径={} 工作模式={} 避停状态={} 稻行={} | 发布 {} | "
+    "避停门控={} 稻行PID={}",
     pose_topic_,
     path_topic_,
     work_mode_topic_,
     velocity_planner_status_topic_,
+    crop_row_topic_,
     cmd_topic_,
-    require_velocity_planner_ ? "开启" : "关闭");
+    require_velocity_planner_ ? "开启" : "关闭",
+    row_pid_enabled_ ? "开启" : "关闭");
 }
 
 // 读取日志配置参数。
@@ -84,31 +98,62 @@ void PathTrackerNode::loadLogParameters() {
 // 输出:
 //   节点成员中的控制器配置和安全阈值。
 void PathTrackerNode::loadParameters() {
-  control_hz_                        = declare_parameter<double>("control_hz", 10.0);
-  wheelbase_                         = declare_parameter<double>("wheelbase", 1.0);
-  turn_mode_enter_m_                 = declare_parameter<double>("turn_mode_enter_m", 0.6);
-  turn_mode_exit_m_                  = declare_parameter<double>("turn_mode_exit_m", 0.6);
-  max_steer_deg_                     = declare_parameter<double>("max_steer_deg", 90.0);
-  work_speed_                        = declare_parameter<double>("work_speed_m_s", 0.6);
-  turn_speed_                        = declare_parameter<double>("turn_speed_m_s", 0.3);
-  turn_speed_preview_m_              = declare_parameter<double>("turn_speed_preview_m", 1.0);
-  turn_speed_hold_m_                 = declare_parameter<double>("turn_speed_hold_m", 0.5);
-  speed_ramp_mps2_                   = declare_parameter<double>("speed_ramp_mps2", 0.5);
-  max_lateral_error_m_               = declare_parameter<double>("max_lateral_error_m", 0.3);
-  max_track_error_m_                 = declare_parameter<double>("max_track_error_m", 3.0);
-  snap_forward_points_               = static_cast<size_t>(declare_parameter<int64_t>("snap_forward_points", 20));
-  pose_timeout_s_                    = declare_parameter<double>("pose_timeout_s", 1.0);
-  path_timeout_s_                    = declare_parameter<double>("path_timeout_s", 1.0);
-  work_mode_timeout_s_               = declare_parameter<double>("work_mode_timeout_s", 1.0);
-  velocity_planner_status_timeout_s_ = declare_parameter<double>("velocity_planner_status_timeout_s", 1.0);
-  require_velocity_planner_          = declare_parameter<bool>("require_velocity_planner", true);
-  frame_id_                          = declare_parameter<std::string>("frame_id", "odom");
-  pose_topic_                        = declare_parameter<std::string>("pose_topic", "/gnss_driver/pose");
-  path_topic_                        = declare_parameter<std::string>("path_topic", "/global_path_planner/path");
-  work_mode_topic_                   = declare_parameter<std::string>("work_mode_topic", "/work_mode");
-  velocity_planner_status_topic_     = declare_parameter<std::string>("velocity_planner_status_topic", "/velocity_planner/status");
-  cmd_topic_                         = declare_parameter<std::string>("cmd_topic", "/chassis/cmd");
-  viz_                               = declare_parameter<bool>("viz", true);
+  control_hz_                         = declare_parameter<double>("control_hz", 10.0);
+  wheelbase_                          = declare_parameter<double>("wheelbase", 1.0);
+  turn_mode_enter_m_                  = declare_parameter<double>("turn_mode_enter_m", 0.6);
+  turn_mode_exit_m_                   = declare_parameter<double>("turn_mode_exit_m", 0.6);
+  max_steer_deg_                      = declare_parameter<double>("max_steer_deg", 90.0);
+  max_steer_rate_rad_s_               = declare_parameter<double>("max_steer_rate_deg_s", 90.0) / kRad2Deg;
+  work_speed_                         = declare_parameter<double>("work_speed_m_s", 0.6);
+  turn_speed_                         = declare_parameter<double>("turn_speed_m_s", 0.3);
+  turn_speed_preview_m_               = declare_parameter<double>("turn_speed_preview_m", 1.0);
+  turn_speed_hold_m_                  = declare_parameter<double>("turn_speed_hold_m", 0.5);
+  speed_ramp_mps2_                    = declare_parameter<double>("speed_ramp_mps2", 0.5);
+  max_lateral_error_m_                = declare_parameter<double>("max_lateral_error_m", 0.3);
+  max_track_error_m_                  = declare_parameter<double>("max_track_error_m", 3.0);
+  snap_forward_points_                = static_cast<size_t>(declare_parameter<int64_t>("snap_forward_points", 20));
+  pose_timeout_s_                     = declare_parameter<double>("pose_timeout_s", 1.0);
+  path_timeout_s_                     = declare_parameter<double>("path_timeout_s", 1.0);
+  work_mode_timeout_s_                = declare_parameter<double>("work_mode_timeout_s", 1.0);
+  velocity_planner_status_timeout_s_  = declare_parameter<double>("velocity_planner_status_timeout_s", 1.0);
+  require_velocity_planner_           = declare_parameter<bool>("require_velocity_planner", true);
+  frame_id_                           = declare_parameter<std::string>("frame_id", "odom");
+  pose_topic_                         = declare_parameter<std::string>("pose_topic", "/gnss_driver/pose");
+  path_topic_                         = declare_parameter<std::string>("path_topic", "/global_path_planner/path");
+  work_mode_topic_                    = declare_parameter<std::string>("work_mode_topic", "/work_mode");
+  velocity_planner_status_topic_      = declare_parameter<std::string>("velocity_planner_status_topic", "/velocity_planner/status");
+  cmd_topic_                          = declare_parameter<std::string>("cmd_topic", "/chassis/cmd");
+  viz_                                = declare_parameter<bool>("viz", true);
+  row_pid_enabled_                    = declare_parameter<bool>("row_pid_enabled", false);
+  crop_row_topic_                     = declare_parameter<std::string>("crop_row_topic", "/crop_row/observation");
+  crop_row_frame_id_                  = declare_parameter<std::string>("crop_row_frame_id", "base_link");
+  crop_row_timeout_s_                 = declare_parameter<double>("crop_row_timeout_s", 0.3);
+  crop_row_min_confidence_            = declare_parameter<double>("crop_row_min_confidence", 0.5);
+  row_pid_pre_turn_m_                 = declare_parameter<double>("row_pid_pre_turn_m", 3.0);
+  row_pid_lookahead_m_                = declare_parameter<double>("row_pid_lookahead_m", 1.0);
+  const int64_t row_pid_resume_frames = declare_parameter<int64_t>("row_pid_resume_frames", 3);
+  row_pid_resume_frames_              = static_cast<std::size_t>(std::max<int64_t>(1, row_pid_resume_frames));
+  row_pid_config_.kp_rad_per_m        = declare_parameter<double>("row_pid_kp_rad_per_m", 0.4);
+  row_pid_config_.ki_rad_per_m_s      = declare_parameter<double>("row_pid_ki_rad_per_m_s", 0.02);
+  row_pid_config_.kd_rad_s_per_m      = declare_parameter<double>("row_pid_kd_rad_s_per_m", 0.08);
+  row_pid_config_.heading_gain        = declare_parameter<double>("row_pid_heading_gain", 0.3);
+  row_pid_config_.derivative_tau_s    = declare_parameter<double>("row_pid_derivative_tau_s", 0.15);
+  row_pid_config_.integral_limit_rad  = declare_parameter<double>("row_pid_integral_limit_rad", 0.1);
+
+  if (!std::isfinite(max_steer_rate_rad_s_) || max_steer_rate_rad_s_ <= 0.0) {
+    SPDLOG_WARN("max_steer_rate_deg_s={} 非法，回退为 90 deg/s", max_steer_rate_rad_s_ * kRad2Deg);
+    max_steer_rate_rad_s_ = M_PI / 2.0;
+  }
+  if (
+    row_pid_enabled_ &&
+    (crop_row_topic_.empty() || crop_row_frame_id_.empty() || !std::isfinite(crop_row_timeout_s_) || crop_row_timeout_s_ <= 0.0 || !std::isfinite(crop_row_min_confidence_) || crop_row_min_confidence_ < 0.0 ||
+     crop_row_min_confidence_ > 1.0 || !std::isfinite(row_pid_pre_turn_m_) || row_pid_pre_turn_m_ < turn_mode_enter_m_ || !std::isfinite(row_pid_lookahead_m_) || row_pid_lookahead_m_ < 0.0 ||
+     row_pid_resume_frames < 1 || !std::isfinite(row_pid_config_.kp_rad_per_m) || !std::isfinite(row_pid_config_.ki_rad_per_m_s) || !std::isfinite(row_pid_config_.kd_rad_s_per_m) ||
+     !std::isfinite(row_pid_config_.heading_gain) || !std::isfinite(row_pid_config_.derivative_tau_s) || row_pid_config_.derivative_tau_s <= 0.0 || !std::isfinite(row_pid_config_.integral_limit_rad) ||
+     row_pid_config_.integral_limit_rad < 0.0)) {
+    throw std::invalid_argument("invalid row PID tracking configuration");
+  }
+  row_pid_.Configure(row_pid_config_);
 
   const double lqr_eps              = declare_parameter<double>("lqr_eps", 1e-6);
   const int lqr_max_iteration       = static_cast<int>(declare_parameter<int64_t>("lqr_max_iteration", 1000));
@@ -138,10 +183,11 @@ void PathTrackerNode::loadParameters() {
 
   SPDLOG_INFO(
     "控制参数加载完成: control_hz={:.1f}Hz wheelbase={:.3f}m "
-    "max_steer={:.1f}° snap_forward_points={}",
+    "max_steer={:.1f}° max_steer_rate={:.1f}°/s snap_forward_points={}",
     control_hz_,
     wheelbase_,
     max_steer_deg_,
+    max_steer_rate_rad_s_ * kRad2Deg,
     snap_forward_points_);
   SPDLOG_INFO(
     "速度参数: work={:.3f}m/s turn={:.3f}m/s ramp={:.3f}m/s² "
@@ -185,6 +231,15 @@ void PathTrackerNode::loadParameters() {
     lqr_config.q_heading,
     lqr_config.r_steer,
     pose_at_vehicle_center);
+  SPDLOG_INFO(
+    "稻行混合跟踪: enabled={} topic={} pre_turn={:.2f}m "
+    "lookahead={:.2f}m resume_frames={} confidence={:.2f}",
+    row_pid_enabled_,
+    crop_row_topic_,
+    row_pid_pre_turn_m_,
+    row_pid_lookahead_m_,
+    row_pid_resume_frames_,
+    crop_row_min_confidence_);
 }
 
 // 创建位姿、路径、模式、避停状态订阅及控制输出接口。
@@ -214,6 +269,13 @@ void PathTrackerNode::setupInterfaces() {
   obstacle_status_sub_    = create_subscription<weeder_msgs::msg::ObstacleStatus>(velocity_planner_status_topic_, obstacle_qos, [this](const weeder_msgs::msg::ObstacleStatus::SharedPtr msg) {
     ObstacleStatusCallback(msg);
   });
+
+  if (row_pid_enabled_) {
+    const auto crop_row_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile();
+    crop_row_sub_           = create_subscription<weeder_msgs::msg::CropRowObservation>(crop_row_topic_, crop_row_qos, [this](const weeder_msgs::msg::CropRowObservation::SharedPtr msg) {
+      cropRowCallback(msg);
+    });
+  }
 
   // 发布控制指令
   cmd_pub_ = create_publisher<weeder_msgs::msg::ChassisCmd>(cmd_topic_, 10);
@@ -292,6 +354,9 @@ void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) 
   accept_path_message_ = false;
   path_point_count_    = traj.size();
   last_speed_cmd_      = 0.0;
+  row_pid_.Reset();
+  crop_row_valid_streak_ = 0;
+  tracking_mode_         = TrackingMode::kLqrRow;
   lqr_->SetTrajectory(traj);
 
   SPDLOG_INFO(
@@ -352,9 +417,123 @@ void PathTrackerNode::ObstacleStatusCallback(const weeder_msgs::msg::ObstacleSta
   }
 }
 
+// 检查稻行观测是否满足控制输入的数据、时间、坐标系和数值约定。
+// 返回:
+//   true = 可作为视觉 PID 目标
+bool PathTrackerNode::IsCropRowObservationUsable(const weeder_msgs::msg::CropRowObservation& observation, const rclcpp::Time& now) const {
+  if (
+    !observation.has_capture_time || observation.replay || observation.session_id.empty() || observation.sequence == 0 || observation.status != weeder_msgs::msg::CropRowObservation::VALID ||
+    observation.header.frame_id != crop_row_frame_id_ || !std::isfinite(observation.lateral_error_m) || !std::isfinite(observation.heading_error_rad) || !std::isfinite(observation.lookahead_m) ||
+    observation.lookahead_m <= 0.0 || !std::isfinite(observation.confidence) || observation.confidence < crop_row_min_confidence_ || observation.confidence > 1.0 || !std::isfinite(observation.processing_ms) ||
+    observation.processing_ms < 0.0 || !std::isfinite(observation.frame_age_ms) || observation.frame_age_ms < 0.0) {
+    return false;
+  }
+
+  const rclcpp::Time capture_time(observation.header.stamp);
+  if (capture_time.nanoseconds() <= 0 || capture_time > now) {
+    return false;
+  }
+  return (now - capture_time).seconds() <= crop_row_timeout_s_;
+}
+
+// 接收益苗行观测，按会话和新帧序号维护连续有效计数。
+// 输入:
+//   msg : 稻行中心线观测
+void PathTrackerNode::cropRowCallback(const weeder_msgs::msg::CropRowObservation::SharedPtr msg) {
+  if (msg->session_id != crop_row_session_) {
+    crop_row_session_      = msg->session_id;
+    crop_row_sequence_     = 0;
+    crop_row_valid_streak_ = 0;
+    latest_crop_row_.reset();
+  }
+
+  const rclcpp::Time now_time = now();
+  const bool usable           = IsCropRowObservationUsable(*msg, now_time);
+  if (msg->sequence < crop_row_sequence_) {
+    latest_crop_row_.reset();
+    crop_row_valid_streak_ = 0;
+    return;
+  }
+  if (msg->sequence == crop_row_sequence_) {
+    if (!usable) {
+      latest_crop_row_.reset();
+      crop_row_valid_streak_ = 0;
+    }
+    return;
+  }
+
+  crop_row_sequence_ = msg->sequence;
+  if (usable) {
+    latest_crop_row_ = msg;
+    ++crop_row_valid_streak_;
+  } else {
+    latest_crop_row_.reset();
+    crop_row_valid_streak_ = 0;
+  }
+}
+
+// 将视觉中心线转换为 PID 使用的车体坐标前视误差。
+RowPidTarget PathTrackerNode::MakeVisionPidTarget(const weeder_msgs::msg::CropRowObservation& observation) const {
+  RowPidTarget target;
+  target.lateral_error_m   = observation.lateral_error_m;
+  target.heading_error_rad = observation.heading_error_rad;
+  target.lookahead_m       = row_pid_lookahead_m_;
+  return target;
+}
+
+// 将当前全局 WORK 目标点及其切向转换为车体坐标下的行内直线。
+RowPidTarget PathTrackerNode::MakeGlobalPidTarget(const LQROutput& lqr_output) const {
+  const TrajectoryPoint& target = lqr_output.target_pt;
+  const double dx               = target.x - robot_state_.x;
+  const double dy               = target.y - robot_state_.y;
+  const double cos_yaw          = std::cos(robot_state_.heading);
+  const double sin_yaw          = std::sin(robot_state_.heading);
+  const double target_x_body    = cos_yaw * dx + sin_yaw * dy;
+  const double target_y_body    = -sin_yaw * dx + cos_yaw * dy;
+  const double heading_error    = NormalizeAngle(target.heading - robot_state_.heading);
+  const double slope            = std::tan(heading_error);
+
+  RowPidTarget pid_target;
+  pid_target.lateral_error_m   = target_y_body - slope * target_x_body;
+  pid_target.heading_error_rad = heading_error;
+  pid_target.lookahead_m       = row_pid_lookahead_m_;
+  return pid_target;
+}
+
+// 根据全局路径进度和视觉观测状态选择当前控制模式。
+PathTrackerNode::TrackingMode PathTrackerNode::SelectTrackingMode(const LQROutput& lqr_output, const rclcpp::Time& now_time) const {
+  if (lqr_output.steer_mode == 1) {
+    return TrackingMode::kLqrTurn;
+  }
+  if (!row_pid_enabled_) {
+    return TrackingMode::kLqrRow;
+  }
+  if (lqr_output.distance_to_turn_m <= row_pid_pre_turn_m_) {
+    return TrackingMode::kPidGlobal;
+  }
+  if (latest_crop_row_ && crop_row_valid_streak_ >= row_pid_resume_frames_ && IsCropRowObservationUsable(*latest_crop_row_, now_time)) {
+    return TrackingMode::kPidVision;
+  }
+  return TrackingMode::kLqrRow;
+}
+
+const char* PathTrackerNode::TrackingModeName(TrackingMode mode) {
+  switch (mode) {
+    case TrackingMode::kLqrRow:
+      return "lqr_row";
+    case TrackingMode::kPidVision:
+      return "pid_vision";
+    case TrackingMode::kPidGlobal:
+      return "pid_global";
+    case TrackingMode::kLqrTurn:
+      return "lqr_turn";
+  }
+  return "unknown";
+}
+
 // 发布零速、零转角和未使能状态的停车指令。
 // 副作用:
-//   发布 /chassis/cmd 并清零速度平滑状态。
+//   发布 /chassis/cmd，并清零速度和转角变化率限制状态。
 void PathTrackerNode::publishStop() {
   weeder_msgs::msg::ChassisCmd zero;
   zero.gear            = 0;
@@ -365,7 +544,11 @@ void PathTrackerNode::publishStop() {
   zero.speed_m_s       = 0.0;
   zero.steer_angle_rad = 0.0;
   cmd_pub_->publish(zero);
-  last_speed_cmd_ = 0.0;
+  last_speed_cmd_     = 0.0;
+  last_steer_cmd_rad_ = 0.0;
+  row_pid_.Reset();
+  crop_row_valid_streak_ = 0;
+  tracking_mode_         = TrackingMode::kLqrRow;
 }
 
 // 执行一次安全门控、轨迹推进和 LQR 控制。
@@ -450,8 +633,58 @@ void PathTrackerNode::controlTick() {
     return;
   }
 
+  if (latest_crop_row_ && !IsCropRowObservationUsable(*latest_crop_row_, t)) {
+    SPDLOG_WARN("稻行观测已过期或无效，退出视觉 PID");
+    latest_crop_row_.reset();
+    crop_row_valid_streak_ = 0;
+  }
+  const TrackingMode previous_mode = tracking_mode_;
+  TrackingMode selected_mode       = SelectTrackingMode(out, t);
+  if (selected_mode == TrackingMode::kLqrTurn && previous_mode != TrackingMode::kLqrTurn) {
+    crop_row_valid_streak_ = 0;
+    row_pid_.Reset();
+  } else if (previous_mode == TrackingMode::kLqrTurn && selected_mode != TrackingMode::kLqrTurn) {
+    crop_row_valid_streak_ = 0;
+    row_pid_.Reset();
+    selected_mode = TrackingMode::kLqrRow;
+  } else if (selected_mode != previous_mode) {
+    row_pid_.Reset();
+  }
+  tracking_mode_ = selected_mode;
+
+  RowPidOutput pid_output;
+  RowPidTarget pid_target;
+  double target_delta           = out.vel_cmd.steer_angle;
+  double lateral_error_for_gate = out.lateral_error;
+  int steer_mode                = out.steer_mode;
+  const double max_steer_rad    = max_steer_deg_ / kRad2Deg;
+  if (tracking_mode_ == TrackingMode::kPidVision) {
+    pid_target             = MakeVisionPidTarget(*latest_crop_row_);
+    pid_output             = row_pid_.Compute(pid_target, 1.0 / control_hz_);
+    target_delta           = std::clamp(pid_output.steer_rad, -max_steer_rad, max_steer_rad);
+    lateral_error_for_gate = pid_target.lateral_error_m;
+    steer_mode             = 0;
+  } else if (tracking_mode_ == TrackingMode::kPidGlobal) {
+    pid_target             = MakeGlobalPidTarget(out);
+    pid_output             = row_pid_.Compute(pid_target, 1.0 / control_hz_);
+    target_delta           = std::clamp(pid_output.steer_rad, -max_steer_rad, max_steer_rad);
+    lateral_error_for_gate = pid_target.lateral_error_m;
+    steer_mode             = 0;
+  }
+  if ((tracking_mode_ == TrackingMode::kPidVision || tracking_mode_ == TrackingMode::kPidGlobal) && !pid_output.valid) {
+    SPDLOG_WARN("稻行 PID 输入无效，降级为单阿克曼 LQR");
+    tracking_mode_ = TrackingMode::kLqrRow;
+    row_pid_.Reset();
+    target_delta           = out.vel_cmd.steer_angle;
+    lateral_error_for_gate = out.lateral_error;
+    steer_mode             = 0;
+  }
+  if (tracking_mode_ != previous_mode) {
+    SPDLOG_INFO("跟踪源切换: {} -> {}", TrackingModeName(previous_mode), TrackingModeName(tracking_mode_));
+  }
+
   // 超横差保护
-  const double lateral_error_abs = std::fabs(out.lateral_error);
+  const double lateral_error_abs = std::fabs(lateral_error_for_gate);
   if (lateral_error_abs > max_lateral_error_m_) {
     SPDLOG_ERROR("横向误差 {:.3f} m > {:.3f} m，输出停车", lateral_error_abs, max_lateral_error_m_);
     publishStop();
@@ -492,14 +725,17 @@ void PathTrackerNode::controlTick() {
   } else {
     v = std::max(target_v, v - max_speed_step);
   }
-  last_speed_cmd_    = v;
-  const double delta = out.vel_cmd.steer_angle;   // 弧度，左转为正
+  last_speed_cmd_ = v;
+
+  const double max_steer_step = max_steer_rate_rad_s_ / control_hz_;
+  const double delta          = std::clamp(target_delta, last_steer_cmd_rad_ - max_steer_step, last_steer_cmd_rad_ + max_steer_step);
+  last_steer_cmd_rad_         = delta;
 
   // 速度与转角在同一帧发布，保证 CAN 桥使用的是同一控制周期内的运动学组合。
   // 转角单位为 rad、左正，与 ADCU_toVCU_01 的符号约定一致。
   weeder_msgs::msg::ChassisCmd cmd;
   cmd.gear            = 1;
-  cmd.steer_mode      = static_cast<uint8_t>(out.steer_mode);
+  cmd.steer_mode      = static_cast<uint8_t>(steer_mode);
   cmd.release_brake   = true;
   cmd.estop           = false;
   cmd.ctrl_mode       = true;
@@ -507,19 +743,36 @@ void PathTrackerNode::controlTick() {
   cmd.steer_angle_rad = delta;
   cmd_pub_->publish(cmd);
 
+  double vision_age_ms     = -1.0;
+  double vision_confidence = 0.0;
+  if (latest_crop_row_) {
+    vision_age_ms     = (t - rclcpp::Time(latest_crop_row_->header.stamp)).seconds() * 1000.0;
+    vision_confidence = latest_crop_row_->confidence;
+  }
   SPDLOG_DEBUG(
-    "mode={} type={} v={:.3f}/{:.3f} m/s delta={:+.2f} deg "
+    "mode={} steer_mode={} type={} turn_distance={:.2f}m "
+    "v={:.3f}/{:.3f} m/s delta={:+.2f}/{:+.2f} deg "
     "(fb={:+.2f} ff={:+.2f}) e_lat={:+.3f} m "
-    "e_head={:+.3f} rad d_goal={:.2f} m idx={}/{}",
-    out.steer_mode,
+    "e_head={:+.3f} rad pid={:+.2f}/{:+.2f}/{:+.2f}/{:+.2f} "
+    "vision_age={:.1f}ms vision_conf={:.2f} d_goal={:.2f} m idx={}/{}",
+    TrackingModeName(tracking_mode_),
+    steer_mode,
     static_cast<unsigned>(out.target_pt.waypoint_type),
+    out.distance_to_turn_m,
     v,
     target_v,
     delta * kRad2Deg,
+    target_delta * kRad2Deg,
     out.steer_fb * kRad2Deg,
     out.steer_ff * kRad2Deg,
     out.lateral_error,
     out.heading_error,
+    pid_output.p_term_rad * kRad2Deg,
+    pid_output.i_term_rad * kRad2Deg,
+    pid_output.d_term_rad * kRad2Deg,
+    pid_output.heading_term_rad * kRad2Deg,
+    vision_age_ms,
+    vision_confidence,
     dist_to_goal,
     out.target_index,
     path_point_count_);

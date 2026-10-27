@@ -25,7 +25,8 @@
   容器 `laser-weed-crop-row-check-env`，不在宿主机全局安装 ROS。
 - 未验证真实相机与 GNSS 同步、实际安装轴、现场阈值或动态补偿效果。
   功能默认关闭；只能在现场确认参考姿态及坐标轴后按配置启用。
-当前 `path_tracker` 尚未消费此消息，启动本包不会启用视觉转向。
+`path_tracker` 在 `row_pid_enabled=true` 时可选择消费此消息；默认关闭，
+启动本包本身仍不会启用视觉转向。
 整车侧接入与职责说明见 [INTEGRATION.md](INTEGRATION.md)。
 只读观测记录工具 `record_observations.py` 可保存标准 JSONL，检查时间、序号、
 会话、无效数值泄漏和回放标记，使用方法见该说明。

@@ -4,10 +4,10 @@
   <name>path_tracker</name>
   <version>0.1.0</version>
   <description>
-    LQR path-tracking controller for the four-wheel-steering laser weeding robot.
-    Ported from MegaTrak path_controller, with the state-space model re-derived
-    for Ackermann / four-wheel steering kinematics (the differential-drive B
-    matrix of MegaTrak is not applicable to this chassis).
+    LQR/PID path-tracking controller for the four-wheel-steering laser weeding
+    robot. The global path uses LQR with Ackermann / four-wheel-steering
+    kinematics; the optional row mode tracks crop-row centerlines with PID and
+    falls back to global-path LQR.
   </description>
   <maintainer email="jw11141@users.noreply.github.com">jw11141</maintainer>
   <license>Apache-2.0</license>

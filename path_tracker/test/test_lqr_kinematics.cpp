@@ -231,6 +231,27 @@ TEST(LqrSpeedProfile, TurnZoneUsesFixedLowSpeed) {
   EXPECT_NEAR(RunControl(lqr, state).vel_cmd.linear_v, 0.6, 1e-9);
 }
 
+// 到弯道距离必须沿路径弧长计算，供入弯前控制源切换使用。
+TEST(LqrPathProgress, ReportsArcDistanceToNextTurn) {
+  constexpr double kStep = 0.1;
+  auto points            = straightLine(20.0, kStep);
+  for (std::size_t index = 50; index <= 60; ++index) {
+    points[index].waypoint_type = 1;
+  }
+
+  LQRConfig config           = makeConfig();
+  config.snap_forward_points = 100;
+  LQR lqr;
+  lqr.Configure(config);
+  lqr.SetTrajectory(points);
+
+  RobotState state;
+  state.x           = 1.0;
+  const auto output = RunControl(lqr, state);
+
+  EXPECT_NEAR(output.distance_to_turn_m, 4.0, kStep);
+}
+
 // ---------------------------------------------------------------------------
 // 反馈：符号约定与收敛性。
 // ---------------------------------------------------------------------------

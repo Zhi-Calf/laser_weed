@@ -54,7 +54,7 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker
 |---|---|
 | `gnss_localization` | 读取 RTK GIAVP 数据，投影到 ENU，发布 `Pose`、origin 和 `odom→base_link` TF；提供 NTRIP 与千寻 SDK 两种差分客户端 |
 | `global_path_planner` | 根据 YAML 中的田块边界生成弓字形全覆盖路径 |
-| `path_tracker` | 四轮转向 LQR 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
+| `path_tracker` | 四轮转向 LQR/PID 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
 | `weeder_base` | CAN 协议编解码、SocketCAN 驱动、50Hz 指令发送、10Hz 状态发布、全部底盘/BMS 状态接收 |
 | `weeder_msgs` | 车辆、BMS、GNSS、工作模式、全覆盖路径、点云避停状态等 ROS2 消息 |
 | `velocity_planner` | 直接在 E1R 点云坐标系中执行前向矩形 ROI 判定并发布避停状态 |
@@ -62,11 +62,11 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker
 | `rslidar_msg` | 速腾激光雷达原始 `RslidarPacket` 消息，供驱动录制/回放 packet 使用 |
 | `sim_vehicle` | 无硬件四轮转向仿真：模拟 RTK、四轮转角/轮速、底盘状态和工作模式，并可一键启动完整链路 |
 | `row_nav_sdk` | 不依赖 ROS 的稻行算法库：分割、动态 BEV、行拟合与跟踪，可独立生成 C 接口与共享库 |
-| `crop_row_perception` | 独立 RowNav SDK 的 ROS 2 观察模式接入：图像输入、稻行观测、断流检测；不发布底盘指令 |
+| `crop_row_perception` | 独立 RowNav SDK 的 ROS 2 感知接入：图像输入、稻行观测、断流检测；不发布底盘指令 |
 
 稻行模块的构建、时钟/标定约定和回放方法见
 [`crop_row_perception/README.md`](crop_row_perception/README.md)。
-本模块尚未接入 `path_tracker` 控制逻辑。
+`path_tracker` 可通过默认关闭的 `row_pid_enabled` 模式选择性消费稻行观测。
 
 ## 路径消息
 

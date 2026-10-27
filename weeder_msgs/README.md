@@ -9,8 +9,8 @@
 | `ChassisCmd` | 完整底盘指令：档位、转向模式、抱闸、急停、驾驶模式、速度与前轮转角 |
 | `ChassisState` | 激光除草机底盘完整状态：State_01~11 四轮底盘/电机数据与 State_21/22 BMS（电流放电为正、充电为负） |
 | `ObstacleStatus` | 点云避停状态：感知有效性、停车请求、ROI 障碍点数和最近距离 |
-| `Path` | 全覆盖路径：`x[]`、`y[]` 与 `waypoint_types[]` 按索引一一对应；当前 `path_tracker` 只读 `x/y`，类型字段预留给机具分段控制 |
-| `CropRowObservation` | 稻行视觉观测：采集时间、会话/序号、有效状态、偏差与耗时；非控制指令，当前仅观察模式 |
+| `Path` | 全覆盖路径：`x[]`、`y[]` 与 `waypoint_types[]` 按索引一一对应；`path_tracker` 使用类型字段切换 WORK/TURN 模式和速度 |
+| `CropRowObservation` | 稻行视觉观测：采集时间、会话/序号、有效状态、偏差与耗时；默认可只读观察，也可由 `path_tracker` 的可选稻行 PID 模式消费 |
 | `Pose` | GNSS/RTK ENU 位姿、roll/pitch/yaw、卫星数、有效性和前向速度 |
 | `WorkMode` | Whole-vehicle work mode (`0`=manual / `1`=unmanned / `2`=calibration), latched so late joiners see the current mode |
 

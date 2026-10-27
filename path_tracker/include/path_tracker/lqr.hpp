@@ -2,6 +2,7 @@
 
 #include <Eigen/Dense>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 #include "path_tracker/discrete_points_math.hpp"
@@ -26,14 +27,15 @@ struct VelocityCommand {
 struct LQROutput {
   TrajectoryPoint target_pt;
   VelocityCommand vel_cmd;
-  double lateral_error       = 0.0;   // 横向误差 e_y（米），左正，用于日志和调参
-  double heading_error       = 0.0;   // 航向误差 e_psi（弧度）
-  double steer_ff            = 0.0;   // 前馈转角（弧度）
-  double steer_fb            = 0.0;   // 反馈转角（弧度）
-  double distance_to_goal    = 0.0;   // 车辆到当前目标点的距离（米）
-  double effective_wheelbase = 0.0;   // 当前转向模式使用的等效轴距（米）
-  std::size_t target_index   = 0;     // 当前跟踪目标在路径中的索引
-  int steer_mode             = 0;     // 当前转向模式，0=单阿克曼，1=对称阿克曼
+  double lateral_error       = 0.0;                                       // 横向误差 e_y（米），左正，用于日志和调参
+  double heading_error       = 0.0;                                       // 航向误差 e_psi（弧度）
+  double steer_ff            = 0.0;                                       // 前馈转角（弧度）
+  double steer_fb            = 0.0;                                       // 反馈转角（弧度）
+  double distance_to_goal    = 0.0;                                       // 车辆到当前目标点的距离（米）
+  double distance_to_turn_m  = std::numeric_limits<double>::infinity();   // 到下一个 TURN 段的弧长距离（米）
+  double effective_wheelbase = 0.0;                                       // 当前转向模式使用的等效轴距（米）
+  std::size_t target_index   = 0;                                         // 当前跟踪目标在路径中的索引
+  int steer_mode             = 0;                                         // 当前转向模式，0=单阿克曼，1=对称阿克曼
 };
 
 /// 单次控制计算所需的输入。
@@ -77,42 +79,23 @@ class LQR {
 public:
   LQR() = default;
 
-  // 应用控制器配置并初始化权重矩阵。
   void Configure(const LQRConfig& config);
-
-  // 设置待跟踪轨迹并重置目标索引。
   void SetTrajectory(const std::vector<TrajectoryPoint>& points);
-
-  // 计算当前周期的速度、转角和转向模式。
   bool ComputeCommand(const LQRInput& input, LQROutput& output);
 
 private:
-  // 根据车辆位置更新跟踪目标点索引。
   void UpdateTargetIndex();
-
-  // 判断车辆是否到达路径末端。
   bool IsAtPathEnd() const;
-
-  // 判断给定距离范围内是否存在掉头段。
   bool HasTurnNear(double before_m, double after_m) const;
-
-  // 判断当前是否应使用对称阿克曼模式。
+  double DistanceToNextTurn() const;
   bool SelectSymmetricAckermann();
-
-  // 返回当前转向模式对应的控制状态。
   RobotState ControlStateForMode(bool symmetric_ackermann) const;
-
-  // 使用给定等效轴距计算 LQR 反馈控制量。
   LQROutput ComputeFeedbackControl(double effective_wheelbase) const;
-
-  // 求解离散代数黎卡提方程得到反馈增益。
   void CalRicatti(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B, Eigen::MatrixXd& K) const;
-
-  // 根据路径段类型计算目标速度。
   double ScaleSpeed() const;
 
 private:
-  LQRConfig config_;   // LQR 完整配置
+  LQRConfig config_;
   Eigen::Matrix2d Q_{Eigen::Matrix2d::Identity()};
   Eigen::MatrixXd R_{Eigen::MatrixXd::Identity(1, 1)};
 

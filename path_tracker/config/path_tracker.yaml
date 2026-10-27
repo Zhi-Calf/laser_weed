@@ -33,6 +33,10 @@ path_tracker:
     # 转向角协议上限 ±90°。
     max_steer_deg: 90.0
 
+    # 转角指令变化率上限 (°/s)，用于抑制 LQR 输出跳变和 WORK/TURN
+    # 转向模式切换时的等效转角突变。必须按转向执行器能力现场标定。
+    max_steer_rate_deg_s: 90.0
+
     # 目标点最大前向搜索点数（路径点数，非米）。每拍从上一次的目标索引开始，
     # 在 [上一目标点, 上一目标点 + snap_forward_points] 内搜索离车最近的点。
     #
@@ -55,6 +59,30 @@ path_tracker:
     # 单阿克曼时自动换算到后轴；
     # 双阿克曼仍使用车体中心。
     pose_at_vehicle_center: true
+
+    # ============================================================
+    # 稻行 PID 与双阿克曼 LQR 混合跟踪
+    # ============================================================
+    # 关闭时保持原有全局路径 LQR 行为。开启后，普通行内优先跟踪视觉
+    # 稻行中心线；进入弯道前指定距离改用全局路径行内直线 PID；
+    # TURN 段仍使用全局路径 LQR 和双阿克曼。
+    row_pid_enabled: false
+    crop_row_topic: /crop_row/observation
+    crop_row_frame_id: base_link
+    crop_row_timeout_s: 0.3
+    crop_row_min_confidence: 0.5
+    row_pid_pre_turn_m: 3.0
+    row_pid_resume_frames: 3
+    row_pid_lookahead_m: 1.0
+
+    # 保守初值，只用于联调起点，必须按实车响应重新标定。
+    row_pid_kp_rad_per_m: 0.4
+    row_pid_ki_rad_per_m_s: 0.02
+    row_pid_kd_rad_s_per_m: 0.08
+    row_pid_heading_gain: 0.3
+    row_pid_derivative_tau_s: 0.15
+    row_pid_integral_limit_rad: 0.1
+
     # 路径分段速度（米/秒），始终启用。
     work_speed_m_s: 0.6
     turn_speed_m_s: 0.3

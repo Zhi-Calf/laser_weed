@@ -118,6 +118,22 @@ bool LQR::HasTurnNear(double before_m, double after_m) const {
   return false;
 }
 
+// 返回从当前目标点到下一个 TURN 点的路径弧长距离。
+// 返回:
+//   非负距离 (m)；后续路径没有 TURN 点时返回无穷大。
+double LQR::DistanceToNextTurn() const {
+  const double current_s = path_[target_idx_].s;
+  for (const TrajectoryPoint& point : path_) {
+    if (point.s < current_s) {
+      continue;
+    }
+    if (point.waypoint_type == 1) {
+      return point.s - current_s;
+    }
+  }
+  return std::numeric_limits<double>::infinity();
+}
+
 // 求解离散代数黎卡提方程并得到反馈增益。
 // 输入:
 //   A / B : 离散状态矩阵和输入矩阵
@@ -250,6 +266,7 @@ bool LQR::ComputeCommand(const LQRInput& input, LQROutput& output) {
   output.effective_wheelbase       = effective_wheelbase;
   output.target_index              = target_idx_;
   output.distance_to_goal          = std::hypot(input.robot_state.x - goal_.x, input.robot_state.y - goal_.y);
+  output.distance_to_turn_m        = DistanceToNextTurn();
   return true;
 }
 

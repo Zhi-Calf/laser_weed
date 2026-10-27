@@ -1,6 +1,6 @@
 # path_tracker
 
-激光除草机器人（四轮转向底盘）的 LQR 路径跟踪控制器。
+激光除草机器人（四轮转向底盘）的 LQR/PID 路径跟踪控制器。
 
 从 MegaTrak 履带拖拉机项目 `control_node/path_controller` 移植而来，**状态方程按阿克曼/四轮转向运动学重新推导**。本包依赖项目统一的 `weeder_msgs` 接口包。
 
@@ -105,6 +105,7 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 | 订阅 | `/global_path_planner/path` | `weeder_msgs/Path` | `global_path_planner`（transient_local） |
 | 订阅 | `/work_mode` | `weeder_msgs/WorkMode` | 模式管理方/APP（普通订阅） |
 | 订阅 | `/velocity_planner/status` | `weeder_msgs/ObstacleStatus` | `velocity_planner`（reliable） |
+| 订阅（可选） | `/crop_row/observation` | `weeder_msgs/CropRowObservation` | `crop_row_perception`（reliable/volatile） |
 | 发布 | `/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
 | 发布 | `/path_tracker/target_point` | `visualization_msgs/Marker` | RViz |
 
@@ -112,6 +113,31 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 LQR 根据分段类型选择速度：WORK 段默认 `0.6 m/s`，TURN 段及前后过渡区
 默认 `0.3 m/s`；速度指令受 `speed_ramp_mps2` 加速度限制。
 航向和横向误差只参与转向控制，不改变目标速度。
+转角指令受 `max_steer_rate_deg_s` 变化率限制，避免 WORK/TURN 模式切换
+时等效转角发生阶跃。
+
+### 稻行 PID 混合跟踪
+
+`row_pid_enabled=true` 时启用混合模式；默认关闭时完全使用原有 LQR：
+
+```text
+普通行内：视觉中心线 PID，单阿克曼
+入弯前 row_pid_pre_turn_m：全局路径行内直线 PID，单阿克曼
+TURN 段：全局路径 LQR，双阿克曼
+视觉失效或出弯后：全局路径 LQR，单阿克曼
+```
+
+视觉目标直接使用 `CropRowObservation` 的车体坐标中心线。PID 在前视点计算横向误差，
+叠加横向 PID、航向对准项和滤波后的微分项；积分输出受 `row_pid_integral_limit_rad` 限制。
+预弯段把当前全局 WORK 目标点的位置和切向转换到车体坐标，不混用全局坐标。
+
+只有 `VALID`、非回放、时间未超过 `crop_row_timeout_s`、置信度不低于
+`crop_row_min_confidence`、坐标系匹配且数值有限的观测才参与控制。视觉失效立即降级到
+单阿克曼 LQR，不保持旧视觉值。出弯或视觉恢复时必须连续取得
+`row_pid_resume_frames` 个有效新观测才重新进入视觉 PID。
+
+控制器和目标源切换会清空 PID 积分、上一误差和微分滤波状态，但保留上一转角指令，
+由 `max_steer_rate_deg_s` 平滑实际输出。安全停车和路径重载也会清空 PID 状态。
 
 规划器会持续重发路径。`path_tracker` 在首次接收有效路径后停止重建轨迹，
 但每条重发消息仍用于刷新路径心跳；只有 `/work_mode` 的模式值发生实际变化后，
@@ -229,7 +255,10 @@ colcon test-result --verbose
 ros2 launch path_tracker path_tracker.launch.py
 ```
 
-纯算法层（`discrete_points_math.cpp` + `lqr.cpp`，编成 `path_tracker_lib`）零 ROS 依赖，但**测试可执行文件依赖 rclcpp/gtest，且 `path_tracker_node` 依赖 weeder_msgs**，所以整个包必须在完整 ROS2 环境里 `colcon build`，不能脱离 ROS 单独编译。
+纯算法层（`discrete_points_math.cpp` + `lqr.cpp` + `row_pid.cpp`，编成
+`path_tracker_lib`）零 ROS 依赖，但**测试可执行文件依赖 rclcpp/gtest，
+且 `path_tracker_node` 依赖 weeder_msgs**，所以整个包必须在完整 ROS2
+环境里 `colcon build`，不能脱离 ROS 单独编译。
 
 ---
 
@@ -243,6 +272,11 @@ YAML 参数被视为可信输入，节点运行时不再对参数范围做自动
 |---|---|
 | `wheelbase` | **最关键**。填真实前后轴距；控制器按 WORK/TURN 自动使用 `L` 或 `L/2` |
 | `pose_at_vehicle_center` | 默认 `true`；单阿克曼自动换算到后轴，双阿克曼使用中心 |
+| `max_steer_rate_deg_s` | 转角指令变化率上限，默认 `90°/s`，需按转向执行器能力标定 |
+| `row_pid_enabled` | 是否启用稻行 PID 混合跟踪，默认 `false` |
+| `row_pid_pre_turn_m` | 提前多少米从视觉 PID 切到全局行内直线 PID，默认 `3.0 m` |
+| `row_pid_resume_frames` | 视觉失效或出弯后恢复 PID 所需连续有效帧数，默认 `3` |
+| `row_pid_*` | PID、前视距离、滤波和积分限幅参数，启用前必须按实车标定 |
 | `work_speed_m_s` / `turn_speed_m_s` | WORK/TURN 基础速度，默认 0.6/0.3 m/s |
 | `turn_speed_preview_m` / `turn_speed_hold_m` | 转弯前预览和转弯后低速保持距离 |
 | `lqr_Q_*` / `lqr_R_steer` | 见上方"语义差异"，不能照抄履带项目的值 |

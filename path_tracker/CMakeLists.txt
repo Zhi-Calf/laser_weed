@@ -31,6 +31,7 @@ set(DEPS
 add_library(${PROJECT_NAME}_lib SHARED
   src/discrete_points_math.cpp
   src/lqr.cpp
+  src/row_pid.cpp
 )
 target_link_libraries(${PROJECT_NAME}_lib
   Eigen3::Eigen
@@ -66,6 +67,9 @@ if(BUILD_TESTING)
   ament_add_gtest(
     test_discrete_points_math test/test_discrete_points_math.cpp)
   target_link_libraries(test_discrete_points_math ${PROJECT_NAME}_lib)
+
+  ament_add_gtest(test_row_pid test/test_row_pid.cpp)
+  target_link_libraries(test_row_pid ${PROJECT_NAME}_lib)
 
   ament_add_gtest_executable(test_path_tracker_obstacle_integration
     test/test_path_tracker_obstacle_integration.cpp
