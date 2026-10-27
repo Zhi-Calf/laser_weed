@@ -10,7 +10,7 @@ Segment_2 Seg(double x1, double y1, double x2, double y2) {
   return {Point_2(x1, y1), Point_2(x2, y2)};
 }
 
-}  // namespace
+}   // namespace
 
 TEST(ProperlyCrosses, RejectsDisjointSegments) {
   EXPECT_FALSE(bow_detail::properlyCrosses(Seg(0, 0, 1, 0), Seg(0, 1, 1, 1)));

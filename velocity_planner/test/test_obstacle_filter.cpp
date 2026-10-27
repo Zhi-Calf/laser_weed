@@ -1,28 +1,25 @@
 // 版权所有 2026。点云 ROI 过滤与停车保持逻辑单元测试。
-#include "velocity_planner/obstacle_filter.hpp"
+#include <gtest/gtest.h>
 
 #include <cmath>
 #include <limits>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <vector>
 
-#include <gtest/gtest.h>
-#include <sensor_msgs/point_cloud2_iterator.hpp>
+#include "velocity_planner/obstacle_filter.hpp"
 
-namespace
-{
+namespace {
 
-struct Point3
-{
-  float x;  // x 坐标
-  float y;  // y 坐标
-  float z;  // z 坐标
+struct Point3 {
+  float x;   // x 坐标
+  float y;   // y 坐标
+  float z;   // z 坐标
 };
 
-sensor_msgs::msg::PointCloud2 MakeCloud(const std::vector<Point3> & points)
-{
+sensor_msgs::msg::PointCloud2 MakeCloud(const std::vector<Point3>& points) {
   sensor_msgs::msg::PointCloud2 cloud;
   cloud.height = 1;
-  cloud.width = static_cast<uint32_t>(points.size());
+  cloud.width  = static_cast<uint32_t>(points.size());
 
   sensor_msgs::PointCloud2Modifier modifier(cloud);
   modifier.setPointCloud2FieldsByString(1, "xyz");
@@ -31,7 +28,7 @@ sensor_msgs::msg::PointCloud2 MakeCloud(const std::vector<Point3> & points)
   sensor_msgs::PointCloud2Iterator<float> iter_x(cloud, "x");
   sensor_msgs::PointCloud2Iterator<float> iter_y(cloud, "y");
   sensor_msgs::PointCloud2Iterator<float> iter_z(cloud, "z");
-  for (const auto & point : points) {
+  for (const auto& point : points) {
     *iter_x = point.x;
     *iter_y = point.y;
     *iter_z = point.z;
@@ -42,22 +39,20 @@ sensor_msgs::msg::PointCloud2 MakeCloud(const std::vector<Point3> & points)
   return cloud;
 }
 
-velocity_planner::RoiConfig MakeConfig()
-{
+velocity_planner::RoiConfig MakeConfig() {
   velocity_planner::RoiConfig config;
-  config.forward_min_m = 0.0;
-  config.forward_max_m = 2.0;
-  config.half_width_m = 0.9;
-  config.min_height_m = 0.1;
-  config.max_height_m = 1.5;
+  config.forward_min_m       = 0.0;
+  config.forward_max_m       = 2.0;
+  config.half_width_m        = 0.9;
+  config.min_height_m        = 0.1;
+  config.max_height_m        = 1.5;
   config.min_obstacle_points = 1;
   return config;
 }
 
-}  // namespace
+}   // namespace
 
-TEST(RoiFilter, DetectsPointInsideRoi)
-{
+TEST(RoiFilter, DetectsPointInsideRoi) {
   velocity_planner::RoiFilter filter(MakeConfig());
   const auto cloud = MakeCloud({{1.0F, 0.0F, 0.5F}});
 
@@ -69,8 +64,7 @@ TEST(RoiFilter, DetectsPointInsideRoi)
   EXPECT_NEAR(result.nearest_distance_m, 1.0F, 1e-6F);
 }
 
-TEST(RoiFilter, IgnoresPointsOutsideEveryRoiBoundary)
-{
+TEST(RoiFilter, IgnoresPointsOutsideEveryRoiBoundary) {
   velocity_planner::RoiFilter filter(MakeConfig());
   const auto cloud = MakeCloud({
     {-0.01F, 0.0F, 0.5F},
@@ -88,15 +82,14 @@ TEST(RoiFilter, IgnoresPointsOutsideEveryRoiBoundary)
   EXPECT_LT(result.nearest_distance_m, 0.0F);
 }
 
-TEST(RoiFilter, IgnoresIndividualNanAndInfinity)
-{
+TEST(RoiFilter, IgnoresIndividualNanAndInfinity) {
   velocity_planner::RoiFilter filter(MakeConfig());
-  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float nan      = std::numeric_limits<float>::quiet_NaN();
   const float infinity = std::numeric_limits<float>::infinity();
-  const auto cloud = MakeCloud({
-    {nan, 0.0F, 0.5F},
-    {1.0F, infinity, 0.5F},
-    {0.5F, 0.0F, 0.5F},
+  const auto cloud     = MakeCloud({
+        {nan, 0.0F, 0.5F},
+        {1.0F, infinity, 0.5F},
+        {0.5F, 0.0F, 0.5F},
   });
 
   const auto result = filter.Evaluate(cloud);
@@ -107,15 +100,14 @@ TEST(RoiFilter, IgnoresIndividualNanAndInfinity)
   EXPECT_NEAR(result.nearest_distance_m, 0.5F, 1e-6F);
 }
 
-TEST(RoiFilter, RejectsCloudWithoutFinitePoints)
-{
+TEST(RoiFilter, RejectsCloudWithoutFinitePoints) {
   velocity_planner::RoiFilter filter(MakeConfig());
-  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float nan      = std::numeric_limits<float>::quiet_NaN();
   const float infinity = std::numeric_limits<float>::infinity();
-  const auto cloud = MakeCloud({
-    {nan, 0.0F, 0.5F},
-    {1.0F, infinity, 0.5F},
-    {1.0F, 0.0F, nan},
+  const auto cloud     = MakeCloud({
+        {nan, 0.0F, 0.5F},
+        {1.0F, infinity, 0.5F},
+        {1.0F, 0.0F, nan},
   });
 
   const auto result = filter.Evaluate(cloud);
@@ -125,8 +117,7 @@ TEST(RoiFilter, RejectsCloudWithoutFinitePoints)
   EXPECT_EQ(result.obstacle_points, 0U);
 }
 
-TEST(RoiFilter, RejectsEmptyCloudWithXyzFields)
-{
+TEST(RoiFilter, RejectsEmptyCloudWithXyzFields) {
   velocity_planner::RoiFilter filter(MakeConfig());
   const auto cloud = MakeCloud({});
 
@@ -137,14 +128,13 @@ TEST(RoiFilter, RejectsEmptyCloudWithXyzFields)
   EXPECT_EQ(result.obstacle_points, 0U);
 }
 
-TEST(RoiFilter, RequiresConfiguredPointCount)
-{
-  auto config = MakeConfig();
+TEST(RoiFilter, RequiresConfiguredPointCount) {
+  auto config                = MakeConfig();
   config.min_obstacle_points = 3;
   velocity_planner::RoiFilter filter(config);
-  const auto two_points = MakeCloud({
-    {0.5F, 0.0F, 0.5F},
-    {0.8F, 0.0F, 0.5F},
+  const auto two_points   = MakeCloud({
+      {0.5F, 0.0F, 0.5F},
+      {0.8F, 0.0F, 0.5F},
   });
   const auto three_points = MakeCloud({
     {0.5F, 0.0F, 0.5F},
@@ -156,8 +146,7 @@ TEST(RoiFilter, RequiresConfiguredPointCount)
   EXPECT_TRUE(filter.Evaluate(three_points).stop_required);
 }
 
-TEST(RoiFilter, RejectsCloudWithoutXyzFields)
-{
+TEST(RoiFilter, RejectsCloudWithoutXyzFields) {
   velocity_planner::RoiFilter filter(MakeConfig());
   sensor_msgs::msg::PointCloud2 cloud;
 
@@ -168,8 +157,7 @@ TEST(RoiFilter, RejectsCloudWithoutXyzFields)
   EXPECT_EQ(result.obstacle_points, 0U);
 }
 
-TEST(StopHoldFilter, KeepsStopUntilHoldTimeExpires)
-{
+TEST(StopHoldFilter, KeepsStopUntilHoldTimeExpires) {
   velocity_planner::StopHoldFilter hold(0.3);
 
   EXPECT_TRUE(hold.Update(true, 10.0));
@@ -179,8 +167,7 @@ TEST(StopHoldFilter, KeepsStopUntilHoldTimeExpires)
   EXPECT_FALSE(hold.Update(false, 10.4));
 }
 
-TEST(StopHoldFilter, TimeRollbackDoesNotCauseInfiniteHold)
-{
+TEST(StopHoldFilter, TimeRollbackDoesNotCauseInfiniteHold) {
   velocity_planner::StopHoldFilter hold(0.3);
 
   EXPECT_TRUE(hold.Update(true, 10.0));

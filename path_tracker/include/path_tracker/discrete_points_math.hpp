@@ -36,16 +36,9 @@ struct TrajectoryPoint {
 };
 
 // 由二维点列计算航向、累计弧长、曲率和曲率变化率。
-bool ComputePathProfile(
-  const std::vector<std::pair<double, double>>& xy_points,
-  std::vector<double>* headings,
-  std::vector<double>* accumulated_s,
-  std::vector<double>* kappas,
-  std::vector<double>* dkappas);
+bool ComputePathProfile(const std::vector<std::pair<double, double>>& xy_points, std::vector<double>* headings, std::vector<double>* accumulated_s, std::vector<double>* kappas, std::vector<double>* dkappas);
 
 // 由二维点列计算完整轨迹，曲率符号约定为左正右负。
-bool ComputePathProfile(
-  const std::vector<std::pair<double, double>>& xy_points,
-  std::vector<TrajectoryPoint>* trajectory);
+bool ComputePathProfile(const std::vector<std::pair<double, double>>& xy_points, std::vector<TrajectoryPoint>* trajectory);
 
 }   // namespace path_tracker

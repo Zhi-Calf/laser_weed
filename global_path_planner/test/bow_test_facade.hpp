@@ -26,13 +26,11 @@ public:
   BowFacade() = default;
 
   // ---- 旧 API: init / plan ----
-  bool init(const Polygon_2& cell, double ridge_width, double path_resolution, double field_margin = 0.0,
-            double first_row_margin = 0.005) {
+  bool init(const Polygon_2& cell, double ridge_width, double path_resolution, double field_margin = 0.0, double first_row_margin = 0.005) {
     return plan(cell, ridge_width, path_resolution, field_margin, first_row_margin).ok();
   }
 
-  BowOutput plan(const Polygon_2& cell, double ridge_width, double path_resolution, double field_margin = 0.0,
-                 double first_row_margin = 0.005) {
+  BowOutput plan(const Polygon_2& cell, double ridge_width, double path_resolution, double field_margin = 0.0, double first_row_margin = 0.005) {
     BowInput in;
     in.cell             = cell;
     in.ridge_width      = ridge_width;

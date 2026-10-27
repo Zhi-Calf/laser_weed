@@ -60,7 +60,7 @@ private:
   int ntrip_port_{8002};                           // ntrip 端口
   std::string ntrip_user_{""};                     // ntrip 用户名
   std::string ntrip_password_{""};                 // ntrip 密码
-  std::string ntrip_mountpoint_{"AUTO"};           // ntrip mountpoint
+  std::string ntrip_mountpoint_{"AUTO"};           // NTRIP 挂载点
   double gga_interval_sec_{1.0};                   // GGA 上传周期 (s)
   double reconnect_delay_sec_{1.0};                // NTRIP 连接失败后的重连延迟 (s); 串口打开/等待 GGA 等本地重试固定 200ms
   double first_rtcm_timeout_sec_{30.0};            // 等待首帧 RTCM 超时 (s)

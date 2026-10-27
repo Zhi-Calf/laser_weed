@@ -141,10 +141,10 @@ private:
 
 private:
   std::string log_dir_     = "/opt/agri/logs";   // 日志目录 (支持 ~ 与 $VAR 展开)
-  std::string log_level_   = "info";          // 日志级别 (info/warn/error)
-  int log_file_size_mb_    = 50;              // 单个日志文件最大大小 (MB)
-  int log_file_count_      = 10;              // 保留的日志文件个数
-  bool log_enable_console_ = true;            // 是否输出到控制台
+  std::string log_level_   = "info";             // 日志级别 (info/warn/error)
+  int log_file_size_mb_    = 50;                 // 单个日志文件最大大小 (MB)
+  int log_file_count_      = 10;                 // 保留的日志文件个数
+  bool log_enable_console_ = true;               // 是否输出到控制台
 
 private:
   double ridge_width_      = 0.0;     // 垄宽 (m): 行距

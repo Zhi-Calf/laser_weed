@@ -15,8 +15,8 @@
 #include <cmath>
 #include <vector>
 
-#include "global_path_planner/bow.hpp"
 #include "bow_test_facade.hpp"   // 测试专用: 把旧的有状态 API 投影到 plan(BowInput)->BowOutput 上
+#include "global_path_planner/bow.hpp"
 
 using bow_test::BowFacade;
 

@@ -102,8 +102,8 @@ private:
 private:
   std::string serial_port_{"/dev/ttysWK0"};            // 串口设备路径
   int serial_baud_{115200};                            // 串口波特率
-  std::string sdk_key_{""};                            // SDK key (DSK)
-  std::string sdk_secret_{""};                         // SDK secret (DSS)
+  std::string sdk_key_{""};                            // SDK 密钥 (DSK)
+  std::string sdk_secret_{""};                         // SDK 密钥 (DSS)
   std::string dev_id_{""};                             // 设备 ID
   std::string dev_type_{""};                           // 设备类型
   std::string sdk_openapi_host_{"openapi.qxwz.com"};   // OpenAPI 服务器域名

@@ -76,8 +76,7 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   rclcpp::QoS qos_sensor = rclcpp::SensorDataQoS(rclcpp::KeepLast(5));
   fix_pub_               = create_publisher<sensor_msgs::msg::NavSatFix>("~/fix", qos_sensor);
   pose_pub_              = create_publisher<weeder_msgs::msg::Pose>("~/pose", qos_sensor);
-  pose_stamped_pub_      = create_publisher<geometry_msgs::msg::PoseStamped>(
-      "~/pose_stamped", 10);
+  pose_stamped_pub_      = create_publisher<geometry_msgs::msg::PoseStamped>("~/pose_stamped", 10);
   odom_raw_pub_          = create_publisher<nav_msgs::msg::Odometry>("~/odom_raw", qos_sensor);
   imu_pub_               = create_publisher<sensor_msgs::msg::Imu>("~/imu", qos_sensor);
   vel_pub_               = create_publisher<geometry_msgs::msg::TwistWithCovarianceStamped>("~/vel", qos_sensor);
@@ -405,9 +404,9 @@ void GnssDriver::publishFix(const GiavpData& d) {
   double v_var              = std::pow(h_std * kVerticalAccuracyScale, 2);
 
   msg.position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_DIAGONAL_KNOWN;
-  msg.position_covariance[0]   = h_var;   // east
-  msg.position_covariance[4]   = h_var;   // north
-  msg.position_covariance[8]   = v_var;   // up
+  msg.position_covariance[0]   = h_var;   // 东向方差
+  msg.position_covariance[4]   = h_var;   // 北向方差
+  msg.position_covariance[8]   = v_var;   // 天向方差
 
   fix_pub_->publish(msg);
 }

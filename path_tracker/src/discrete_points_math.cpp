@@ -36,12 +36,7 @@ void ClearProfile(std::vector<double>* headings, std::vector<double>* accumulate
 }   // namespace
 
 // 使用首末单边差分、中间中心差分计算路径的几何参数。
-bool ComputePathProfile(
-  const std::vector<std::pair<double, double>>& xy_points,
-  std::vector<double>* headings,
-  std::vector<double>* accumulated_s,
-  std::vector<double>* kappas,
-  std::vector<double>* dkappas) {
+bool ComputePathProfile(const std::vector<std::pair<double, double>>& xy_points, std::vector<double>* headings, std::vector<double>* accumulated_s, std::vector<double>* kappas, std::vector<double>* dkappas) {
   if (headings == nullptr || accumulated_s == nullptr || kappas == nullptr || dkappas == nullptr) {
     return false;
   }
@@ -164,9 +159,7 @@ bool ComputePathProfile(
 }
 
 // 将离散点路径几何参数写入轨迹点容器。
-bool ComputePathProfile(
-  const std::vector<std::pair<double, double>>& xy_points,
-  std::vector<TrajectoryPoint>* trajectory) {
+bool ComputePathProfile(const std::vector<std::pair<double, double>>& xy_points, std::vector<TrajectoryPoint>* trajectory) {
   if (trajectory == nullptr) {
     return false;
   }
@@ -184,12 +177,12 @@ bool ComputePathProfile(
   trajectory->resize(point_count);
   for (std::size_t i = 0; i < point_count; ++i) {
     TrajectoryPoint& point = (*trajectory)[i];
-    point.x = xy_points[i].first;
-    point.y = xy_points[i].second;
-    point.heading = headings[i];
-    point.s = accumulated_s[i];
-    point.kappa = kappas[i];
-    point.dkappa = dkappas[i];
+    point.x                = xy_points[i].first;
+    point.y                = xy_points[i].second;
+    point.heading          = headings[i];
+    point.s                = accumulated_s[i];
+    point.kappa            = kappas[i];
+    point.dkappa           = dkappas[i];
   }
   return true;
 }

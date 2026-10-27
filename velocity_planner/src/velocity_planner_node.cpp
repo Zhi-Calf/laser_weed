@@ -98,15 +98,13 @@ void VelocityPlannerNode::LoadParameters() {
   stop_hold_s_             = std::max(stop_hold_s_, 0.0);
   roi_config_.half_width_m = std::max(roi_config_.half_width_m, 0.01);
   if (roi_config_.forward_max_m <= roi_config_.forward_min_m) {
-    SPDLOG_WARN(
-      "ROI 前向范围无效，已将 forward_max_m 调整为"
-      " forward_min_m + 0.1");
+    SPDLOG_WARN("ROI 前向范围无效，已将 forward_max_m 调整为"
+                " forward_min_m + 0.1");
     roi_config_.forward_max_m = roi_config_.forward_min_m + 0.1;
   }
   if (roi_config_.max_height_m <= roi_config_.min_height_m) {
-    SPDLOG_WARN(
-      "ROI 高度范围无效，已将 max_height_m 调整为"
-      " min_height_m + 0.1");
+    SPDLOG_WARN("ROI 高度范围无效，已将 max_height_m 调整为"
+                " min_height_m + 0.1");
     roi_config_.max_height_m = roi_config_.min_height_m + 0.1;
   }
   roi_config_.min_obstacle_points = static_cast<std::size_t>(std::max<int64_t>(min_points_raw, 1));
