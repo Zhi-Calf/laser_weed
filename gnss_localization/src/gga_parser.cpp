@@ -14,14 +14,29 @@ namespace {
 constexpr std::size_t kMinimumGgaFields = 13;
 constexpr std::size_t kMaximumGgaFields = 15;
 
+// 判断字符是否为 ASCII 十进制数字。
+// 输入:
+//   character : 待判断字符
+// 返回:
+//   true = '0'..'9'
 bool IsAsciiDigit(char character) {
   return character >= '0' && character <= '9';
 }
 
+// 判断字符是否为 ASCII 大写字母。
+// 输入:
+//   character : 待判断字符
+// 返回:
+//   true = 'A'..'Z'
 bool IsUpperTalkerCharacter(char character) {
   return character >= 'A' && character <= 'Z';
 }
 
+// 将单个十六进制字符转换为数值。
+// 输入:
+//   character : 十六进制字符
+// 返回:
+//   0..15；非法字符返回 -1。
 int HexValue(char character) {
   if (character >= '0' && character <= '9') {
     return character - '0';
@@ -35,6 +50,11 @@ int HexValue(char character) {
   return -1;
 }
 
+// 按逗号拆分 GGA 报文字段。
+// 输入:
+//   body : 不含起始 '$' 和校验和的报文体
+// 返回:
+//   按出现顺序保存的字段，空字段保留为空字符串。
 std::vector<std::string> SplitFields(const std::string& body) {
   std::vector<std::string> fields;
   std::size_t start = 0;
@@ -50,6 +70,13 @@ std::vector<std::string> SplitFields(const std::string& body) {
   return fields;
 }
 
+// 严格解析正整数文本。
+// 输入:
+//   text : 待解析文本
+// 输出:
+//   value : 解析结果；失败时不修改
+// 返回:
+//   true = 全文均为合法整数
 bool ParseInt(const std::string& text, int* value) {
   if (text.empty() || value == nullptr) {
     return false;
@@ -65,6 +92,13 @@ bool ParseInt(const std::string& text, int* value) {
   return true;
 }
 
+// 严格解析有限浮点数文本。
+// 输入:
+//   text : 待解析文本
+// 输出:
+//   value : 解析结果；失败时不修改
+// 返回:
+//   true = 全文合法且结果有限
 bool ParseDouble(const std::string& text, double* value) {
   if (text.empty() || value == nullptr) {
     return false;
@@ -80,6 +114,11 @@ bool ParseDouble(const std::string& text, double* value) {
   return true;
 }
 
+// 校验 GGA 的 UTC 时间字段。
+// 输入:
+//   text : hhmmss 或 hhmmss.fff
+// 返回:
+//   true = 格式合法且时分秒在协议范围内
 bool IsValidUtcTime(const std::string& text) {
   const std::size_t dot = text.find('.');
   if (dot != std::string::npos && (dot + 1 == text.size() || text.find('.', dot + 1) != std::string::npos)) {
@@ -108,6 +147,13 @@ bool IsValidUtcTime(const std::string& text) {
   return hour <= 23 && minute <= 59 && second <= 60;
 }
 
+// 校验 GGA 的度分格式坐标。
+// 输入:
+//   text           : 经纬度字段
+//   degree_digits  : 度数位数
+//   maximum_degrees: 允许的最大度数
+// 返回:
+//   true = 格式合法且不超过纬度/经度上限
 bool IsValidCoordinate(const std::string& text, std::size_t degree_digits, double maximum_degrees) {
   const std::size_t dot = text.find('.');
   if (dot == std::string::npos || dot + 1 == text.size() || text.find('.', dot + 1) != std::string::npos || dot != degree_digits + 2) {
@@ -135,6 +181,11 @@ bool IsValidCoordinate(const std::string& text, std::size_t degree_digits, doubl
   return true;
 }
 
+// 校验 GGA 可选的基站 ID。
+// 输入:
+//   text : 0~4 位字母或数字
+// 返回:
+//   true = 字段为空或格式合法
 bool IsValidStationId(const std::string& text) {
   if (text.empty()) {
     return true;
@@ -154,6 +205,12 @@ bool IsValidStationId(const std::string& text) {
 }   // namespace
 
 // 校验一帧 GGA 的格式、校验和、位置和差分可用性。
+// 输入:
+//   sentence : 完整 GGA 语句，不含 CR/LF
+// 返回:
+//   true = 格式、校验和及字段均有效
+// 约束:
+//   只做格式校验，不判断 RTK 固定解。
 bool IsValidGga(const std::string& sentence) {
   if (sentence.size() < 8 || sentence.front() != '$') {
     return false;

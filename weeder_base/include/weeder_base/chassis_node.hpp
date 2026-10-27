@@ -24,16 +24,24 @@ namespace weeder_base {
 //
 class ChassisNode : public rclcpp::Node {
 public:
+  // 创建底盘节点并打开 CAN 驱动。
   explicit ChassisNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+  // 停止定时器并关闭 CAN 驱动。
   ~ChassisNode() override;
 
 private:
+  // 读取日志配置参数。
   void loadLogParameters();
+  // 读取 CAN 和指令超时参数。
   void loadParameters();
 
+  // 接收底盘控制指令并更新下发缓存。
   void onChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr msg);
+  // 解码收到的 CAN 状态帧。
   void onCanReceive(const protocol::CanFrame& frame);
+  // 编码并周期性下发控制指令。
   void sendCommand();
+  // 发布类型化底盘状态。
   void publishState();
 
 private:

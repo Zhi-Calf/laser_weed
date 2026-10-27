@@ -57,7 +57,7 @@ ros2 launch sim_vehicle weeder_sim.launch.py
 
 | 节点 | 作用 |
 |---|---|
-| `sim_vehicle` | 发布 RTK pose/origin、车辆运动学、`/work_mode` |
+| `sim_vehicle` | 发布 RTK pose、车辆运动学、`/work_mode` |
 | `global_path_planner` | 读取 YAML 田块，使用 `poly` 首个顶点作为原点并立即规划 |
 | `path_tracker` | 跟踪 `/global_path_planner/path` |
 | `sim_orchestrator` | 确认路径生成后切 UNMANNED |
@@ -79,6 +79,15 @@ ros2 launch sim_vehicle weeder_sim.launch.py rviz:=false
 # 在安全门限内保留初始横向偏差，便于观察收敛
 ros2 launch sim_vehicle weeder_sim.launch.py align_offset:=0.2
 ```
+
+仿真节点与其他 ROS 节点一样使用 spdlog 滚动日志：
+
+- `sim_vehicle` 写入 `sim_vehicle.log`
+- `sim_orchestrator` 写入 `sim_orchestrator.log`
+
+默认目录为 `/opt/agri/logs`；目录不可写时自动回退到 `$ROS_HOME/logs`，
+未设置 `ROS_HOME` 时回退到 `~/.ros/logs`。日志目录、文件大小、保留数量和级别
+可在 `config/sim_vehicle.yaml` 中分别配置。
 
 ## 二、田块与路径配置
 

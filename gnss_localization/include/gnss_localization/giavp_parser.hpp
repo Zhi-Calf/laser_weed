@@ -44,16 +44,22 @@ class GiavpParser {
 public:
   GiavpParser() = default;
 
+  // 解析一帧 GIAVP 文本，成功时更新内部结果。
   bool parse(const std::string& line);
 
+  // 返回最近一次成功解析的数据。
   const GiavpData& data() const {
     return data_;
   }
 
 private:
+  // 校验 NMEA 校验和。
   static bool verifyChecksum(const std::string& sentence);
+  // 按逗号拆分报文字段。
   static std::vector<std::string> splitFields(const std::string& body);
+  // 解析完整 double 字段。
   static bool parseDouble(const std::string& text, double* value);
+  // 解析完整 int 字段。
   static bool parseInt(const std::string& text, int* value);
 
 private:

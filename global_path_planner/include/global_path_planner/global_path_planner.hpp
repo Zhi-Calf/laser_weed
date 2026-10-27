@@ -111,10 +111,15 @@ public:
   ~GlobalPathPlannerNode() override = default;
 
 private:
+  // 周期性检查门控并发布当前路径。
   void timerCallback();
+  // 读取日志配置参数。
   void loadLogParameters();
+  // 读取路径规划参数。
   void loadParameters();
+  // 根据当前地块输入执行路径规划。
   void planGeometry();
+  // 将配置的经纬度顶点投影到 ENU 平面。
   void projectVerticesToEnu();
 
 private:

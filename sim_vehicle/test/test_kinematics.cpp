@@ -18,31 +18,22 @@ void ExpectNear(double actual, double expected) {
 
 }   // namespace
 
-// 验证角度归一化保持零值并处理正负边界。
+// 验证角度归一化保持零值、正负 pi 边界，并处理超过半周的角度。
 TEST(KinematicsTest, WrapAngleUsesHalfTurnOffset) {
-  constexpr double Pi = 3.14159265358979323846;
   ExpectNear(WrapAngle(0.0), 0.0);
-  ExpectNear(WrapAngle(Pi * 1.5), -Pi * 0.5);
-  ExpectNear(WrapAngle(-Pi * 1.5), Pi * 0.5);
-}
-
-// 验证默认几何参数与 Isaac 场景一致。
-TEST(KinematicsTest, GeometryMatchesIsaacStage) {
-  ExpectNear(kWheelbaseM, 1.521);
-  ExpectNear(kWheelTrackM, 1.306);
-  ExpectNear(kWheelRadiusM, 0.29);
-  ExpectNear(kVehicleLengthM, 1.8);
-  ExpectNear(kVehicleWidthM, 1.2);
-  ExpectNear(kVehicleHeightM, 0.5);
+  ExpectNear(WrapAngle(M_PI), M_PI);
+  ExpectNear(WrapAngle(-M_PI), -M_PI);
+  ExpectNear(WrapAngle(M_PI * 1.5), -M_PI * 0.5);
+  ExpectNear(WrapAngle(-M_PI * 1.5), M_PI * 0.5);
 }
 
 // 验证可视化轮位始终以车体几何中心为原点。
 TEST(KinematicsTest, CenteredWheelPositionsDoNotChangeWithMode) {
-  const auto positions = ComputeCenteredWheelPositions(kWheelbaseM, kWheelTrackM);
-  ExpectNear(positions[FrontLeft].x_m, kWheelbaseM * 0.5);
-  ExpectNear(positions[RearLeft].x_m, -kWheelbaseM * 0.5);
-  ExpectNear(positions[FrontLeft].y_m, kWheelTrackM * 0.5);
-  ExpectNear(positions[FrontRight].y_m, -kWheelTrackM * 0.5);
+  const auto positions = ComputeCenteredWheelPositions(1.521, 1.306);
+  ExpectNear(positions[FrontLeft].x_m, 1.521 * 0.5);
+  ExpectNear(positions[RearLeft].x_m, -1.521 * 0.5);
+  ExpectNear(positions[FrontLeft].y_m, 1.306 * 0.5);
+  ExpectNear(positions[FrontRight].y_m, -1.306 * 0.5);
 }
 
 // 验证两种转向模式使用不同的底盘参考点。
@@ -51,10 +42,10 @@ TEST(KinematicsTest, WheelPositionsFollowReferencePoint) {
   const auto center_reference = ComputeWheelPositions(1);
 
   ExpectNear(rear_reference[RearLeft].x_m, 0.0);
-  ExpectNear(rear_reference[FrontLeft].x_m, kWheelbaseM);
-  ExpectNear(center_reference[FrontLeft].x_m, kWheelbaseM * 0.5);
-  ExpectNear(center_reference[RearLeft].x_m, -kWheelbaseM * 0.5);
-  for (std::size_t index = 0; index < kWheelCount; ++index) {
+  ExpectNear(rear_reference[FrontLeft].x_m, 1.521);
+  ExpectNear(center_reference[FrontLeft].x_m, 1.521 * 0.5);
+  ExpectNear(center_reference[RearLeft].x_m, -1.521 * 0.5);
+  for (std::size_t index = 0; index < 4; ++index) {
     ExpectNear(rear_reference[index].y_m, center_reference[index].y_m);
   }
 }
@@ -63,41 +54,41 @@ TEST(KinematicsTest, WheelPositionsFollowReferencePoint) {
 TEST(KinematicsTest, StraightMotionKeepsWheelsStraight) {
   const FourWheelState state = ComputeFourWheelState(0.6, 0.0, 0);
   ExpectNear(state.yaw_rate_rad_s, 0.0);
-  for (std::size_t index = 0; index < kWheelCount; ++index) {
+  for (std::size_t index = 0; index < 4; ++index) {
     ExpectNear(state.steer_rad[index], 0.0);
-    ExpectNear(state.wheel_rad_s[index], 0.6 / kWheelRadiusM);
+    ExpectNear(state.wheel_rad_s[index], 0.6 / 0.29);
   }
 }
 
 // 验证单阿克曼模式仅前轮转向。
 TEST(KinematicsTest, SingleAckermannSteersFrontWheels) {
-  const double steer_rad     = 15.0 * 3.14159265358979323846 / 180.0;
+  const double steer_rad     = 15.0 * M_PI / 180.0;
   const FourWheelState state = ComputeFourWheelState(0.6, steer_rad, 0);
   EXPECT_GT(state.steer_rad[FrontLeft], 0.0);
   EXPECT_GT(state.steer_rad[FrontRight], 0.0);
   EXPECT_GT(state.steer_rad[FrontLeft], state.steer_rad[FrontRight]);
   ExpectNear(state.steer_rad[RearLeft], 0.0);
   ExpectNear(state.steer_rad[RearRight], 0.0);
-  ExpectNear(state.effective_wheelbase_m, kWheelbaseM);
+  ExpectNear(state.effective_wheelbase_m, 1.521);
 }
 
 // 验证对称阿克曼模式前后轮反向转动。
 TEST(KinematicsTest, SymmetricAckermannTurnsOpposite) {
-  const double steer_rad     = 15.0 * 3.14159265358979323846 / 180.0;
+  const double steer_rad     = 15.0 * M_PI / 180.0;
   const FourWheelState state = ComputeFourWheelState(0.6, steer_rad, 1);
   EXPECT_GT(state.steer_rad[FrontLeft], 0.0);
   EXPECT_GT(state.steer_rad[FrontRight], 0.0);
   EXPECT_LT(state.steer_rad[RearLeft], 0.0);
   EXPECT_LT(state.steer_rad[RearRight], 0.0);
   ExpectNear(state.steer_rad[FrontLeft], -state.steer_rad[RearLeft]);
-  ExpectNear(state.effective_wheelbase_m, kWheelbaseM * 0.5);
+  ExpectNear(state.effective_wheelbase_m, 1.521 * 0.5);
 }
 
 // 验证未定义运动语义的模式保持停车状态。
 TEST(KinematicsTest, UnsupportedModesStopWheels) {
   const FourWheelState state = ComputeFourWheelState(0.6, 0.2, 2);
   ExpectNear(state.yaw_rate_rad_s, 0.0);
-  for (std::size_t index = 0; index < kWheelCount; ++index) {
+  for (std::size_t index = 0; index < 4; ++index) {
     ExpectNear(state.steer_rad[index], 0.0);
     ExpectNear(state.wheel_rad_s[index], 0.0);
   }
@@ -107,7 +98,7 @@ TEST(KinematicsTest, UnsupportedModesStopWheels) {
 TEST(KinematicsTest, ZeroSpeedStopsWheelRotation) {
   const FourWheelState state = ComputeFourWheelState(0.0, 0.3, 1);
   ExpectNear(state.yaw_rate_rad_s, 0.0);
-  for (std::size_t index = 0; index < kWheelCount; ++index) {
+  for (std::size_t index = 0; index < 4; ++index) {
     ExpectNear(state.wheel_rad_s[index], 0.0);
   }
 }

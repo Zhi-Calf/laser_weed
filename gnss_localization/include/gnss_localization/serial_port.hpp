@@ -19,7 +19,9 @@ namespace gnss_localization {
 // 同一实例的并发访问由调用方串行化。
 class SerialPort {
 public:
+  // 构造未打开的串口对象。
   SerialPort();
+  // 关闭串口并释放文件描述符。
   ~SerialPort();
 
   SerialPort(const SerialPort&)            = delete;
@@ -34,17 +36,16 @@ public:
   // 返回文件描述符是否有效。
   bool is_open() const;
 
-  // 写入完整原始字节流; 缓冲区满时最多等待 1 秒。
-  // 返回 false 时可能已关闭串口, 调用方应停止当前传输并走重连流程。
+  // 写入完整原始字节流，失败时关闭串口并返回 false。
   bool write_raw(const char* data, std::size_t size);
 
-  // 非阻塞读取当前可用数据, 每遇到完整文本行调用一次 callback。
-  // 返回本次处理的非空行数; 串口关闭或暂时无数据时返回 0。
+  // 非阻塞读取完整文本行，并返回本次处理的行数。
   int read_lines(const std::function<void(const std::string&)>& line_callback);
 
 private:
   static std::size_t constexpr kReadBufSize = 4096;
   static std::size_t constexpr kLineBufSize = 1024;
+  // 将整数波特率映射为 termios 常量。
   static std::optional<speed_t> BaudToSpeed(int baud_rate);
 
   int fd_ = -1;                   // 串口文件描述符

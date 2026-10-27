@@ -25,8 +25,10 @@ struct RoiResult {
 
 class RoiFilter {
 public:
+  // 使用 ROI 配置初始化过滤器。
   explicit RoiFilter(const RoiConfig& config);
 
+  // 统计 ROI 内障碍点并判断是否要求停车。
   RoiResult Evaluate(const sensor_msgs::msg::PointCloud2& cloud) const;
 
 private:
@@ -35,8 +37,10 @@ private:
 
 class StopHoldFilter {
 public:
+  // 使用障碍消失后的保持时间初始化过滤器。
   explicit StopHoldFilter(double hold_time_s);
 
+  // 根据当前障碍检测结果更新停车保持状态。
   bool Update(bool obstacle_detected, double now_s);
 
 private:

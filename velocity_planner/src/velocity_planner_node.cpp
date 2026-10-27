@@ -23,7 +23,9 @@ constexpr double kPublishHz     = 10.0;                 // 状态固定发布频
 
 }   // namespace
 
-// 初始化参数、话题和定时器。
+// 创建避停状态节点并初始化日志、参数和接口。
+// 输入:
+//   options : ROS 节点创建选项
 VelocityPlannerNode::VelocityPlannerNode(const rclcpp::NodeOptions& options) : Node(kNodeName, options) {
   LoadLogParameters();
 
@@ -47,6 +49,8 @@ VelocityPlannerNode::VelocityPlannerNode(const rclcpp::NodeOptions& options) : N
 }
 
 // 声明并读取 spdlog 滚动日志参数。
+// 输出:
+//   日志目录、大小、数量和级别相关成员。
 void VelocityPlannerNode::LoadLogParameters() {
   declare_parameter("log_dir", "/opt/agri/logs");
   declare_parameter("log_file_size_mb", 50);
@@ -62,6 +66,8 @@ void VelocityPlannerNode::LoadLogParameters() {
 }
 
 // 声明并校验点云避停参数。
+// 输出:
+//   话题名、超时、停车保持时间和 ROI 配置。
 void VelocityPlannerNode::LoadParameters() {
   declare_parameter("input_cloud_topic", "/rslidar_points");
   declare_parameter("output_status_topic", "/velocity_planner/status");
@@ -126,6 +132,8 @@ void VelocityPlannerNode::LoadParameters() {
 }
 
 // 创建点云订阅、状态发布和固定频率定时器。
+// 副作用:
+//   点云到达后只缓存最新帧，实际处理在定时器中完成。
 void VelocityPlannerNode::SetupInterfaces() {
   cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(input_cloud_topic_, rclcpp::SensorDataQoS(), [this](const sensor_msgs::msg::PointCloud2::SharedPtr cloud) {
     CloudCallback(cloud);
@@ -139,14 +147,18 @@ void VelocityPlannerNode::SetupInterfaces() {
   });
 }
 
-// 保存最新点云，实际处理在固定频率定时器中进行。
+// 保存最新点云供定时器处理。
+// 输入:
+//   cloud : 最新收到的点云
 void VelocityPlannerNode::CloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr cloud) {
   pending_cloud_           = cloud;
   has_pending_cloud_       = true;
   last_cloud_receive_time_ = std::chrono::steady_clock::now();
 }
 
-// 发布固定频率的避停状态，
+// 发布固定频率的避停状态。
+// 输出:
+//   /velocity_planner/status；点云超时或结果缺失时要求停车。
 void VelocityPlannerNode::PublishStatus() {
   weeder_msgs::msg::ObstacleStatus status;
   const auto now = this->now();

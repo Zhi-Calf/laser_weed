@@ -192,7 +192,7 @@ def generate_launch_description():
             executable='sim_orchestrator',
             name='sim_orchestrator',
             output='screen',
-            parameters=[{
+            parameters=[sim_params, {
                 'use_sim_time': use_sim_time,
             }],
         ),

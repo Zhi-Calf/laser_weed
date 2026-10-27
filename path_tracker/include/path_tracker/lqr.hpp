@@ -77,27 +77,38 @@ class LQR {
 public:
   LQR() = default;
 
+  // 应用控制器配置并初始化权重矩阵。
   void Configure(const LQRConfig& config);
 
+  // 设置待跟踪轨迹并重置目标索引。
   void SetTrajectory(const std::vector<TrajectoryPoint>& points);
 
+  // 计算当前周期的速度、转角和转向模式。
   bool ComputeCommand(const LQRInput& input, LQROutput& output);
 
 private:
+  // 根据车辆位置更新跟踪目标点索引。
   void UpdateTargetIndex();
 
+  // 判断车辆是否到达路径末端。
   bool IsAtPathEnd() const;
 
+  // 判断给定距离范围内是否存在掉头段。
   bool HasTurnNear(double before_m, double after_m) const;
 
+  // 判断当前是否应使用对称阿克曼模式。
   bool SelectSymmetricAckermann();
 
+  // 返回当前转向模式对应的控制状态。
   RobotState ControlStateForMode(bool symmetric_ackermann) const;
 
+  // 使用给定等效轴距计算 LQR 反馈控制量。
   LQROutput ComputeFeedbackControl(double effective_wheelbase) const;
 
+  // 求解离散代数黎卡提方程得到反馈增益。
   void CalRicatti(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B, Eigen::MatrixXd& K) const;
 
+  // 根据路径段类型计算目标速度。
   double ScaleSpeed() const;
 
 private:

@@ -20,6 +20,9 @@ constexpr const char* kNodeName = "path_tracker";
 
 }   // namespace
 
+// 创建路径跟踪节点并初始化控制器与接口。
+// 输入:
+//   options : ROS 节点创建选项
 PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNodeName, options) {
   loadLogParameters();
   LogConfig log_config;
@@ -60,6 +63,9 @@ PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNod
     require_velocity_planner_ ? "开启" : "关闭");
 }
 
+// 读取日志配置参数。
+// 输出:
+//   日志目录、文件大小、文件数量和日志级别。
 void PathTrackerNode::loadLogParameters() {
   declare_parameter("log_dir", "/opt/agri/logs");
   declare_parameter("log_file_size_mb", 50);
@@ -74,6 +80,9 @@ void PathTrackerNode::loadLogParameters() {
   log_level_          = get_parameter("log_level").as_string();
 }
 
+// 读取 LQR、速度策略和安全门控参数。
+// 输出:
+//   节点成员中的控制器配置和安全阈值。
 void PathTrackerNode::loadParameters() {
   control_hz_                        = declare_parameter<double>("control_hz", 10.0);
   wheelbase_                         = declare_parameter<double>("wheelbase", 1.0);
@@ -178,6 +187,9 @@ void PathTrackerNode::loadParameters() {
     pose_at_vehicle_center);
 }
 
+// 创建位姿、路径、模式、避停状态订阅及控制输出接口。
+// 副作用:
+//   初始化 LQR 目标可视化、底盘指令发布和控制定时器。
 void PathTrackerNode::setupInterfaces() {
   // gnss_driver 使用 SensorDataQoS（尽力传输，保留最近 5 条）发布位姿。
   // 可靠订阅端无法与该发布端匹配，因此这里使用相同的 QoS。
@@ -216,6 +228,11 @@ void PathTrackerNode::setupInterfaces() {
   last_obstacle_status_time_ = t;
 }
 
+// 接收车辆位姿并更新控制器状态。
+// 输入:
+//   msg : 定位位姿、速度、卫星数和有效性标志
+// 输出:
+//   robot_state_、位姿有效性和最近更新时间。
 void PathTrackerNode::poseCallback(const weeder_msgs::msg::Pose::SharedPtr msg) {
   last_pose_time_       = now();
   has_pose_             = true;
@@ -237,6 +254,13 @@ void PathTrackerNode::poseCallback(const weeder_msgs::msg::Pose::SharedPtr msg) 
     msg->valid);
 }
 
+// 接收并校验新路径，更新跟踪轨迹。
+// 输入:
+//   msg : x/y 点列和逐点作业段类型
+// 输出:
+//   LQR 轨迹、路径点数和最近路径时间。
+// 失败:
+//   x/y 长度不一致或点数不足时忽略该路径并输出停车。
 void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) {
   if (msg->x.size() < 3 || msg->x.size() != msg->y.size()) {
     SPDLOG_WARN("收到的路径无效：x={} y={}（需要 x==y 且不少于 3 点）", msg->x.size(), msg->y.size());
@@ -280,6 +304,11 @@ void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) 
     traj.back().y);
 }
 
+// 接收工作模式并更新自动控制使能状态。
+// 输入:
+//   msg : 当前工作模式和名称
+// 输出:
+//   autonomous_driving_mode_active_ 和最近模式时间。
 void PathTrackerNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg) {
   last_work_mode_time_            = now();
   const bool first_mode           = !ever_got_work_mode_;
@@ -300,6 +329,11 @@ void PathTrackerNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedP
   }
 }
 
+// 接收点云避停状态并更新安全门控缓存。
+// 输入:
+//   msg : 感知有效性、停车要求和障碍统计
+// 输出:
+//   避停相关成员及最近状态时间。
 void PathTrackerNode::ObstacleStatusCallback(const weeder_msgs::msg::ObstacleStatus::SharedPtr msg) {
   last_obstacle_status_time_ = now();
   has_obstacle_status_       = true;
@@ -318,6 +352,9 @@ void PathTrackerNode::ObstacleStatusCallback(const weeder_msgs::msg::ObstacleSta
   }
 }
 
+// 发布零速、零转角和未使能状态的停车指令。
+// 副作用:
+//   发布 /chassis/cmd 并清零速度平滑状态。
 void PathTrackerNode::publishStop() {
   weeder_msgs::msg::ChassisCmd zero;
   zero.gear            = 0;
@@ -331,6 +368,9 @@ void PathTrackerNode::publishStop() {
   last_speed_cmd_ = 0.0;
 }
 
+// 执行一次安全门控、轨迹推进和 LQR 控制。
+// 副作用:
+//   发布底盘指令，并在任一安全门控失败时输出停车。
 void PathTrackerNode::controlTick() {
   const auto t = now();
 
@@ -489,6 +529,9 @@ void PathTrackerNode::controlTick() {
   }
 }
 
+// 发布当前跟踪目标点的 RViz Marker。
+// 输入:
+//   target : 当前目标轨迹点
 void PathTrackerNode::publishViz(const TrajectoryPoint& target) {
   visualization_msgs::msg::Marker m;
   m.header.frame_id    = frame_id_;

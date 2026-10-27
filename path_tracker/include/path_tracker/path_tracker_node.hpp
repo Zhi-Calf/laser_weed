@@ -19,23 +19,32 @@ namespace path_tracker {
 
 class PathTrackerNode : public rclcpp::Node {
 public:
+  // 创建路径跟踪节点并初始化控制器与接口。
   explicit PathTrackerNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
 
 private:
+  // 读取日志配置参数。
   void loadLogParameters();
+  // 读取 LQR 与安全门控参数。
   void loadParameters();
+  // 创建订阅者、发布者和定时器。
   void setupInterfaces();
+  // 执行一次控制周期和安全门控。
   void controlTick();
 
+  // 接收车辆位姿并更新控制器状态。
   void poseCallback(const weeder_msgs::msg::Pose::SharedPtr msg);
+  // 接收并校验新路径。
   void pathCallback(const weeder_msgs::msg::Path::SharedPtr msg);
+  // 接收工作模式并更新使能状态。
   void workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg);
+  // 接收点云避停状态并更新门控状态。
   void ObstacleStatusCallback(const weeder_msgs::msg::ObstacleStatus::SharedPtr msg);
 
-  /// 将跟踪目标点发布为 RViz Marker。
+  // 将跟踪目标点发布为 RViz Marker。
   void publishViz(const TrajectoryPoint& target);
 
-  /// 输出零速和零转角。CAN 桥自身还有指令超时停车保护，这里构成双重保护。
+  // 发布零速、零转角的停车指令。
   void publishStop();
 
   // 参数

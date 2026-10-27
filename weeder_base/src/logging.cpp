@@ -84,7 +84,9 @@ std::string ResolveLogDir(const std::string& configured) {
 
 }   // namespace
 
-// 配置滚动文件和控制台日志。
+// 按配置初始化滚动文件日志和可选控制台输出。
+// 输入:
+//   config : 日志器名称、目录、文件数量、级别和输出开关
 void ConfigureLogging(const LogConfig& config) {
   const std::string resolved_dir = ResolveLogDir(config.log_dir);
   std::vector<spdlog::sink_ptr> sinks;

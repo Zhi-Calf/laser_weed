@@ -15,6 +15,7 @@ struct LogConfig {
   std::string log_level           = "info";                    // 日志级别
 };
 
+// 按配置初始化滚动文件日志和可选控制台输出。
 void ConfigureLogging(const LogConfig& config);
 
 }   // namespace gnss_localization

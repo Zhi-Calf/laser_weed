@@ -195,7 +195,9 @@ std::string NtripClient::buildRequest() const {
   return request.str();
 }
 
-// 打开串口；失败详情由 SerialPort 记录。每次都重新打开, 确保干净的重连状态。
+// 打开串口并建立干净的重连状态。
+// 返回:
+//   true = 串口已打开；false = 打开失败，详情由 SerialPort 记录。
 bool NtripClient::openSerial() {
   if (!serial_->open(serial_port_, serial_baud_)) {
     return false;
@@ -204,8 +206,9 @@ bool NtripClient::openSerial() {
   return true;
 }
 
-// 非阻塞: 读一次串口缓冲区, 返回本次读到的最新合法 GGA (无则 nullopt)。
-// read_lines 本身非阻塞 (一次读空当前缓冲区的完整行), 这里不 sleep, 语义纯粹。
+// 非阻塞读取一次串口缓冲区并返回最新合法 GGA。
+// 返回:
+//   最新合法 GGA；没有新帧时返回 nullopt。
 std::optional<std::string> NtripClient::tryReadGga() {
   std::optional<std::string> result;
   serial_->read_lines([&](const std::string& line) {
@@ -216,8 +219,11 @@ std::optional<std::string> NtripClient::tryReadGga() {
   return result;
 }
 
-// 阻塞: timeout 秒内反复读取直到读到合法 GGA (超时返回 nullopt)。
-// 返回内容 + 接收时刻戳, 供 runSession 初始化 GGA 超时。
+// 在超时时间内等待一条合法 GGA。
+// 输入:
+//   timeout_seconds : 最长等待时间 (s)
+// 返回:
+//   GGA 内容和接收时刻；超时或串口关闭时返回 nullopt。
 std::optional<std::pair<std::string, std::chrono::steady_clock::time_point>> NtripClient::waitForGga(double timeout_seconds) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout_seconds);
   while (running_ && std::chrono::steady_clock::now() < deadline) {
@@ -232,7 +238,11 @@ std::optional<std::pair<std::string, std::chrono::steady_clock::time_point>> Ntr
   return std::nullopt;
 }
 
-// 打开 NTRIP 套接字
+// 建立 NTRIP TCP 连接并读取响应头。
+// 输出:
+//   pending_data : 响应头之后已经收到的差分数据
+// 返回:
+//   已连接 socket；失败返回 -1。
 int NtripClient::openNtripSocket(std::string& pending_data) {
   const int connect_timeout_ms = static_cast<int>(connect_timeout_sec_ * 1000.0);
 
@@ -409,8 +419,14 @@ int NtripClient::openNtripSocket(std::string& pending_data) {
   return fd;
 }
 
-// 发送 GPGGA 并写入 RTCM。
-// 返回值区分结束原因，便于调用方记录数据超时或链路断开。
+// 周期发送 GGA、接收 RTCM 并写回接收机。
+// 输入:
+//   socket_fd      : 已连接的 NTRIP socket
+//   first_gga      : 建链后的首条 GGA
+//   first_gga_time : 首条 GGA 的到达时刻
+//   pending_data   : 建链响应中预留的额外数据
+// 返回:
+//   会话结束原因，供调用方区分超时和断线。
 NtripClient::SessionEnd NtripClient::runSession(int socket_fd, const std::string& first_gga, std::chrono::steady_clock::time_point first_gga_time, std::string pending_data) {
   // 重置连续失败计数
   consecutive_write_fail_.store(0);
@@ -514,7 +530,9 @@ NtripClient::SessionEnd NtripClient::runSession(int socket_fd, const std::string
   return SessionEnd::kDisconnected;
 }
 
-// 主线程: 外层负责链路建立与重连 (串口 + NTRIP), 内层 runSession 负责数据交互。
+// 执行 NTRIP 客户端外层建链和重连循环。
+// 副作用:
+//   持续打开串口和 socket，并调用 runSession 处理数据交互。
 void NtripClient::workerLoop() {
   bool serial_failing  = false;   // 处于串口连续失败序列中
   bool connect_failing = false;   // 处于 NTRIP 连续失败序列中

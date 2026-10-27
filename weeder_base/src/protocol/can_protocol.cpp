@@ -9,6 +9,13 @@ namespace protocol {
 namespace {
 
 // 位提取只允许访问经典 CAN 帧的 64 个 bit。
+// 检查位提取范围是否落在经典 CAN 帧内。
+// 输入:
+//   data      : 8 字节 CAN 数据
+//   start_bit : 起始位，从 0 开始
+//   len       : 提取位数
+// 返回:
+//   true = 指针有效且范围位于 0..63 bit
 bool IsValidBitRange(const uint8_t* data, uint8_t start_bit, uint8_t len) {
   return data != nullptr && len != 0 && len <= 32 && start_bit < 64 && static_cast<uint16_t>(start_bit) + len <= 64;
 }
@@ -18,24 +25,47 @@ bool IsValidBitRange(const uint8_t* data, uint8_t start_bit, uint8_t len) {
 // ============================================================
 // 字节工具 (Intel / little-endian)
 // ============================================================
+// 从两字节小端数据读取无符号 16 位整数。
+// 输入:
+//   p : 至少两字节的数据指针
+// 返回:
+//   小端解析结果
 uint16_t CanProtocol::readU16LE(const uint8_t* p) {
   return static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
 }
 
+// 从两字节小端数据读取有符号 16 位整数。
+// 输入:
+//   p : 至少两字节的数据指针
+// 返回:
+//   小端解析结果
 int16_t CanProtocol::readI16LE(const uint8_t* p) {
   return static_cast<int16_t>(readU16LE(p));
 }
 
+// 将无符号 16 位整数写成两字节小端数据。
+// 输出:
+//   p : 至少两字节的可写缓冲区
 void CanProtocol::writeU16LE(uint8_t* p, uint16_t v) {
   p[0] = static_cast<uint8_t>(v & 0xFF);
   p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
 }
 
+// 将有符号 16 位整数写成两字节小端数据。
+// 输出:
+//   p : 至少两字节的可写缓冲区
 void CanProtocol::writeI16LE(uint8_t* p, int16_t v) {
   writeU16LE(p, static_cast<uint16_t>(v));
 }
 
 // 通用位提取 (Intel 格式: 起始bit所在字节的对应bit为最低位, 小端拼接)
+// 从 Intel 格式位域中提取无符号数值。
+// 输入:
+//   data      : CAN 数据
+//   start_bit : 起始位
+//   len       : 位数
+// 返回:
+//   提取值；范围非法时返回 0
 uint32_t CanProtocol::extractUnsigned(const uint8_t* data, uint8_t start_bit, uint8_t len) {
   if (!IsValidBitRange(data, start_bit, len)) {
     return 0;
@@ -52,6 +82,13 @@ uint32_t CanProtocol::extractUnsigned(const uint8_t* data, uint8_t start_bit, ui
   return raw;
 }
 
+// 从 Intel 格式位域中提取二进制补码有符号数值。
+// 输入:
+//   data      : CAN 数据
+//   start_bit : 起始位
+//   len       : 位数
+// 返回:
+//   符号扩展后的数值；范围非法时返回 0
 int32_t CanProtocol::extractSigned(const uint8_t* data, uint8_t start_bit, uint8_t len) {
   if (!IsValidBitRange(data, start_bit, len)) {
     return 0;
@@ -71,6 +108,11 @@ int32_t CanProtocol::extractSigned(const uint8_t* data, uint8_t start_bit, uint8
 // ============================================================
 // 编码: ADCU -> VCU
 // ============================================================
+// 将 ADCU 控制指令编码为扩展帧。
+// 输入:
+//   cmd : 速度、转角、模式和灯光控制字段
+// 返回:
+//   CAN ID、DLC、扩展帧标志和 8 字节数据
 CanFrame CanProtocol::encodeAdcuCmd01(const AdcuCommand01& cmd) {
   CanFrame f{};
   f.id          = can_id::ADCU_TO_VCU_01;
@@ -117,6 +159,13 @@ CanFrame CanProtocol::encodeAdcuCmd01(const AdcuCommand01& cmd) {
 // ============================================================
 
 // State_01: 20ms - 底盘主状态
+// 解码底盘主状态帧。
+// 输入:
+//   f : State_01 CAN 帧
+// 输出:
+//   out : 底盘主状态；失败时保持旧值
+// 返回:
+//   true = ID 和 DLC 合法
 bool CanProtocol::decodeState01(const CanFrame& f, ChassisState01& out) {
   if (f.id != can_id::CHASSIS_STATE_01 || f.dlc < 8)
     return false;
@@ -166,6 +215,13 @@ bool CanProtocol::decodeState01(const CanFrame& f, ChassisState01& out) {
 }
 
 // State_02: 100ms - 四轮电机转速 (各 uint16 LE, r/min)
+// 解码四轮转速状态帧。
+// 输入:
+//   f : State_02 CAN 帧
+// 输出:
+//   out : 四轮转速；失败时保持旧值
+// 返回:
+//   true = ID 和 DLC 合法
 bool CanProtocol::decodeState02(const CanFrame& f, ChassisState02& out) {
   if (f.id != can_id::CHASSIS_STATE_02 || f.dlc < 8)
     return false;
@@ -177,6 +233,13 @@ bool CanProtocol::decodeState02(const CanFrame& f, ChassisState02& out) {
 }
 
 // State_03: 100ms - 四轮转向角 (各 int16 LE, 0.1°, 左正右负)
+// 解码四轮转向角状态帧。
+// 输入:
+//   f : State_03 CAN 帧
+// 输出:
+//   out : 四轮转向角；失败时保持旧值
+// 返回:
+//   true = ID 和 DLC 合法
 bool CanProtocol::decodeState03(const CanFrame& f, ChassisState03& out) {
   if (f.id != can_id::CHASSIS_STATE_03 || f.dlc < 8)
     return false;
@@ -189,6 +252,11 @@ bool CanProtocol::decodeState03(const CanFrame& f, ChassisState03& out) {
 
 // State_04~11: 500ms - 电机电参 (行走/转向电机, 结构相同)
 //   布局: Byte0=母线电压, Byte1~2=输出电流, Byte3=温度, Byte4~5=故障码
+// 判断 CAN ID 是否属于电机电参状态帧。
+// 输入:
+//   id : 29 位扩展帧 ID
+// 返回:
+//   true = State_04~11
 bool CanProtocol::isMotorElecStateId(uint32_t id) {
   switch (id) {
     case can_id::CHASSIS_STATE_04:
@@ -205,6 +273,13 @@ bool CanProtocol::isMotorElecStateId(uint32_t id) {
   }
 }
 
+// 解码行走或转向电机电参状态帧。
+// 输入:
+//   f : State_04~11 CAN 帧
+// 输出:
+//   out : 电压、电流、温度和故障码；失败时保持旧值
+// 返回:
+//   true = ID 和 DLC 合法
 bool CanProtocol::decodeMotorElec(const CanFrame& f, MotorElecState& out) {
   if (!isMotorElecStateId(f.id) || f.dlc < 8)
     return false;
@@ -220,6 +295,13 @@ bool CanProtocol::decodeMotorElec(const CanFrame& f, MotorElecState& out) {
 //   bit16 = BMS_Voltage                V, Value=X*0.01
 //   bit32 = BMS_Current                A, Value=X*0.1-1000 (signed, 充电为负)
 //   bit48 = BMS_FullChargeCapacity     AH, Value=X*0.01
+// 解码 BMS 基本状态帧。
+// 输入:
+//   f : State_21 CAN 帧
+// 输出:
+//   out : SOC、电压、电流和容量；失败时保持旧值
+// 返回:
+//   true = ID 和 DLC 合法
 bool CanProtocol::decodeState21(const CanFrame& f, ChassisState21& out) {
   if (f.id != can_id::CHASSIS_STATE_21 || f.dlc < 8)
     return false;
@@ -239,6 +321,13 @@ bool CanProtocol::decodeState21(const CanFrame& f, ChassisState21& out) {
 //   bit16 = BMS_ErrorCode       电池故障码 (第二版扩为 16bit)
 //   bit32 = BMS_MaxVoltage      电芯最高电压, mV
 //   bit48 = System_Voltage      VCU 控制器电压, mV
+// 解码 BMS 故障与电压状态帧。
+// 输入:
+//   f : State_22 CAN 帧
+// 输出:
+//   out : 循环次数、故障码和电压；失败时保持旧值
+// 返回:
+//   true = ID 和 DLC 合法
 bool CanProtocol::decodeState22(const CanFrame& f, ChassisState22& out) {
   if (f.id != can_id::CHASSIS_STATE_22 || f.dlc < 8)
     return false;

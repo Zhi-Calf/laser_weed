@@ -163,7 +163,11 @@ void ChassisNode::loadParameters() {
   }
 }
 
-// ---- 下行: 速度 + 前轮转角合并指令 ----
+// 接收底盘控制指令并更新待下发状态。
+// 输入:
+//   msg : 速度、转向角、模式和安全位
+// 副作用:
+//   更新 cmd01_；无效指令会转为安全停车状态。
 void ChassisNode::onChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr msg) {
   std::lock_guard<std::mutex> lock(cmd_mutex_);
   last_cmd_time_ = this->now();
@@ -187,7 +191,9 @@ void ChassisNode::onChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr msg
   cmd01_.steer_angle         = static_cast<int16_t>(std::llround(clamped_deg * 10.0));
 }
 
-// ---- 50Hz (20ms) 周期下发 ADCU_toVCU_01 ----
+// 按 50 Hz 周期编码并下发 ADCU 控制帧。
+// 副作用:
+//   指令超时或安全条件不满足时下发安全停车状态。
 void ChassisNode::sendCommand() {
   if (!can_driver_ || !can_driver_->isOpen()) {
     return;   // 驱动侧已报过"未打开"
@@ -218,7 +224,11 @@ void ChassisNode::sendCommand() {
   }
 }
 
-// ---- 上行: CAN 接收线程回调 (VCU -> ADCU) ----
+// 解码并缓存 VCU 上传的底盘状态。
+// 输入:
+//   frame : 接收到的 CAN 状态帧
+// 输出:
+//   更新对应状态结构和有效性标志。
 void ChassisNode::onCanReceive(const protocol::CanFrame& frame) {
   switch (frame.id) {
     case protocol::can_id::CHASSIS_STATE_01: {
@@ -326,7 +336,9 @@ void ChassisNode::onCanReceive(const protocol::CanFrame& frame) {
   }
 }
 
-// ---- 上行: 完整状态发布 (10Hz) ----
+// 发布类型化底盘完整状态。
+// 输出:
+//   /chassis/state，包含控制状态、四轮数据和 BMS 信息。
 void ChassisNode::publishState() {
   auto msg             = std::make_unique<weeder_msgs::msg::ChassisState>();
   msg->header.stamp    = this->now();

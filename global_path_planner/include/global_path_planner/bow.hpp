@@ -37,8 +37,7 @@ enum class PlanStatus : uint8_t {
   kInternal = 8,   // 流程跑完仍无路点 (未知原因)
 };
 
-// 是否属于"输入数据异常"这一类 (含它的五个细分)。调用方要按类别分支时用它 —— 免得每加一个
-// 细分状态都要回头改调用点, 那正是细分最容易漏判的地方。
+// 判断规划状态是否属于输入数据异常。
 inline bool isBadInput(PlanStatus status) {
   switch (status) {
     case PlanStatus::kInputTooFew:
@@ -52,8 +51,7 @@ inline bool isBadInput(PlanStatus status) {
   }
 }
 
-// 是否属于"参数配置不合理"这一类 (field_margin / ridge_width)。与 isBadInput() 对称:
-// 两类要分开 —— 一类该去查 YAML 里的地块顶点 poly, 另一类该去查这两个几何参数。
+// 判断规划状态是否属于几何参数配置异常。
 inline bool isBadParams(PlanStatus status) {
   return status == PlanStatus::kBadFieldMargin || status == PlanStatus::kBadRidgeWidth;
 }
@@ -131,19 +129,28 @@ class PlanBowShapedPath {
 public:
   PlanBowShapedPath()  = default;
   ~PlanBowShapedPath() = default;
+  // 执行一次完整的弓形路径规划并返回结果。
   BowOutput plan(const BowInput& in);
 
 private:
 #ifdef GLOBAL_PATH_PLANNER_TEST_ACCESS
   friend class BowPlannerTestAccess;
 #endif
+  // 生成最终路点和关键点。
   void generateWaypoints();
+  // 校验并规范化输入多边形。
   bool preparePolygon(const Polygon_2& cell, Polygon_2& out);
+  // 按给定距离均匀内缩多边形。
   Polygon_2 offsetUniformly(const Polygon_2& poly, double margin);
+  // 按配置执行边界内缩并校验结果。
   Polygon_2 insetPolygon(const Polygon_2& poly);
+  // 返回使扫描行数最少的方向。
   Point_2 minWidthDirection(const Polygon_2& poly);
+  // 生成扫描线与作业区域的交集垄段。
   std::vector<Segment_2> makeRidgeSegments(const Polygon_2& region, const Point_2& sweep_dir, const Point_2& offset_dir, const Segment_2& far_side_edge);
+  // 将垄段展开成首尾相连的关键点列。
   std::vector<Point_2> flattenRidges(const std::vector<Segment_2>& ridges);
+  // 生成相邻垄之间的平滑掉头路径。
   std::vector<Point_2> smoothTurns(const std::vector<Point_2>& key_waypoints, std::vector<uint8_t>* types = nullptr);
 
 private:
@@ -154,7 +161,9 @@ private:
     Point_2 search_dir;
     bool at_front;
   };
+  // 尝试把路径端点延伸到区域角点。
   bool tryExtendPathEnd(const EndExtensionSpec& spec, const std::vector<Point_2>& path, std::vector<Point_2>& out, std::vector<uint8_t>* out_types) const;
+  // 把路径两端延伸到区域边界角点。
   std::vector<Point_2> extendEndsToRegionCorners(
     const std::vector<Point_2>& path,
     const Segment_2& near_side_edge,
@@ -170,14 +179,21 @@ private:
     Point_2 n_ab;
     double radius = 0.0;
   };
+  // 计算两段垄之间的可行掉头几何。
   std::optional<TurnGeometry> makeTurnGeometry(const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4) const;
+  // 按给定圆心、半径和角度范围采样圆弧。
   std::vector<Point_2> sampleCircularArc(const Point_2& center, double radius, double start_angle, double sweep, const Point_2& t1, const Point_2& t2) const;
+  // 根据掉头几何生成半圆路径。
   std::vector<Point_2> buildHalfCircleTurn(const TurnGeometry& geometry);
+  // 生成两段垄之间的完整掉头路径。
   std::vector<Point_2> buildTurn(const Point_2& P1, const Point_2& P2, const Point_2& P3, const Point_2& P4);
+  // 返回单点超出内缩边界的距离。
   double overrunOf(const Point_2& p);
+  // 返回点列超出内缩边界的最大距离。
   double maxOverrunOf(const std::vector<Point_2>& pts);
 
 private:
+  // 记录规划失败状态和原因。
   void fail(PlanStatus st, const std::string& msg) {
     output_.status  = st;
     output_.message = msg;

@@ -30,7 +30,9 @@ double EffectiveWheelbase(double wheelbase, bool symmetric_ackermann) {
 
 }   // namespace
 
-// 使用完整配置结构初始化 LQR。
+// 使用完整配置结构初始化 LQR 权重和迭代参数。
+// 输入:
+//   config : LQR 几何、权重、速度和模式切换配置
 void LQR::Configure(const LQRConfig& config) {
   config_  = config;
   Q_       = Eigen::Matrix2d::Zero();
@@ -40,7 +42,9 @@ void LQR::Configure(const LQRConfig& config) {
   R_(0, 0) = std::max(config_.r_steer, 1e-6);   // 防止矩阵不可逆
 }
 
-// 更新路径
+// 更新待跟踪路径并重置目标索引。
+// 输入:
+//   points : 已计算航向和曲率的轨迹点列
 void LQR::SetTrajectory(const std::vector<TrajectoryPoint>& points) {
   path_             = points;
   turn_mode_active_ = false;
@@ -49,6 +53,10 @@ void LQR::SetTrajectory(const std::vector<TrajectoryPoint>& points) {
 }
 
 // 将固定车体中心位姿转换为当前转向模型的控制参考点。
+// 输入:
+//   symmetric_ackermann : true 表示对称阿克曼，false 表示单阿克曼
+// 返回:
+//   当前控制参考点的位置和航向
 RobotState LQR::ControlStateForMode(bool symmetric_ackermann) const {
   RobotState control_state = robot_state_;
   if (!config_.pose_at_vehicle_center || symmetric_ackermann) {
@@ -61,7 +69,9 @@ RobotState LQR::ControlStateForMode(bool symmetric_ackermann) const {
   return control_state;
 }
 
-// 更新最近点
+// 从上一目标索引向前搜索最近路径点。
+// 输出:
+//   target_idx_ 和对应目标点。
 void LQR::UpdateTargetIndex() {
   const size_t search_start_idx = target_idx_;
   const size_t end              = std::min(path_.size() - 1, search_start_idx + config_.snap_forward_points);
@@ -86,6 +96,10 @@ bool LQR::IsAtPathEnd() const {
 }
 
 // 判断当前目标点前后给定弧长范围内是否存在掉头点。
+// 输入:
+//   before_m / after_m : 向前和向后的搜索距离 (m)
+// 返回:
+//   true = 搜索范围内存在 TURN 点
 bool LQR::HasTurnNear(double before_m, double after_m) const {
   const double current_s = path_[target_idx_].s;
   const double lower_s   = current_s - std::max(after_m, 0.0);
@@ -104,7 +118,11 @@ bool LQR::HasTurnNear(double before_m, double after_m) const {
   return false;
 }
 
-// 更新里卡提方程
+// 求解离散代数黎卡提方程并得到反馈增益。
+// 输入:
+//   A / B : 离散状态矩阵和输入矩阵
+// 输出:
+//   K     : 反馈增益矩阵
 void LQR::CalRicatti(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B, Eigen::MatrixXd& K) const {
   Eigen::MatrixXd AT = A.transpose();
   Eigen::MatrixXd BT = B.transpose();
@@ -120,6 +138,8 @@ void LQR::CalRicatti(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B, Eigen::
 }
 
 // 计算路径分段对应的基础速度。
+// 返回:
+//   WORK/TURN 段目标速度，并考虑掉头前后预览和保持区。
 double LQR::ScaleSpeed() const {
   double v = config_.work_speed;
   if (HasTurnNear(config_.turn_speed_preview_m, config_.turn_speed_hold_m)) {
@@ -128,7 +148,11 @@ double LQR::ScaleSpeed() const {
   return v;
 }
 
-// 计算反馈控制量
+// 计算当前状态对应的反馈控制量。
+// 输入:
+//   effective_wheelbase : 当前转向模式的等效轴距 (m)
+// 返回:
+//   目标点、横向/航向误差和前馈/反馈转角。
 LQROutput LQR::ComputeFeedbackControl(double effective_wheelbase) const {
   LQROutput output;
   output.target_pt = goal_;
@@ -185,7 +209,9 @@ LQROutput LQR::ComputeFeedbackControl(double effective_wheelbase) const {
   return output;
 }
 
-// 根据路径段类型和滞回区选择当前转向模式。
+// 根据路径段类型和切换滞回区选择当前转向模式。
+// 返回:
+//   true = 对称阿克曼；false = 单阿克曼。
 bool LQR::SelectSymmetricAckermann() {
   const bool previous_mode = turn_mode_active_;
   if (!turn_mode_active_ && HasTurnNear(config_.turn_mode_enter_m, 0.0)) {
@@ -202,6 +228,12 @@ bool LQR::SelectSymmetricAckermann() {
 }
 
 // 完成一次路径推进、转向模式选择和控制量计算。
+// 输入:
+//   input : 当前车辆位姿和前向速度
+// 输出:
+//   output : 目标点、速度和转角指令
+// 返回:
+//   true = 已生成控制量；false = 路径为空、到达末端或无有效位姿
 bool LQR::ComputeCommand(const LQRInput& input, LQROutput& output) {
   output       = LQROutput{};
   robot_state_ = input.robot_state;

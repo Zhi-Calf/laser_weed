@@ -40,7 +40,9 @@ constexpr int kStatusRtkFixed = 4;   // RTK 固定解
 ///                    ~/pose, 已含同原点的修正 ENU 位姿)。
 class GnssDriver : public rclcpp::Node {
 public:
+  // 创建 GNSS 驱动节点并加载参数。
   explicit GnssDriver(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+  // 停止定时器并关闭串口。
   ~GnssDriver() override;
 
 private:
@@ -52,26 +54,43 @@ private:
     kSerial,
   };
 
+  // 读取并解析串口数据，更新健康状态和输出。
   void timerCallback();
+  // 处理一行接收到的设备数据。
   void processLine(const std::string& line);
+  // 处理一帧有效的 GIAVP 数据。
   void handleGiavp(const GiavpData& d);
+  // 根据数据新鲜度与定位质量更新健康状态。
   void updateHealth();
+  // 更新健康状态并限制重复日志。
   void updateHealthState(HealthState state, const std::string& message);
+  // 判断当前位置是否可用于输出。
   bool positionUsable(const GiavpData& d) const;
+  // 读取日志配置参数。
   void loadLogParameters();
+  // 读取 GNSS 与标定参数。
   void loadParameters();
 
 private:
+  // 发布原始经纬度定位。
   void publishFix(const GiavpData& d);
+  // 发布 IMU 姿态数据。
   void publishImu(const GiavpData& d);
+  // 发布车体系速度。
   void publishVelocity(const GiavpData& d);
+  // 发布修正后的 ENU 位姿和原始里程计。
   void publishPose(const GiavpData& d);
+  // 发布 ENU 原点经纬度。
   void publishOriginLlh();
 
 private:
+  // 将设备航向转换为 ENU yaw。
   double headingToEnuYaw(double heading_deg) const;
+  // 返回解算状态对应的水平位置标准差。
   double positionAccuracyForStatus(int status) const;
+  // 生成设备 GPS 时间对应的时间戳。
   rclcpp::Time timestampFor(const GiavpData& data) const;
+  // 返回解算状态的精度排序等级。
   static int statusRank(int status);
 
 private:

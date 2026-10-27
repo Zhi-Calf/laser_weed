@@ -31,32 +31,39 @@ class CanDriver {
 public:
   using CanReceiveCallback = std::function<void(const protocol::CanFrame&)>;
 
+  // 使用 CAN 接口名创建驱动。
   explicit CanDriver(const std::string& interface = "can0");
+  // 停止接收线程并关闭 socket。
   ~CanDriver();
 
   CanDriver(const CanDriver&)            = delete;
   CanDriver& operator=(const CanDriver&) = delete;
 
+  // 打开并绑定 SocketCAN 接口。
   bool open();
+  // 停止接收线程并关闭 socket。
   void close();
+  // 返回 socket 是否处于打开状态。
   bool isOpen() const {
     return socket_fd_ >= 0;
   }
 
+  // 发送一帧 CAN 数据。
   bool send(const protocol::CanFrame& frame);
+  // 设置接收线程的帧回调。
   void setReceiveCallback(CanReceiveCallback callback);
+  // 启动 CAN 接收线程。
   void startReceiveThread();
+  // 停止并等待 CAN 接收线程退出。
   void stopReceiveThread();
 
-  // 只接收给定的 CAN ID (CAN_RAW_FILTER, 内核态过滤)。
-  //   29 位扩展帧 ID 自动带 CAN_EFF_FLAG, 11 位标准帧原样使用;
-  //   空列表 = 全收 (默认, 也是 reset 的方式)。
-  // 未 open() 时只记下, 由 open() 生效。注意: 表里漏掉的 ID 会在内核里被丢掉,
-  // 不回调 onCanReceive —— 将来解码 State_02~23 时记得同步加进滤波表。
+  // 设置内核态 CAN ID 过滤表，空列表表示接收全部帧。
   void setFilters(const std::vector<uint32_t>& ids);
 
 private:
+  // 轮询 socket 并分发接收帧。
   void receiveLoop();
+  // 将当前过滤表应用到 socket。
   void applyFilters();
 
 private:

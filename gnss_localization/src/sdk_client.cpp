@@ -390,7 +390,12 @@ void SdkClient::loadParameters() {
   SPDLOG_INFO("=============================================");
 }
 
-// 串口写入 RTCM 数据
+// 同步写入一帧 RTCM 数据。
+// 输入:
+//   data : RTCM 字节流
+//   len  : 字节数
+// 返回:
+//   true = 全部写出
 bool SdkClient::writeRtcm(const uint8_t* data, uint32_t len) {
   std::lock_guard<std::mutex> lock(serial_mutex_);
   if (!serial_ || !serial_->is_open()) {
@@ -399,7 +404,13 @@ bool SdkClient::writeRtcm(const uint8_t* data, uint32_t len) {
   return serial_->write_raw(reinterpret_cast<const char*>(data), static_cast<size_t>(len));
 }
 
-// 保存坐标查询回调结果，等待主工作线程读取。
+// 保存 NOSR 坐标查询回调结果。
+// 输入:
+//   status_code         : SDK 查询状态码
+//   server_frame        : 服务端当前坐标框架
+//   available_count     : 可用坐标框架数量
+//   requested_supported : 请求框架是否可用
+//   server_epoch        : 服务端坐标历元
 void SdkClient::handleNosrCoordInfo(int32_t status_code, int32_t server_frame, uint32_t available_count, bool requested_supported, const std::string& server_epoch) {
   sdk_coord_query_code_.store(status_code);
   sdk_server_coord_frame_.store(server_frame);
@@ -413,11 +424,18 @@ void SdkClient::handleNosrCoordInfo(int32_t status_code, int32_t server_frame, u
 }
 
 // 返回配置的目标 NOSR 坐标框架。
+// 返回:
+//   坐标框架枚举值。
 int32_t SdkClient::coordFrame() const {
   return sdk_coord_frame_;
 }
 
-// SDK 回调只负责把 RTCM 放入有界队列，不在回调线程执行串口 I/O。
+// 将 RTCM 放入有界异步队列。
+// 输入:
+//   data : SDK 回调提供的 RTCM 字节流
+//   len  : 字节数
+// 副作用:
+//   队列满时丢弃最旧数据并累计丢帧计数。
 void SdkClient::enqueueRtcm(const uint8_t* data, uint32_t len) {
   if (data == nullptr || len == 0)
     return;
@@ -440,7 +458,9 @@ void SdkClient::enqueueRtcm(const uint8_t* data, uint32_t len) {
   rtcm_queue_cv_.notify_one();
 }
 
-// 独立串口线程异步消费 RTCM，避免阻塞千寻 SDK 数据回调。
+// 异步消费 RTCM 队列并写入串口。
+// 副作用:
+//   写入失败会累计失败计数并清空队列。
 void SdkClient::rtcmWriterLoop() {
   std::unique_lock<std::mutex> lock(rtcm_queue_mutex_);
   while (true) {
@@ -468,6 +488,8 @@ void SdkClient::rtcmWriterLoop() {
 }
 
 // 清空旧会话尚未写出的差分数据。
+// 副作用:
+//   清空队列并重置队列字节计数。
 void SdkClient::clearRtcmQueue() {
   {
     std::lock_guard<std::mutex> lock(rtcm_queue_mutex_);
@@ -477,7 +499,9 @@ void SdkClient::clearRtcmQueue() {
   dropped_rtcm_frames_.store(0);
 }
 
-// 打开串口；失败详情由 SerialPort 记录。每次都重新打开, 确保干净的重连状态。
+// 打开串口并建立干净的重连状态。
+// 返回:
+//   true = 串口已打开；false = 打开失败。
 bool SdkClient::openSerial() {
   std::lock_guard<std::mutex> lock(serial_mutex_);
   if (!serial_->open(serial_port_, serial_baud_)) {
@@ -487,7 +511,9 @@ bool SdkClient::openSerial() {
   return true;
 }
 
-// 读取GPGGA数据
+// 非阻塞读取一条最新合法 GGA。
+// 返回:
+//   最新 GGA；没有新帧时返回 nullopt。
 std::optional<std::string> SdkClient::tryReadGga() {
   std::optional<std::string> result;
   std::lock_guard<std::mutex> lock(serial_mutex_);
@@ -499,7 +525,11 @@ std::optional<std::string> SdkClient::tryReadGga() {
   return result;
 }
 
-// 读取第一帧的GPGGA数据
+// 在超时时间内等待首条合法 GGA。
+// 输入:
+//   timeout_seconds : 最长等待时间 (s)
+// 返回:
+//   GGA 内容和接收时刻；超时或串口关闭时返回 nullopt。
 std::optional<std::pair<std::string, std::chrono::steady_clock::time_point>> SdkClient::waitForGga(double timeout_seconds) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout_seconds);
   while (running_ && std::chrono::steady_clock::now() < deadline) {
@@ -516,7 +546,9 @@ std::optional<std::pair<std::string, std::chrono::steady_clock::time_point>> Sdk
   return std::nullopt;
 }
 
-// 初始化 SDK 并认证
+// 初始化千寻 SDK 并等待认证结果。
+// 返回:
+//   true = SDK 初始化且认证成功；false = 初始化、认证或超时失败。
 bool SdkClient::initSdk() {
   // 重置回调状态, 确保重连时干净 (上一轮的错误/认证状态不残留)。
   sdk_auth_ready_.store(false);
@@ -580,7 +612,9 @@ bool SdkClient::initSdk() {
   return true;
 }
 
-// 启动 NOSR 能力
+// 启动 NOSR 服务并等待启动回调。
+// 返回:
+//   true = NOSR 已就绪；false = 启动失败或超时。
 bool SdkClient::startNosr() {
   // 认证成功后启动 NOSR 能力
   sdk_nosr_ready_.store(false);
@@ -604,7 +638,9 @@ bool SdkClient::startNosr() {
   return false;
 }
 
-// 主线程
+// 执行 SDK 客户端外层建链和重连循环。
+// 副作用:
+//   初始化 SDK、打开串口并调用 runSession 处理数据交互。
 void SdkClient::workerLoop() {
   bool serial_failing  = false;   // 处于串口连续失败序列中
   bool connect_failing = false;   // 处于 SDK 初始化/认证连续失败序列中
@@ -786,8 +822,12 @@ void SdkClient::workerLoop() {
   SPDLOG_INFO("千寻 SDK 客户端已停止");
 }
 
-// 数据交互阶段: 周期上传 GGA, 并做 GGA/RTCM 数据超时判定。
-// 返回结束原因 (数据超时或正常退出)。
+// 周期上传 GGA、转发 RTCM 并检查数据超时。
+// 输入:
+//   first_gga      : 会话开始时的 GGA
+//   first_gga_time : 首条 GGA 的到达时刻
+// 返回:
+//   会话结束原因
 SdkClient::SessionEnd SdkClient::runSession(const std::string& first_gga, std::chrono::steady_clock::time_point first_gga_time) {
   std::string latest_gga   = first_gga;
   const auto session_begin = std::chrono::steady_clock::now();

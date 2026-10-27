@@ -1,13 +1,17 @@
 #include "sim_vehicle/sim_vehicle_node.hpp"
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <utility>
 
 #include "geometry_msgs/msg/transform_stamped.hpp"
+#include "sim_vehicle/logging.hpp"
 
 namespace sim_vehicle {
 namespace {
@@ -16,8 +20,6 @@ constexpr double kMinimumGeometryM  = 0.05;
 constexpr double kMinimumRadiusM    = 0.01;
 constexpr double kMinimumSimHz      = 1.0;
 constexpr double kMinimumSteerRad   = 0.01;
-constexpr double kZeroSpeedMps      = 1e-6;
-constexpr double kPi                = 3.14159265358979323846;
 constexpr std::size_t kBodyMarkerId = 0;
 constexpr int32_t kBumperMarkerId   = 5;
 
@@ -27,13 +29,19 @@ double ClampNonNegative(double value) {
 
 }   // namespace
 
-// 初始化车辆节点并启动定时器。
+// 创建仿真车辆节点并完成初始化。
+// 输入:
+//   options : ROS 节点创建选项
 SimVehicleNode::SimVehicleNode(const rclcpp::NodeOptions& options) : Node("sim_vehicle", options) {
   Initialize();
 }
 
 // 按参数、接口和运行状态的顺序完成节点初始化。
+// 副作用:
+//   创建话题接口和定时器，并发布首帧慢速状态。
 void SimVehicleNode::Initialize() {
+  LoadLogParameters();
+  SetupLogging();
   LoadParameters();
   wheel_state_   = ComputeFourWheelState(0.0, 0.0, 0, wheelbase_m_, wheel_track_m_, wheel_radius_m_, max_plant_steer_rad_);
   last_cmd_time_ = now();
@@ -41,27 +49,64 @@ void SimVehicleNode::Initialize() {
   SetupTimers();
   PublishSlowTopics();
 
-  RCLCPP_INFO(
-    get_logger(),
-    "四轮转向仿真车辆已启动: 轴距=%.3fm 轮距=%.3fm "
-    "轮半径=%.3fm dt=%.3fs 初始位姿=(%.2f, %.2f, %.1f°) "
-    "模式=%s",
+  SPDLOG_INFO(
+    "四轮转向仿真车辆已启动: 轴距={:.3f}m 轮距={:.3f}m "
+    "轮半径={:.3f}m dt={:.3f}s 初始位姿=({:.2f}, {:.2f}, {:.1f}°) "
+    "模式={}",
     wheelbase_m_,
     wheel_track_m_,
     wheel_radius_m_,
     dt_s_,
     x_m_,
     y_m_,
-    yaw_rad_ * 180.0 / kPi,
+    yaw_rad_ * 180.0 / M_PI,
     unmanned_ ? "UNMANNED" : "MANUAL");
-  RCLCPP_INFO(
-    get_logger(),
+  SPDLOG_INFO(
     "订阅 /chassis/cmd + /sim/unmanned | "
-    "发布 /gnss_driver/pose + /gnss_driver/origin + "
-    "/work_mode + /tf");
+    "发布 /gnss_driver/pose + /work_mode + /tf");
+}
+
+// 声明并读取 spdlog 滚动日志参数。
+// 输出:
+//   日志目录、级别、文件大小和文件数量。
+void SimVehicleNode::LoadLogParameters() {
+  declare_parameter("log_dir", "/opt/agri/logs");
+  declare_parameter("log_file_size_mb", 50);
+  declare_parameter("log_file_count", 10);
+  declare_parameter("log_enable_console", true);
+  declare_parameter("log_level", "info");
+
+  log_dir_            = get_parameter("log_dir").as_string();
+  log_file_size_mb_   = static_cast<int>(std::max<int64_t>(1, get_parameter("log_file_size_mb").as_int()));
+  log_file_count_     = static_cast<int>(std::max<int64_t>(1, get_parameter("log_file_count").as_int()));
+  log_enable_console_ = get_parameter("log_enable_console").as_bool();
+  log_level_          = get_parameter("log_level").as_string();
+}
+
+// 配置仿真车辆的滚动文件日志和控制台输出。
+// 失败:
+//   文件日志初始化异常时保留 spdlog 默认日志器继续运行。
+void SimVehicleNode::SetupLogging() {
+  LogConfig log_config;
+  log_config.logger_name         = "sim_vehicle";
+  log_config.log_file_name       = "sim_vehicle.log";
+  log_config.log_dir             = log_dir_;
+  log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb_) * 1024U * 1024U;
+  log_config.max_file_count      = static_cast<std::size_t>(log_file_count_);
+  log_config.enable_console      = log_enable_console_;
+  log_config.log_level           = log_level_;
+  try {
+    ConfigureLogging(log_config);
+    SPDLOG_INFO("日志配置成功");
+  } catch (const std::exception& error) {
+    SPDLOG_WARN("文件日志配置失败，使用默认日志器: {}", error.what());
+  }
 }
 
 // 读取仿真车辆的全部节点参数。
+// 输出:
+//   start_unmanned_ : 初始是否处于无人驾驶模式
+//   unmanned_       : 当前是否处于无人驾驶模式
 void SimVehicleNode::LoadParameters() {
   LoadGeometryParameters();
   LoadPoseParameters();
@@ -70,44 +115,47 @@ void SimVehicleNode::LoadParameters() {
 }
 
 // 读取车辆几何、速度和定时周期参数。
+// 输入:
+//   ROS 参数 wheelbase / wheel_track / wheel_radius_m / vehicle_* / sim_hz /
+//   max_speed_m_s / max_plant_steer_deg / cmd_timeout_s
+// 输出:
+//   对应成员变量，非法尺寸和速度会按安全下限或上限夹取。
 void SimVehicleNode::LoadGeometryParameters() {
-  const int wheel_count = declare_parameter<int>("wheel_count", static_cast<int>(kWheelCount));
-  if (wheel_count != static_cast<int>(kWheelCount)) {
-    RCLCPP_WARN(
-      get_logger(),
-      "配置 wheel_count=%d，当前四轮运动学仅支持 %zu 轮；"
-      "已按 %zu 轮运行",
-      wheel_count,
-      kWheelCount,
-      kWheelCount);
+  const int wheel_count = declare_parameter<int>("wheel_count", 4);
+  if (wheel_count != 4) {
+    SPDLOG_WARN(
+      "配置 wheel_count={}，当前四轮运动学仅支持 4 轮；"
+      "已按 4 轮运行",
+      wheel_count);
   }
-  wheelbase_m_               = std::max(declare_parameter<double>("wheelbase", kWheelbaseM), kMinimumGeometryM);
-  wheel_track_m_             = std::max(declare_parameter<double>("wheel_track", kWheelTrackM), kMinimumGeometryM);
-  wheel_radius_m_            = std::max(declare_parameter<double>("wheel_radius_m", kWheelRadiusM), kMinimumRadiusM);
-  vehicle_length_m_          = std::max(declare_parameter<double>("vehicle_length_m", kVehicleLengthM), 0.1);
-  vehicle_width_m_           = std::max(declare_parameter<double>("vehicle_width_m", kVehicleWidthM), 0.1);
-  vehicle_height_m_          = std::max(declare_parameter<double>("vehicle_height_m", kVehicleHeightM), 0.1);
+  wheelbase_m_               = std::max(declare_parameter<double>("wheelbase", 1.521), kMinimumGeometryM);
+  wheel_track_m_             = std::max(declare_parameter<double>("wheel_track", 1.306), kMinimumGeometryM);
+  wheel_radius_m_            = std::max(declare_parameter<double>("wheel_radius_m", 0.29), kMinimumRadiusM);
+  vehicle_length_m_          = std::max(declare_parameter<double>("vehicle_length_m", 1.8), 0.1);
+  vehicle_width_m_           = std::max(declare_parameter<double>("vehicle_width_m", 1.2), 0.1);
+  vehicle_height_m_          = std::max(declare_parameter<double>("vehicle_height_m", 0.5), 0.1);
   dt_s_                      = 1.0 / std::max(declare_parameter<double>("sim_hz", 50.0), kMinimumSimHz);
-  max_speed_m_s_             = std::min(ClampNonNegative(declare_parameter<double>("max_speed_m_s", kMaxSpeedMps)), kMaxSpeedMps);
-  const double max_steer_deg = declare_parameter<double>("max_plant_steer_deg", kMaxSteerRad * 180.0 / kPi);
-  max_plant_steer_rad_       = std::min(std::max(max_steer_deg * kPi / 180.0, kMinimumSteerRad), kMaxSteerRad);
+  max_speed_m_s_             = std::min(ClampNonNegative(declare_parameter<double>("max_speed_m_s", 1.4)), 1.4);
+  const double max_steer_deg = declare_parameter<double>("max_plant_steer_deg", 90.0);
+  max_plant_steer_rad_       = std::min(std::max(max_steer_deg * M_PI / 180.0, kMinimumSteerRad), M_PI / 2.0);
   cmd_timeout_s_             = ClampNonNegative(declare_parameter<double>("cmd_timeout_s", 0.3));
   cmd_topic_                 = declare_parameter<std::string>("cmd_topic", "/chassis/cmd");
 }
 
-// 读取初始位姿、模拟原点与路径对齐参数。
+// 读取初始位姿和路径对齐参数。
+// 输出:
+//   初始位姿和对齐偏差相关成员。
 void SimVehicleNode::LoadPoseParameters() {
   x_m_                    = declare_parameter<double>("init_x", 0.0);
   y_m_                    = declare_parameter<double>("init_y", 0.0);
   yaw_rad_                = WrapAngle(declare_parameter<double>("init_yaw", 0.0));
-  origin_lat_             = declare_parameter<double>("origin_lat", 34.6198653);
-  origin_lon_             = declare_parameter<double>("origin_lon", 112.4497271);
-  origin_alt_m_           = declare_parameter<double>("origin_alt", 100.0);
   align_to_path_start_    = declare_parameter<bool>("align_to_path_start", true);
   align_lateral_offset_m_ = declare_parameter<double>("align_lateral_offset", 0.2);
 }
 
 // 创建订阅者、发布者及其 QoS 配置。
+// 副作用:
+//   建立底盘指令、模式、路径输入，以及位姿、TF 和底盘状态输出。
 void SimVehicleNode::SetupInterfaces() {
   chassis_cmd_sub_ = create_subscription<weeder_msgs::msg::ChassisCmd>(cmd_topic_, 10, [this](const weeder_msgs::msg::ChassisCmd::SharedPtr message) {
     OnChassisCmd(message);
@@ -123,7 +171,6 @@ void SimVehicleNode::SetupInterfaces() {
 
   pose_pub_          = create_publisher<weeder_msgs::msg::Pose>("/gnss_driver/pose", rclcpp::SensorDataQoS());
   pose_stamped_pub_  = create_publisher<geometry_msgs::msg::PoseStamped>("/gnss_driver/pose_stamped", rclcpp::SensorDataQoS());
-  origin_pub_        = create_publisher<sensor_msgs::msg::NavSatFix>("/gnss_driver/origin", latched_qos);
   work_mode_pub_     = create_publisher<weeder_msgs::msg::WorkMode>("/work_mode", latched_qos);
   tf_pub_            = create_publisher<tf2_msgs::msg::TFMessage>("/tf", 10);
   marker_pub_        = create_publisher<visualization_msgs::msg::MarkerArray>("/sim_vehicle/marker_array", 10);
@@ -131,6 +178,8 @@ void SimVehicleNode::SetupInterfaces() {
 }
 
 // 创建仿真、底盘反馈和慢速话题定时器。
+// 副作用:
+//   仿真按 sim_hz 运行，底盘状态固定 10 Hz，慢速话题固定 1 Hz。
 void SimVehicleNode::SetupTimers() {
   const auto tick_period = std::chrono::duration<double>(dt_s_);
   tick_timer_            = rclcpp::create_timer(this, get_clock(), tick_period, [this]() {
@@ -145,6 +194,12 @@ void SimVehicleNode::SetupTimers() {
 }
 
 // 接收底盘指令并检查控制模式、急停和数值有效性。
+// 输入:
+//   message : 速度、转角、转向模式和使能位
+// 输出:
+//   speed_cmd_m_s_ / steer_cmd_rad_ / steer_mode_：供下一仿真周期使用。
+// 失败:
+//   急停、非前进档、未释放抱闸、控制模式关闭或非有限值均输出零运动。
 void SimVehicleNode::OnChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr message) {
   last_cmd_time_     = now();
   cmd_gear_          = message->gear;
@@ -161,10 +216,9 @@ void SimVehicleNode::OnChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr 
 
   if (message->steer_mode > 1) {
     if (steer_mode_ != message->steer_mode) {
-      RCLCPP_WARN(
-        get_logger(),
+      SPDLOG_WARN(
         "四轮转向仿真仅支持 steer_mode 0/1，"
-        "收到 %d，车辆停车",
+        "收到 {}，车辆停车",
         static_cast<int>(message->steer_mode));
     }
     steer_mode_    = message->steer_mode;
@@ -175,21 +229,20 @@ void SimVehicleNode::OnChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr 
 
   if (steer_mode_ != message->steer_mode) {
     steer_mode_ = message->steer_mode;
-    RCLCPP_INFO(get_logger(), "转向模式切换为 %d（等效轴距 %.3fm）", static_cast<int>(steer_mode_), EffectiveWheelbase());
+    SPDLOG_INFO("转向模式切换为 {}（等效轴距 {:.3f}m）", static_cast<int>(steer_mode_), EffectiveWheelbase());
   }
   speed_cmd_m_s_             = std::clamp(message->speed_m_s, 0.0, max_speed_m_s_);
   const double clamped_steer = std::clamp(message->steer_angle_rad, -max_plant_steer_rad_, max_plant_steer_rad_);
   if (std::abs(clamped_steer - message->steer_angle_rad) > 1e-9) {
     ++steer_clamped_count_;
     if (steer_clamped_count_ % 50 == 1) {
-      RCLCPP_WARN(
-        get_logger(),
-        "转向指令 %.1f° 超出仿真车辆上限 %.1f°，"
+      SPDLOG_WARN(
+        "转向指令 {:.1f}° 超出仿真车辆上限 {:.1f}°，"
         "已夹取（累计 "
-        "%zu 次）。若频繁出现说明 lqr_Q/R 或 wheelbase "
+        "{} 次）。若频繁出现说明 lqr_Q/R 或 wheelbase "
         "配得不合理。",
-        message->steer_angle_rad * 180.0 / kPi,
-        max_plant_steer_rad_ * 180.0 / kPi,
+        message->steer_angle_rad * 180.0 / M_PI,
+        max_plant_steer_rad_ * 180.0 / M_PI,
         steer_clamped_count_);
     }
   }
@@ -197,15 +250,21 @@ void SimVehicleNode::OnChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr 
 }
 
 // 处理手动和无人驾驶模式的切换。
+// 输入:
+//   message : true 表示切 UNMANNED。
 void SimVehicleNode::OnUnmanned(const std_msgs::msg::Bool::SharedPtr message) {
   if (message->data == unmanned_) {
     return;
   }
   unmanned_ = message->data;
-  RCLCPP_INFO(get_logger(), "工作模式切换 -> %s", unmanned_ ? "UNMANNED（允许 path_tracker 驱动）" : "MANUAL（规划器自动规划）");
+  SPDLOG_INFO("工作模式切换 -> {}", unmanned_ ? "UNMANNED（允许 path_tracker 驱动）" : "MANUAL（规划器自动规划）");
 }
 
 // 收到首条路径后，将车辆放到路径起点的横向偏差处。
+// 输入:
+//   message : 至少包含两个有效点且 x/y 等长的路径
+// 副作用:
+//   设置初始位姿和航向，并且只执行一次。
 void SimVehicleNode::OnPath(const weeder_msgs::msg::Path::SharedPtr message) {
   if (aligned_ || !align_to_path_start_ || message->x.size() < 2 || message->x.size() != message->y.size()) {
     return;
@@ -215,19 +274,20 @@ void SimVehicleNode::OnPath(const weeder_msgs::msg::Path::SharedPtr message) {
   x_m_                   = message->x[0] - std::sin(start_yaw) * align_lateral_offset_m_;
   y_m_                   = message->y[0] + std::cos(start_yaw) * align_lateral_offset_m_;
   yaw_rad_               = start_yaw;
-  RCLCPP_INFO(
-    get_logger(),
-    "已对齐到路径起点 (%.2f, %.2f)，航向 %.1f°，"
-    "故意留横向偏差 %.2fm 以观察收敛。"
-    "路径共 %zu 点。",
+  SPDLOG_INFO(
+    "已对齐到路径起点 ({:.2f}, {:.2f})，航向 {:.1f}°，"
+    "故意留横向偏差 {:.2f}m 以观察收敛。"
+    "路径共 {} 点。",
     x_m_,
     y_m_,
-    yaw_rad_ * 180.0 / kPi,
+    yaw_rad_ * 180.0 / M_PI,
     align_lateral_offset_m_,
     message->x.size());
 }
 
 // 执行固定步长的车辆运动学积分。
+// 副作用:
+//   更新车辆位姿和四轮状态；指令超时后自动清零。
 void SimVehicleNode::Tick() {
   const rclcpp::Time current_time = now();
   const double elapsed_s          = (current_time - last_cmd_time_).seconds();
@@ -237,7 +297,7 @@ void SimVehicleNode::Tick() {
   }
 
   speed_m_s_ = speed_cmd_m_s_;
-  if (speed_m_s_ > kZeroSpeedMps) {
+  if (speed_m_s_ > 1e-6) {
     const double yaw_rate    = speed_m_s_ / EffectiveWheelbase() * std::tan(steer_cmd_rad_);
     double center_velocity_x = speed_m_s_ * std::cos(yaw_rad_);
     double center_velocity_y = speed_m_s_ * std::sin(yaw_rad_);
@@ -257,6 +317,8 @@ void SimVehicleNode::Tick() {
 }
 
 // 发布模拟 RTK 的车辆位姿。
+// 输出:
+//   /gnss_driver/pose 和 /gnss_driver/pose_stamped。
 void SimVehicleNode::PublishPose() {
   weeder_msgs::msg::Pose pose;
   pose.header.stamp    = now();
@@ -284,6 +346,8 @@ void SimVehicleNode::PublishPose() {
 }
 
 // 发布 odom 到 base_link 的平面变换。
+// 输出:
+//   /tf 中的 odom -> base_link。
 void SimVehicleNode::PublishTf() {
   geometry_msgs::msg::TransformStamped transform;
   transform.header.stamp            = now();
@@ -302,6 +366,8 @@ void SimVehicleNode::PublishTf() {
 }
 
 // 发布车体和四轮可视化。
+// 输出:
+//   /sim_vehicle/marker_array，包含车体和车轮 Marker。
 void SimVehicleNode::PublishMarker() {
   visualization_msgs::msg::MarkerArray markers;
   AppendBodyMarkers(markers);
@@ -312,6 +378,8 @@ void SimVehicleNode::PublishMarker() {
 }
 
 // 向 MarkerArray 添加绿色车体和黄色车头标识。
+// 输入/输出:
+//   markers : 追加车体和车头 Marker。
 void SimVehicleNode::AppendBodyMarkers(visualization_msgs::msg::MarkerArray& markers) {
   auto body                       = CreateMarker(static_cast<int32_t>(kBodyMarkerId), visualization_msgs::msg::Marker::CUBE);
   const auto [body_x_m, body_y_m] = LocalToWorld(0.0, 0.0);
@@ -345,11 +413,13 @@ void SimVehicleNode::AppendBodyMarkers(visualization_msgs::msg::MarkerArray& mar
 }
 
 // 向 MarkerArray 添加四个随转向角变化的车轮圆柱。
+// 输入/输出:
+//   markers : 追加四轮 Marker。
 void SimVehicleNode::AppendWheelMarkers(visualization_msgs::msg::MarkerArray& markers) {
   const auto positions = ComputeCenteredWheelPositions(wheelbase_m_, wheel_track_m_);
   // 可视化时将车轮放到车体顶面之上，避免俯视遮挡。
   const double wheel_visual_z_m = wheel_radius_m_ + vehicle_height_m_ + wheel_radius_m_ * 0.05;
-  for (std::size_t index = 0; index < kWheelCount; ++index) {
+  for (std::size_t index = 0; index < 4; ++index) {
     auto wheel                        = CreateMarker(static_cast<int32_t>(index + 1), visualization_msgs::msg::Marker::CYLINDER);
     const auto [wheel_x_m, wheel_y_m] = LocalToWorld(positions[index].x_m, positions[index].y_m);
     wheel.pose.position.x             = wheel_x_m;
@@ -368,6 +438,8 @@ void SimVehicleNode::AppendWheelMarkers(visualization_msgs::msg::MarkerArray& ma
 }
 
 // 发布四轮转角、轮速和底盘控制状态。
+// 输出:
+//   /chassis/state 类型化底盘状态。
 void SimVehicleNode::PublishChassisState() {
   weeder_msgs::msg::ChassisState state;
   state.header.stamp    = now();
@@ -386,25 +458,18 @@ void SimVehicleNode::PublishChassisState() {
 
   state.state02_valid = true;
   state.state03_valid = true;
-  for (std::size_t index = 0; index < kWheelCount; ++index) {
-    state.motor_speed_rpm[index] = static_cast<uint16_t>(std::clamp<std::int64_t>(static_cast<std::int64_t>(std::lround(wheel_state_.wheel_rad_s[index] * 60.0 / (2.0 * kPi))), 0, 65535));
-    state.steer_angle_deg[index] = static_cast<float>(wheel_state_.steer_rad[index] * 180.0 / kPi);
+  for (std::size_t index = 0; index < 4; ++index) {
+    state.motor_speed_rpm[index] = static_cast<uint16_t>(std::clamp<std::int64_t>(static_cast<std::int64_t>(std::lround(wheel_state_.wheel_rad_s[index] * 60.0 / (2.0 * M_PI))), 0, 65535));
+    state.steer_angle_deg[index] = static_cast<float>(wheel_state_.steer_rad[index] * 180.0 / M_PI);
   }
   chassis_state_pub_->publish(state);
 }
 
-// 低频重发 GNSS 原点和工作模式，便于晚加入节点接收。
+// 低频重发工作模式，便于晚加入节点接收。
+// 输出:
+//   /work_mode。
 void SimVehicleNode::PublishSlowTopics() {
   const rclcpp::Time stamp = now();
-  sensor_msgs::msg::NavSatFix origin;
-  origin.header.stamp             = stamp;
-  origin.header.frame_id          = "gnss_link";
-  origin.latitude                 = origin_lat_;
-  origin.longitude                = origin_lon_;
-  origin.altitude                 = origin_alt_m_;
-  origin.position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
-  origin_pub_->publish(origin);
-
   weeder_msgs::msg::WorkMode mode;
   mode.header.stamp = stamp;
   if (unmanned_) {
@@ -418,11 +483,18 @@ void SimVehicleNode::PublishSlowTopics() {
 }
 
 // 返回当前转向模式对应的等效轴距。
+// 返回:
+//   单阿克曼为物理轴距，对称阿克曼为物理轴距的一半 (m)。
 double SimVehicleNode::EffectiveWheelbase() const {
   return steer_mode_ == 1 ? wheelbase_m_ * 0.5 : wheelbase_m_;
 }
 
 // 创建使用 odom 坐标系和公共显示属性的 Marker。
+// 输入:
+//   marker_id   : Marker 编号
+//   marker_type : visualization_msgs Marker 类型
+// 返回:
+//   已设置 frame_id、pose、颜色和透明度的 Marker。
 visualization_msgs::msg::Marker SimVehicleNode::CreateMarker(int32_t marker_id, int32_t marker_type) {
   visualization_msgs::msg::Marker marker;
   marker.header.frame_id = "odom";
@@ -435,6 +507,10 @@ visualization_msgs::msg::Marker SimVehicleNode::CreateMarker(int32_t marker_id, 
 }
 
 // 将车辆局部坐标转换到 odom 平面坐标。
+// 输入:
+//   local_x_m / local_y_m : 车体系坐标 (m)
+// 返回:
+//   odom 下的 x/y 坐标 (m)
 std::pair<double, double> SimVehicleNode::LocalToWorld(double local_x_m, double local_y_m) const {
   const double cos_yaw = std::cos(yaw_rad_);
   const double sin_yaw = std::sin(yaw_rad_);
@@ -445,6 +521,9 @@ std::pair<double, double> SimVehicleNode::LocalToWorld(double local_x_m, double 
 }
 
 // 设置仅绕 z 轴旋转的 Marker 四元数。
+// 输入/输出:
+//   marker  : 需要写入 orientation 的 Marker
+//   yaw_rad : yaw 角 (rad)
 void SimVehicleNode::SetYawOrientation(visualization_msgs::msg::Marker& marker, double yaw_rad) {
   const double half_yaw     = yaw_rad * 0.5;
   marker.pose.orientation.z = std::sin(half_yaw);
@@ -452,6 +531,9 @@ void SimVehicleNode::SetYawOrientation(visualization_msgs::msg::Marker& marker, 
 }
 
 // 设置车轮朝向，使圆柱轴线沿车轮轮轴方向。
+// 输入/输出:
+//   marker  : 需要写入 orientation 的车轮 Marker
+//   yaw_rad : 车轮朝向角 (rad)
 void SimVehicleNode::SetWheelOrientation(visualization_msgs::msg::Marker& marker, double yaw_rad) {
   const double half_yaw     = yaw_rad * 0.5;
   const double cos_half     = std::cos(half_yaw);

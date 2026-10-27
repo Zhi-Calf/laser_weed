@@ -48,13 +48,7 @@ enum GlobalPathPlannerFaultCode : uint32_t {
   FAULT_PLAN_SELF_INTERSECTING = 10409,   // kSelfIntersecting: 输入边界自相交 (非简单多边形)
 };
 
-// PlanStatus -> 故障码: 日志里带上这些 ID, 用于区分"为什么没有路径"(点数不够 / 重复点太多 /
-// 退化共线 / 非凸 / 自相交 / field_margin 不合理 / ridge_width 不合理 / 内部错误)。
-// 三点约定:
-//   * kOk 映射到 FAULT_NONE —— 函数是全的, 调用方不用特判"成功"这一支;
-//   * 每个失败状态都有**唯一**专码 (10402..10409), 不与通用码 10401 混用;
-//   * 新增 PlanStatus 细分时**必须**在这里登记: 漏了 case 会被 -Wswitch 警告顶出来, 真漏了
-//     也还有末尾的 FAULT_PLAN_FAILED 兜底 (退化成通用码), 不会静默丢故障。
+// 将规划状态映射为稳定的故障码。
 inline uint32_t planStatusFaultCode(PlanStatus status) {
   switch (status) {
     case PlanStatus::kOk:

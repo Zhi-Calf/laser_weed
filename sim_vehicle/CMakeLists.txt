@@ -12,7 +12,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(ament_cmake REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(sensor_msgs REQUIRED)
+find_package(spdlog_vendor REQUIRED)
+find_package(spdlog REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(tf2_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
@@ -21,7 +22,6 @@ find_package(weeder_msgs REQUIRED)
 set(dependencies
   geometry_msgs
   rclcpp
-  sensor_msgs
   std_msgs
   tf2_msgs
   visualization_msgs
@@ -36,6 +36,20 @@ target_include_directories(sim_vehicle_kinematics PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
+add_library(sim_vehicle_logging_lib SHARED
+  src/logging.cpp
+)
+target_include_directories(sim_vehicle_logging_lib PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(sim_vehicle_logging_lib
+  spdlog::spdlog
+)
+target_compile_definitions(sim_vehicle_logging_lib PRIVATE
+  SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
+)
+
 add_library(sim_vehicle_node_lib SHARED
   src/sim_vehicle_node.cpp
 )
@@ -45,8 +59,12 @@ target_include_directories(sim_vehicle_node_lib PUBLIC
 )
 target_link_libraries(sim_vehicle_node_lib
   sim_vehicle_kinematics
+  sim_vehicle_logging_lib
 )
 ament_target_dependencies(sim_vehicle_node_lib ${dependencies})
+target_compile_definitions(sim_vehicle_node_lib PRIVATE
+  SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
+)
 
 add_library(sim_orchestrator_node_lib SHARED
   src/sim_orchestrator_node.cpp
@@ -55,7 +73,13 @@ target_include_directories(sim_orchestrator_node_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
+target_link_libraries(sim_orchestrator_node_lib
+  sim_vehicle_logging_lib
+)
 ament_target_dependencies(sim_orchestrator_node_lib ${dependencies})
+target_compile_definitions(sim_orchestrator_node_lib PRIVATE
+  SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
+)
 
 add_executable(sim_vehicle
   src/sim_vehicle_main.cpp
@@ -73,6 +97,7 @@ target_link_libraries(sim_orchestrator
 
 install(TARGETS
   sim_vehicle_kinematics
+  sim_vehicle_logging_lib
   sim_vehicle_node_lib
   sim_orchestrator_node_lib
   ARCHIVE DESTINATION lib
@@ -111,6 +136,6 @@ if(BUILD_TESTING)
 endif()
 
 ament_export_include_directories(include)
-ament_export_libraries(sim_vehicle_kinematics)
-ament_export_dependencies(${dependencies})
+ament_export_libraries(sim_vehicle_kinematics sim_vehicle_logging_lib)
+ament_export_dependencies(${dependencies} spdlog_vendor)
 ament_package()
