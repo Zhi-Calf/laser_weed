@@ -1,5 +1,4 @@
-#ifndef PATH_TRACKER_LOGGING_H_
-#define PATH_TRACKER_LOGGING_H_
+#pragma once
 
 #include <cstddef>
 #include <string>
@@ -20,5 +19,3 @@ struct LogConfig {
 void ConfigureLogging(const LogConfig& config);
 
 }   // namespace path_tracker
-
-#endif   // PATH_TRACKER_LOGGING_H_

@@ -101,16 +101,17 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 | `pose_at_vehicle_center` | `true` | GNSS 位姿参考点是否为车体中心；当前驱动应为 `true` | 🔴 |
 | `turn_mode_enter_m` / `turn_mode_exit_m` | `0.6/0.6` | 进入/退出双阿克曼的弧长滞回距离 | 🟡 |
 | `max_steer_rate_deg_s` | `90.0` | 转向执行器允许的等效转角变化率 | 🔴 |
-| `row_pid_enabled` | `false` | 稻行视觉中心线 PID 混合跟踪总开关 | 🟡 |
-| `row_pid_pre_turn_m` | `3.0` | 入弯前改用全局行内直线 PID 的弧长距离 | 🟡 |
-| `row_pid_*` | 见 YAML | 前视距离、PID、航向、滤波和积分限幅参数，必须实车标定 | 🟡 |
+| `row_vision_enabled` | `false` | 稻行视觉中心线统一 LQR 总开关 | 🟡 |
+| `row_vision_pre_turn_m` | `3.0` | TURN 前后退出并暂停视觉的弧长距离 | 🟡 |
+| `row_vision_resume_frames` | `3` | 视觉恢复所需连续有效帧数 | 🟡 |
 | `work_speed_m_s` / `turn_speed_m_s` | `0.6/0.3` | 按路径段固定基础速度 | 🟡 |
 | `log_dir` | `/opt/agri/logs` | 统一 spdlog 滚动日志目录 | 🟡 |
 | `lqr_Q_lateral/heading`、`lqr_R_steer` | 50/25/25 | **不能照抄履带调参值**：R 的语义从角速度代价变成了转向角代价，量纲不同，需重标 | 🟡 |
 
 `wheelbase` 填错会直接导致横向跟踪振荡或收敛过慢，是最关键的参数。
 `waypoint_types` 有效时节点自动切换模式，并在 TURN 模式下使用 `L/2`
-作为等效轴距；模式 2/3 不支持。
+作为等效轴距。全局路径和视觉中心线共用同一 LQR；全局最近点采用连续线段投影，
+模式 2/3 不支持。
 
 ---
 

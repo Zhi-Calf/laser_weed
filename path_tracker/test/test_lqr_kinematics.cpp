@@ -7,16 +7,50 @@
 #include <cmath>
 #include <vector>
 
+#include "path_tracker/global_path_locator.hpp"
 #include "path_tracker/lqr.hpp"
 
-using path_tracker::LQR;
+using path_tracker::GlobalPathLocator;
+using path_tracker::LineReference;
 using path_tracker::LQRConfig;
-using path_tracker::LQRInput;
 using path_tracker::LQROutput;
+using path_tracker::PathMatch;
 using path_tracker::RobotState;
 using path_tracker::TrajectoryPoint;
 
 namespace {
+
+struct LQRInput {
+  RobotState robot_state;
+};
+
+// 将连续投影与 LQR 组合为路径跟踪测试控制器。
+class TestPathTracker {
+ public:
+  void Configure(const LQRConfig& config,
+                 std::size_t forward_segment_window = 20) {
+    lqr_.Configure(config);
+    locator_.Configure(forward_segment_window);
+  }
+
+  void SetTrajectory(const std::vector<TrajectoryPoint>& path) {
+    locator_.SetPath(path);
+    lqr_.Reset();
+  }
+
+  bool ComputeCommand(const LQRInput& input, LQROutput& output) {
+    PathMatch match;
+    if (!locator_.Project(
+            input.robot_state.x, input.robot_state.y, &match)) {
+      return false;
+    }
+    return lqr_.ComputeCommand(input.robot_state, match, output);
+  }
+
+ private:
+  path_tracker::LQR lqr_;              // 被测控制器
+  GlobalPathLocator locator_;          // 连续路径投影
+};
 
 /// 使用文档中的默认参数构建配置。
 LQRConfig makeConfig(double wheelbase = 1.2) {
@@ -28,16 +62,16 @@ LQRConfig makeConfig(double wheelbase = 1.2) {
 }
 
 /// 使用测试配置构建控制器。
-LQR makeController(double wheelbase = 1.2, std::size_t snap_forward_points = 20) {
-  LQR lqr;
+TestPathTracker makeController(double wheelbase = 1.2,
+                               std::size_t snap_forward_points = 20) {
+  TestPathTracker lqr;
   LQRConfig config           = makeConfig(wheelbase);
-  config.snap_forward_points = snap_forward_points;
-  lqr.Configure(config);
+  lqr.Configure(config, snap_forward_points);
   return lqr;
 }
 
 // 执行一次完整控制计算；失败时返回零输出，供测试继续检查。
-LQROutput RunControl(LQR& lqr, const RobotState& state) {
+LQROutput RunControl(TestPathTracker& lqr, const RobotState& state) {
   LQRInput input;
   input.robot_state = state;
   LQROutput output;
@@ -91,21 +125,20 @@ TEST(LqrReferencePoint, AutoSelectsPoseReferenceBySteerMode) {
 
   LQRConfig config              = makeConfig(kWheelbase);
   config.pose_at_vehicle_center = true;
-  config.snap_forward_points    = 100;
   RobotState center_state;
   center_state.x        = kCenterX;
   center_state.y        = kTargetY;
   center_state.heading  = 0.0;
   center_state.linear_v = 0.5;
 
-  LQR single_ackermann;
-  single_ackermann.Configure(config);
+  TestPathTracker single_ackermann;
+  single_ackermann.Configure(config, 100);
   single_ackermann.SetTrajectory(build_path(0));
   const auto single_output = RunControl(single_ackermann, center_state);
   EXPECT_NEAR(single_output.lateral_error, kWheelbase * 0.5 - kCenterX, 1e-9);
 
-  LQR symmetric_ackermann;
-  symmetric_ackermann.Configure(config);
+  TestPathTracker symmetric_ackermann;
+  symmetric_ackermann.Configure(config, 100);
   symmetric_ackermann.SetTrajectory(build_path(1));
   const auto symmetric_output = RunControl(symmetric_ackermann, center_state);
   EXPECT_NEAR(symmetric_output.lateral_error, -kCenterX, 1e-9);
@@ -116,7 +149,7 @@ TEST(LqrFeedforward, OnConstantCurvatureUsesExactAckermannFeedforward) {
   const double wheelbase = 1.2;
   const double kappa     = 0.1;   // 半径 10 米的弯道
 
-  LQR lqr  = makeController(wheelbase);
+  TestPathTracker lqr  = makeController(wheelbase);
   auto pts = straightLine();
   for (auto& p : pts) {
     p.kappa = kappa;
@@ -144,7 +177,7 @@ TEST(LqrFeedforward, FeedforwardIsSpeedIndependent) {
 
   std::vector<double> feedforwards;
   for (double v : {0.2, 0.5, 1.0}) {
-    LQR lqr  = makeController(wheelbase);
+    TestPathTracker lqr  = makeController(wheelbase);
     auto pts = straightLine();
     for (auto& p : pts) {
       p.kappa = kappa;
@@ -168,9 +201,9 @@ TEST(LqrFeedforward, SegmentSteerModeChangesEffectiveWheelbase) {
   constexpr double kPhysicalWheelbase = 1.2;
   constexpr double kKappa             = 0.8;
 
-  LQR lqr          = makeController(kPhysicalWheelbase);
+  TestPathTracker lqr          = makeController(kPhysicalWheelbase);
   LQRConfig config = makeConfig(kPhysicalWheelbase);
-  lqr.Configure(config);
+  lqr.Configure(config, 100);
   auto work_points = straightLine();
   auto turn_points = straightLine();
   for (auto& p : work_points) {
@@ -202,13 +235,12 @@ TEST(LqrFeedforward, SegmentSteerModeChangesEffectiveWheelbase) {
 TEST(LqrSpeedProfile, TurnZoneUsesFixedLowSpeed) {
   constexpr double kStep      = 0.1;
   LQRConfig config            = makeConfig();
-  config.snap_forward_points  = 100;
   config.work_speed           = 0.6;
   config.turn_speed           = 0.3;
   config.turn_speed_preview_m = 1.0;
   config.turn_speed_hold_m    = 0.5;
-  LQR lqr;
-  lqr.Configure(config);
+  TestPathTracker lqr;
+  lqr.Configure(config, 100);
 
   auto pts = straightLine(20.0, kStep);
   for (size_t i = 0; i < pts.size(); ++i) {
@@ -239,10 +271,9 @@ TEST(LqrPathProgress, ReportsArcDistanceToNextTurn) {
     points[index].waypoint_type = 1;
   }
 
-  LQRConfig config           = makeConfig();
-  config.snap_forward_points = 100;
-  LQR lqr;
-  lqr.Configure(config);
+  LQRConfig config = makeConfig();
+  TestPathTracker lqr;
+  lqr.Configure(config, 100);
   lqr.SetTrajectory(points);
 
   RobotState state;
@@ -259,7 +290,7 @@ TEST(LqrPathProgress, ReportsArcDistanceToNextTurn) {
 // 车辆位于路径左侧（y 为正、路径航向为 +x）时必须向右修正，
 // 即按照协议左正右负的约定输出负转角。
 TEST(LqrFeedback, LeftLateralErrorCommandsRightSteer) {
-  LQR lqr = makeController(1.2);
+  TestPathTracker lqr = makeController(1.2);
   lqr.SetTrajectory(straightLine());
 
   RobotState state;
@@ -274,7 +305,7 @@ TEST(LqrFeedback, LeftLateralErrorCommandsRightSteer) {
 
 // 对称情形：位于路径右侧时必须向左修正。
 TEST(LqrFeedback, RightLateralErrorCommandsLeftSteer) {
-  LQR lqr = makeController(1.2);
+  TestPathTracker lqr = makeController(1.2);
   lqr.SetTrajectory(straightLine());
 
   RobotState state;
@@ -290,7 +321,7 @@ TEST(LqrFeedback, RightLateralErrorCommandsLeftSteer) {
 // 直线路径且初始误差为零时，控制器不得输出转角；
 // 非零输出说明模型存在偏置。
 TEST(LqrFeedback, StraightPathNoErrorCommandsZeroSteer) {
-  LQR lqr = makeController(1.2);
+  TestPathTracker lqr = makeController(1.2);
   lqr.SetTrajectory(straightLine());
 
   RobotState state;
@@ -299,12 +330,50 @@ TEST(LqrFeedback, StraightPathNoErrorCommandsZeroSteer) {
   EXPECT_NEAR(out.vel_cmd.steer_angle, 0.0, 1e-9);
 }
 
+// 视觉路径在左为正，必须转换为 LQR 的车辆相对路径符号并驱动左转。
+TEST(LqrLineCommand, ConvertsVisualLateralSignAtRearAxle) {
+  path_tracker::LQR lqr;
+  LQRConfig config              = makeConfig(1.2);
+  config.pose_at_vehicle_center = true;
+  lqr.Configure(config);
+
+  LineReference reference;
+  reference.lateral_error_m = 0.2;
+  RobotState state;
+  state.linear_v = 0.5;
+  LQROutput output;
+  ASSERT_TRUE(lqr.ComputeLineCommand(state, reference, 0.6, output));
+
+  EXPECT_NEAR(output.lateral_error, -0.2, 1e-12);
+  EXPECT_NEAR(output.heading_error, 0.0, 1e-12);
+  EXPECT_GT(output.vel_cmd.steer_angle, 0.0);
+  EXPECT_EQ(output.steer_mode, 0);
+}
+
+// 视觉中心线向左偏航时必须转换为负的 LQR 航向误差并驱动左转。
+TEST(LqrLineCommand, ConvertsVisualHeadingSign) {
+  path_tracker::LQR lqr;
+  LQRConfig config              = makeConfig(1.2);
+  config.pose_at_vehicle_center = true;
+  lqr.Configure(config);
+
+  LineReference reference;
+  reference.heading_error_rad = 0.1;
+  RobotState state;
+  state.linear_v = 0.5;
+  LQROutput output;
+  ASSERT_TRUE(lqr.ComputeLineCommand(state, reference, 0.6, output));
+
+  EXPECT_NEAR(output.heading_error, -0.1, 1e-12);
+  EXPECT_GT(output.vel_cmd.steer_angle, 0.0);
+}
+
 // 闭环收敛：向前积分自行车模型并检查横向误差是否减小。
 // 单周期测试可能看不出符号错误，但错误符号会随时间发散，可通过本测试发现。
 TEST(LqrConvergence, LateralErrorShrinksOverTime) {
   const double wheelbase = 1.2;
   const double dt        = 0.1;
-  LQR lqr                = makeController(wheelbase);
+  TestPathTracker lqr                = makeController(wheelbase);
   lqr.SetTrajectory(straightLine(/*length*/ 30.0, /*step*/ 0.1));
 
   double x = 0.0, y = 0.8, heading = 0.0;   // 初始位于路径左侧 0.8 米
@@ -367,7 +436,7 @@ TEST(LqrConvergence, SymmetricAckermannTracksCircularArc) {
   config.turn_speed           = 0.3;
   config.turn_speed_preview_m = 1.0;
   config.turn_speed_hold_m    = 0.5;
-  LQR lqr;
+  TestPathTracker lqr;
   lqr.Configure(config);
   lqr.SetTrajectory(arc);
 
@@ -405,7 +474,7 @@ TEST(LqrConvergence, SymmetricAckermannTracksCircularArc) {
 // 即使初始误差极大，转角指令也不得超过协议规定的 ±90 度。
 TEST(LqrLimits, SteeringIsClampedToProtocolLimit) {
   const double max_steer = 90.0 * M_PI / 180.0;
-  LQR lqr                = makeController(1.2);
+  TestPathTracker lqr                = makeController(1.2);
   lqr.SetTrajectory(straightLine());
 
   RobotState state;
@@ -419,7 +488,7 @@ TEST(LqrLimits, SteeringIsClampedToProtocolLimit) {
 
 // 横向和航向误差不得改变路径分段决定的目标速度。
 TEST(LqrLimits, TrackingErrorsDoNotChangeSpeed) {
-  LQR lqr = makeController(1.2);
+  TestPathTracker lqr = makeController(1.2);
   lqr.SetTrajectory(straightLine());
 
   RobotState state;
@@ -433,7 +502,7 @@ TEST(LqrLimits, TrackingErrorsDoNotChangeSpeed) {
 
 // 曲率只用于转角前馈，不再触发速度降档。
 TEST(LqrLimits, HighCurvatureDoesNotChangeSpeed) {
-  LQR lqr  = makeController(1.2);
+  TestPathTracker lqr  = makeController(1.2);
   auto pts = straightLine();
   for (auto& p : pts) {
     p.kappa = 1.0;
@@ -448,7 +517,7 @@ TEST(LqrLimits, HighCurvatureDoesNotChangeSpeed) {
 
 // 到达轨迹末端时必须停止输出控制指令。
 TEST(LqrGuards, StopsAtPathEnd) {
-  LQR lqr = makeController(1.2, 100);
+  TestPathTracker lqr = makeController(1.2, 100);
   lqr.SetTrajectory(straightLine(/*length*/ 5.0, /*step*/ 0.1));
 
   RobotState state;
@@ -479,7 +548,7 @@ TEST(LqrGuards, StopsAtPathEnd) {
 // 显式验证盲区：车辆沿直线路径冲过目标点 200 米后，
 // 横向误差和航向误差仍然都为零。
 TEST(LqrAlongTrackBlindSpot, RunningPastGoalReportsZeroError) {
-  LQR lqr = makeController(1.2);
+  TestPathTracker lqr = makeController(1.2);
   lqr.SetTrajectory(straightLine(/*length*/ 20.0, /*step*/ 0.1));
 
   // 不推进目标点，模拟目标冻结失效。
@@ -501,7 +570,7 @@ TEST(LqrAlongTrackBlindSpot, RunningPastGoalReportsZeroError) {
 // 输出距离必须反映真实的车辆到目标点距离，并在目标推进后继续更新，
 // 因为节点每个控制周期都会使用该值执行安全门控。
 TEST(LqrAlongTrackBlindSpot, OutputDistanceTracksRobotAndGoal) {
-  LQR lqr = makeController(1.2, 300);
+  TestPathTracker lqr = makeController(1.2, 300);
   lqr.SetTrajectory(straightLine(/*length*/ 50.0, /*step*/ 0.1));
 
   RobotState state;
@@ -525,7 +594,7 @@ TEST(LqrAlongTrackBlindSpot, OutputDistanceTracksRobotAndGoal) {
 
 // 开启吸附后，已偏离到弧长目标前方的车辆应将目标点前拉至最近路径点。
 TEST(LqrSnap, GoalSnapsForwardToNearestPoint) {
-  LQR lqr = makeController(1.2, 100);
+  TestPathTracker lqr = makeController(1.2, 100);
   lqr.SetTrajectory(straightLine(/*length*/ 50.0, /*step*/ 0.1));
 
   // 车辆位于 x=8，但行驶距离为零，模拟里程计打滑或冻结。
@@ -540,7 +609,7 @@ TEST(LqrSnap, GoalSnapsForwardToNearestPoint) {
 
 // 搜索窗口必须从上一目标点开始，并用当前位姿逐步向前更新。
 TEST(LqrSnap, WindowStartsAtPreviousNearestPoint) {
-  LQR lqr = makeController(1.2, 100);
+  TestPathTracker lqr = makeController(1.2, 100);
   lqr.SetTrajectory(straightLine(/*length*/ 50.0, /*step*/ 0.1));
 
   RobotState state;
@@ -555,9 +624,9 @@ TEST(LqrSnap, WindowStartsAtPreviousNearestPoint) {
   EXPECT_NEAR(next_out.target_pt.x, 9.0, 0.1) << "下一帧应使用当前位姿继续向前搜索";
 }
 
-// 单次吸附最多向前搜索 snap_forward_points 个路径点。
+// 单次吸附最多向前搜索 snap_forward_points 条路径线段。
 TEST(LqrSnap, SearchDoesNotExceedForwardWindow) {
-  LQR lqr = makeController(1.2, 10);
+  TestPathTracker lqr = makeController(1.2, 10);
   lqr.SetTrajectory(straightLine(/*length*/ 50.0, /*step*/ 0.1));
 
   RobotState state;
@@ -570,7 +639,7 @@ TEST(LqrSnap, SearchDoesNotExceedForwardWindow) {
 // 吸附不得向后移动目标点。搜索从上一最近点开始，
 // 因此落后的车辆不能把目标拉回弓字形田块的上一行，避免重复作业。
 TEST(LqrSnap, GoalNeverSnapsBackward) {
-  LQR lqr = makeController(1.2, 300);
+  TestPathTracker lqr = makeController(1.2, 300);
   lqr.SetTrajectory(straightLine(/*length*/ 50.0, /*step*/ 0.1));
 
   RobotState state;

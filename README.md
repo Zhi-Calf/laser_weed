@@ -54,7 +54,7 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker
 |---|---|
 | `gnss_localization` | 读取 RTK GIAVP 数据，投影到 ENU，发布 `Pose`、origin 和 `odom→base_link` TF；提供 NTRIP 与千寻 SDK 两种差分客户端 |
 | `global_path_planner` | 根据 YAML 中的田块边界生成弓字形全覆盖路径 |
-| `path_tracker` | 四轮转向 LQR/PID 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
+| `path_tracker` | 四轮转向统一 LQR 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
 | `weeder_base` | CAN 协议编解码、SocketCAN 驱动、50Hz 指令发送、10Hz 状态发布、全部底盘/BMS 状态接收 |
 | `weeder_msgs` | 车辆、BMS、GNSS、工作模式、全覆盖路径、点云避停状态等 ROS2 消息 |
 | `velocity_planner` | 直接在 E1R 点云坐标系中执行前向矩形 ROI 判定并发布避停状态 |
@@ -66,7 +66,7 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker
 
 稻行模块的构建、时钟/标定约定和回放方法见
 [`crop_row_perception/README.md`](crop_row_perception/README.md)。
-`path_tracker` 可通过默认关闭的 `row_pid_enabled` 模式选择性消费稻行观测。
+`path_tracker` 可通过默认关闭的 `row_vision_enabled` 模式选择性消费稻行观测。
 
 ## 路径消息
 

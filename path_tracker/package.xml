@@ -4,7 +4,7 @@
   <name>path_tracker</name>
   <version>0.1.0</version>
   <description>
-    LQR/PID path-tracking controller for the four-wheel-steering laser weeding
+    Unified LQR path-tracking controller for the four-wheel-steering laser weeding
     robot. The global path uses LQR with Ackermann / four-wheel-steering
     kinematics; the optional row mode tracks crop-row centerlines with PID and
     falls back to global-path LQR.

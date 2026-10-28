@@ -84,7 +84,7 @@ ObstacleStatus MakeObstacleStatus(bool stop_required) {
 CropRowObservation MakeCropRowObservation(double lateral_error_m = 0.2) {
   CropRowObservation observation;
   observation.header.frame_id   = "base_link";
-  observation.session_id        = "row-pid-test";
+  observation.session_id        = "row-vision-test";
   observation.has_capture_time  = true;
   observation.replay            = false;
   observation.status            = CropRowObservation::VALID;
@@ -398,7 +398,7 @@ TEST(PathTrackerSteerRateIntegration, LimitsSteeringCommandRate) {
   executor.remove_node(tester);
 }
 
-TEST(PathTrackerRowPidIntegration, TracksValidVisionAndFallsBackWhenStale) {
+TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackWhenStale) {
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
@@ -407,13 +407,13 @@ TEST(PathTrackerRowPidIntegration, TracksValidVisionAndFallsBackWhenStale) {
     rclcpp::Parameter("wheelbase", 1.2),
     rclcpp::Parameter("max_lateral_error_m", 0.3),
     rclcpp::Parameter("max_steer_rate_deg_s", 180.0),
-    rclcpp::Parameter("row_pid_enabled", true),
-    rclcpp::Parameter("row_pid_resume_frames", 2),
-    rclcpp::Parameter("row_pid_pre_turn_m", 3.0),
+    rclcpp::Parameter("row_vision_enabled", true),
+    rclcpp::Parameter("row_vision_resume_frames", 2),
+    rclcpp::Parameter("row_vision_pre_turn_m", 3.0),
     rclcpp::Parameter("crop_row_timeout_s", 0.2),
   });
 
-  auto tester  = std::make_shared<rclcpp::Node>("path_tracker_row_pid_test");
+  auto tester  = std::make_shared<rclcpp::Node>("path_tracker_vision_test");
   auto tracker = std::make_shared<path_tracker::PathTrackerNode>(tracker_options);
 
   ChassisCmd last_command;
@@ -467,30 +467,30 @@ TEST(PathTrackerRowPidIntegration, TracksValidVisionAndFallsBackWhenStale) {
   EXPECT_GT(last_command.steer_angle_rad, 0.0);
   EXPECT_EQ(last_command.steer_mode, 0U);
 
-  const double pid_steer = last_command.steer_angle_rad;
+  const double vision_steer = last_command.steer_angle_rad;
   SpinFor(executor, publishers, pose, path, mode, nullptr, 0.5);
-  EXPECT_LT(std::abs(last_command.steer_angle_rad), std::abs(pid_steer));
+  EXPECT_LT(std::abs(last_command.steer_angle_rad), std::abs(vision_steer));
   EXPECT_EQ(last_command.steer_mode, 0U);
 
   executor.remove_node(tracker);
   executor.remove_node(tester);
 }
 
-TEST(PathTrackerRowPidIntegration, UsesGlobalLineBeforeTurnAndLqrInTurn) {
+TEST(PathTrackerVisionIntegration, UsesGlobalPathBeforeTurnAndDualAckermannInTurn) {
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
     rclcpp::Parameter("require_velocity_planner", false),
     rclcpp::Parameter("viz", false),
     rclcpp::Parameter("wheelbase", 1.2),
-    rclcpp::Parameter("row_pid_enabled", true),
-    rclcpp::Parameter("row_pid_pre_turn_m", 1.5),
+    rclcpp::Parameter("row_vision_enabled", true),
+    rclcpp::Parameter("row_vision_pre_turn_m", 1.5),
     rclcpp::Parameter("turn_mode_enter_m", 0.2),
     rclcpp::Parameter("turn_mode_exit_m", 0.2),
     rclcpp::Parameter("max_steer_rate_deg_s", 180.0),
   });
 
-  auto tester  = std::make_shared<rclcpp::Node>("path_tracker_row_pid_turn_test");
+  auto tester  = std::make_shared<rclcpp::Node>("path_tracker_vision_turn_test");
   auto tracker = std::make_shared<path_tracker::PathTrackerNode>(tracker_options);
 
   ChassisCmd last_command;
@@ -526,6 +526,10 @@ TEST(PathTrackerRowPidIntegration, UsesGlobalLineBeforeTurnAndLqrInTurn) {
   EXPECT_EQ(last_command.steer_mode, 1U);
 
   pose.x = 3.5;
+  SpinFor(executor, publishers, pose, path, mode, nullptr, 0.4);
+  EXPECT_EQ(last_command.steer_mode, 0U);
+
+  pose.x = 4.5;
   SpinFor(executor, publishers, pose, path, mode, nullptr, 0.4);
   EXPECT_EQ(last_command.steer_mode, 0U);
 

@@ -1,13 +1,13 @@
-// 版权所有 2026。四轮转向 LQR/PID 的 ROS 2 节点实现。
+// 版权所有 2026。四轮转向统一 LQR 的 ROS 2 节点实现。
 #include "path_tracker/path_tracker_node.hpp"
-
-#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <stdexcept>
 #include <utility>
+
+#include <spdlog/spdlog.h>
 
 #include "path_tracker/logging.hpp"
 
@@ -19,23 +19,13 @@ constexpr double kRad2Deg = 57.29577951308232;
 /// 日志中使用的节点名称。
 constexpr const char* kNodeName = "path_tracker";
 
-double NormalizeAngle(double angle) {
-  while (angle > M_PI) {
-    angle -= 2.0 * M_PI;
-  }
-  while (angle < -M_PI) {
-    angle += 2.0 * M_PI;
-  }
-  return angle;
-}
-
-}   // namespace
+}  // namespace
 
 // 创建路径跟踪节点并初始化控制器与接口。
 // 输入:
 //   options : ROS 节点创建选项
 PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNodeName, options) {
-  loadLogParameters();
+  LoadLogParameters();
   LogConfig log_config;
   log_config.logger_name         = "path_tracker";
   log_config.log_file_name       = "path_tracker.log";
@@ -47,15 +37,15 @@ PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNod
   ConfigureLogging(log_config);
   SPDLOG_INFO("日志配置成功");
 
-  // 必须先在 loadParameters() 之前创建 LQR 对象，否则配置时会访问空指针。
+  // 必须先创建 LQR，加载参数时才能写入配置。
   lqr_ = std::make_unique<LQR>();
-  loadParameters();
+  LoadParameters();
 
-  setupInterfaces();
+  SetupInterfaces();
 
   const auto period_ns = std::chrono::nanoseconds(static_cast<int64_t>(1.0e9 / control_hz_));
   timer_               = create_wall_timer(period_ns, [this]() {
-    controlTick();
+    ControlTick();
   });
 
   SPDLOG_INFO(
@@ -66,7 +56,7 @@ PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNod
     control_hz_);
   SPDLOG_INFO(
     "订阅 位姿={} 路径={} 工作模式={} 避停状态={} 稻行={} | 发布 {} | "
-    "避停门控={} 稻行PID={}",
+    "避停门控={} 视觉LQR={}",
     pose_topic_,
     path_topic_,
     work_mode_topic_,
@@ -74,13 +64,13 @@ PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNod
     crop_row_topic_,
     cmd_topic_,
     require_velocity_planner_ ? "开启" : "关闭",
-    row_pid_enabled_ ? "开启" : "关闭");
+    row_vision_enabled_ ? "开启" : "关闭");
 }
 
 // 读取日志配置参数。
 // 输出:
 //   日志目录、文件大小、文件数量和日志级别。
-void PathTrackerNode::loadLogParameters() {
+void PathTrackerNode::LoadLogParameters() {
   declare_parameter("log_dir", "/opt/agri/logs");
   declare_parameter("log_file_size_mb", 50);
   declare_parameter("log_file_count", 10);
@@ -97,7 +87,7 @@ void PathTrackerNode::loadLogParameters() {
 // 读取 LQR、速度策略和安全门控参数。
 // 输出:
 //   节点成员中的控制器配置和安全阈值。
-void PathTrackerNode::loadParameters() {
+void PathTrackerNode::LoadParameters() {
   control_hz_                         = declare_parameter<double>("control_hz", 10.0);
   wheelbase_                          = declare_parameter<double>("wheelbase", 1.0);
   turn_mode_enter_m_                  = declare_parameter<double>("turn_mode_enter_m", 0.6);
@@ -124,36 +114,26 @@ void PathTrackerNode::loadParameters() {
   velocity_planner_status_topic_      = declare_parameter<std::string>("velocity_planner_status_topic", "/velocity_planner/status");
   cmd_topic_                          = declare_parameter<std::string>("cmd_topic", "/chassis/cmd");
   viz_                                = declare_parameter<bool>("viz", true);
-  row_pid_enabled_                    = declare_parameter<bool>("row_pid_enabled", false);
+  row_vision_enabled_                 = declare_parameter<bool>("row_vision_enabled", false);
   crop_row_topic_                     = declare_parameter<std::string>("crop_row_topic", "/crop_row/observation");
   crop_row_frame_id_                  = declare_parameter<std::string>("crop_row_frame_id", "base_link");
   crop_row_timeout_s_                 = declare_parameter<double>("crop_row_timeout_s", 0.3);
   crop_row_min_confidence_            = declare_parameter<double>("crop_row_min_confidence", 0.5);
-  row_pid_pre_turn_m_                 = declare_parameter<double>("row_pid_pre_turn_m", 3.0);
-  row_pid_lookahead_m_                = declare_parameter<double>("row_pid_lookahead_m", 1.0);
-  const int64_t row_pid_resume_frames = declare_parameter<int64_t>("row_pid_resume_frames", 3);
-  row_pid_resume_frames_              = static_cast<std::size_t>(std::max<int64_t>(1, row_pid_resume_frames));
-  row_pid_config_.kp_rad_per_m        = declare_parameter<double>("row_pid_kp_rad_per_m", 0.4);
-  row_pid_config_.ki_rad_per_m_s      = declare_parameter<double>("row_pid_ki_rad_per_m_s", 0.02);
-  row_pid_config_.kd_rad_s_per_m      = declare_parameter<double>("row_pid_kd_rad_s_per_m", 0.08);
-  row_pid_config_.heading_gain        = declare_parameter<double>("row_pid_heading_gain", 0.3);
-  row_pid_config_.derivative_tau_s    = declare_parameter<double>("row_pid_derivative_tau_s", 0.15);
-  row_pid_config_.integral_limit_rad  = declare_parameter<double>("row_pid_integral_limit_rad", 0.1);
+  row_vision_pre_turn_m_              = declare_parameter<double>("row_vision_pre_turn_m", 3.0);
+  const int64_t row_vision_resume_frames = declare_parameter<int64_t>("row_vision_resume_frames", 3);
+  row_vision_resume_frames_           = static_cast<std::size_t>(std::max<int64_t>(1, row_vision_resume_frames));
 
   if (!std::isfinite(max_steer_rate_rad_s_) || max_steer_rate_rad_s_ <= 0.0) {
     SPDLOG_WARN("max_steer_rate_deg_s={} 非法，回退为 90 deg/s", max_steer_rate_rad_s_ * kRad2Deg);
     max_steer_rate_rad_s_ = M_PI / 2.0;
   }
   if (
-    row_pid_enabled_ &&
+    row_vision_enabled_ &&
     (crop_row_topic_.empty() || crop_row_frame_id_.empty() || !std::isfinite(crop_row_timeout_s_) || crop_row_timeout_s_ <= 0.0 || !std::isfinite(crop_row_min_confidence_) || crop_row_min_confidence_ < 0.0 ||
-     crop_row_min_confidence_ > 1.0 || !std::isfinite(row_pid_pre_turn_m_) || row_pid_pre_turn_m_ < turn_mode_enter_m_ || !std::isfinite(row_pid_lookahead_m_) || row_pid_lookahead_m_ < 0.0 ||
-     row_pid_resume_frames < 1 || !std::isfinite(row_pid_config_.kp_rad_per_m) || !std::isfinite(row_pid_config_.ki_rad_per_m_s) || !std::isfinite(row_pid_config_.kd_rad_s_per_m) ||
-     !std::isfinite(row_pid_config_.heading_gain) || !std::isfinite(row_pid_config_.derivative_tau_s) || row_pid_config_.derivative_tau_s <= 0.0 || !std::isfinite(row_pid_config_.integral_limit_rad) ||
-     row_pid_config_.integral_limit_rad < 0.0)) {
-    throw std::invalid_argument("invalid row PID tracking configuration");
+     crop_row_min_confidence_ > 1.0 || !std::isfinite(row_vision_pre_turn_m_) || row_vision_pre_turn_m_ < turn_mode_enter_m_ ||
+     row_vision_resume_frames < 1)) {
+    throw std::invalid_argument("invalid row vision tracking configuration");
   }
-  row_pid_.Configure(row_pid_config_);
 
   const double lqr_eps              = declare_parameter<double>("lqr_eps", 1e-6);
   const int lqr_max_iteration       = static_cast<int>(declare_parameter<int64_t>("lqr_max_iteration", 1000));
@@ -173,13 +153,13 @@ void PathTrackerNode::loadParameters() {
   lqr_config.turn_mode_enter_m      = turn_mode_enter_m_;
   lqr_config.turn_mode_exit_m       = turn_mode_exit_m_;
   lqr_config.max_steer_rad          = max_steer_deg_ / kRad2Deg;
-  lqr_config.snap_forward_points    = snap_forward_points_;
   lqr_config.work_speed             = work_speed_;
   lqr_config.turn_speed             = turn_speed_;
   lqr_config.turn_speed_preview_m   = turn_speed_preview_m_;
   lqr_config.turn_speed_hold_m      = turn_speed_hold_m_;
   lqr_config.pose_at_vehicle_center = pose_at_vehicle_center;
   lqr_->Configure(lqr_config);
+  path_locator_.Configure(snap_forward_points_);
 
   SPDLOG_INFO(
     "控制参数加载完成: control_hz={:.1f}Hz wheelbase={:.3f}m "
@@ -232,36 +212,35 @@ void PathTrackerNode::loadParameters() {
     lqr_config.r_steer,
     pose_at_vehicle_center);
   SPDLOG_INFO(
-    "稻行混合跟踪: enabled={} topic={} pre_turn={:.2f}m "
-    "lookahead={:.2f}m resume_frames={} confidence={:.2f}",
-    row_pid_enabled_,
+    "视觉稻行 LQR: enabled={} topic={} pre_turn={:.2f}m "
+    "resume_frames={} confidence={:.2f}",
+    row_vision_enabled_,
     crop_row_topic_,
-    row_pid_pre_turn_m_,
-    row_pid_lookahead_m_,
-    row_pid_resume_frames_,
+    row_vision_pre_turn_m_,
+    row_vision_resume_frames_,
     crop_row_min_confidence_);
 }
 
 // 创建位姿、路径、模式、避停状态订阅及控制输出接口。
 // 副作用:
 //   初始化 LQR 目标可视化、底盘指令发布和控制定时器。
-void PathTrackerNode::setupInterfaces() {
+void PathTrackerNode::SetupInterfaces() {
   // gnss_driver 使用 SensorDataQoS（尽力传输，保留最近 5 条）发布位姿。
   // 可靠订阅端无法与该发布端匹配，因此这里使用相同的 QoS。
   pose_sub_ = create_subscription<weeder_msgs::msg::Pose>(pose_topic_, rclcpp::SensorDataQoS(), [this](const weeder_msgs::msg::Pose::SharedPtr msg) {
-    poseCallback(msg);
+    PoseCallback(msg);
   });
 
   // global_path_planner 使用 transient_local（瞬态本地持久化）发布路径
   // 晚加入的订阅端必须使用相同持久性才能收到最后一条路径。
   const auto path_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   path_sub_           = create_subscription<weeder_msgs::msg::Path>(path_topic_, path_qos, [this](const weeder_msgs::msg::Path::SharedPtr msg) {
-    pathCallback(msg);
+    PathCallback(msg);
   });
 
   // work_mode 使用普通订阅即可，无需额外配置 QoS。
   work_mode_sub_ = create_subscription<weeder_msgs::msg::WorkMode>(work_mode_topic_, 10, [this](const weeder_msgs::msg::WorkMode::SharedPtr msg) {
-    workModeCallback(msg);
+    WorkModeCallback(msg);
   });
 
   // 障碍物数据
@@ -270,10 +249,10 @@ void PathTrackerNode::setupInterfaces() {
     ObstacleStatusCallback(msg);
   });
 
-  if (row_pid_enabled_) {
+  if (row_vision_enabled_) {
     const auto crop_row_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile();
     crop_row_sub_           = create_subscription<weeder_msgs::msg::CropRowObservation>(crop_row_topic_, crop_row_qos, [this](const weeder_msgs::msg::CropRowObservation::SharedPtr msg) {
-      cropRowCallback(msg);
+      CropRowCallback(msg);
     });
   }
 
@@ -295,7 +274,8 @@ void PathTrackerNode::setupInterfaces() {
 //   msg : 定位位姿、速度、卫星数和有效性标志
 // 输出:
 //   robot_state_、位姿有效性和最近更新时间。
-void PathTrackerNode::poseCallback(const weeder_msgs::msg::Pose::SharedPtr msg) {
+void PathTrackerNode::PoseCallback(
+    const weeder_msgs::msg::Pose::SharedPtr msg) {
   last_pose_time_       = now();
   has_pose_             = true;
   pose_valid_           = msg->valid;
@@ -323,7 +303,8 @@ void PathTrackerNode::poseCallback(const weeder_msgs::msg::Pose::SharedPtr msg) 
 //   LQR 轨迹、路径点数和最近路径时间。
 // 失败:
 //   x/y 长度不一致或点数不足时忽略该路径并输出停车。
-void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) {
+void PathTrackerNode::PathCallback(
+    const weeder_msgs::msg::Path::SharedPtr msg) {
   if (msg->x.size() < 3 || msg->x.size() != msg->y.size()) {
     SPDLOG_WARN("收到的路径无效：x={} y={}（需要 x==y 且不少于 3 点）", msg->x.size(), msg->y.size());
     return;
@@ -354,10 +335,11 @@ void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) 
   accept_path_message_ = false;
   path_point_count_    = traj.size();
   last_speed_cmd_      = 0.0;
-  row_pid_.Reset();
   crop_row_valid_streak_ = 0;
-  tracking_mode_         = TrackingMode::kLqrRow;
-  lqr_->SetTrajectory(traj);
+  vision_acquire_paused_ = false;
+  reference_source_ = ReferenceSource::kGlobalPath;
+  path_locator_.SetPath(traj);
+  lqr_->Reset();
 
   SPDLOG_INFO(
     "已载入新路径: {} 个点, 起点 ({:.2f}, {:.2f}), "
@@ -374,7 +356,8 @@ void PathTrackerNode::pathCallback(const weeder_msgs::msg::Path::SharedPtr msg) 
 //   msg : 当前工作模式和名称
 // 输出:
 //   autonomous_driving_mode_active_ 和最近模式时间。
-void PathTrackerNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg) {
+void PathTrackerNode::WorkModeCallback(
+    const weeder_msgs::msg::WorkMode::SharedPtr msg) {
   last_work_mode_time_            = now();
   const bool first_mode           = !ever_got_work_mode_;
   ever_got_work_mode_             = true;
@@ -399,7 +382,8 @@ void PathTrackerNode::workModeCallback(const weeder_msgs::msg::WorkMode::SharedP
 //   msg : 感知有效性、停车要求和障碍统计
 // 输出:
 //   避停相关成员及最近状态时间。
-void PathTrackerNode::ObstacleStatusCallback(const weeder_msgs::msg::ObstacleStatus::SharedPtr msg) {
+void PathTrackerNode::ObstacleStatusCallback(
+    const weeder_msgs::msg::ObstacleStatus::SharedPtr msg) {
   last_obstacle_status_time_ = now();
   has_obstacle_status_       = true;
   obstacle_sensor_valid_     = msg->sensor_valid;
@@ -419,7 +403,7 @@ void PathTrackerNode::ObstacleStatusCallback(const weeder_msgs::msg::ObstacleSta
 
 // 检查稻行观测是否满足控制输入的数据、时间、坐标系和数值约定。
 // 返回:
-//   true = 可作为视觉 PID 目标
+//   true = 可作为视觉 LQR 目标
 bool PathTrackerNode::IsCropRowObservationUsable(const weeder_msgs::msg::CropRowObservation& observation, const rclcpp::Time& now) const {
   if (
     !observation.has_capture_time || observation.replay || observation.session_id.empty() || observation.sequence == 0 || observation.status != weeder_msgs::msg::CropRowObservation::VALID ||
@@ -439,7 +423,8 @@ bool PathTrackerNode::IsCropRowObservationUsable(const weeder_msgs::msg::CropRow
 // 接收益苗行观测，按会话和新帧序号维护连续有效计数。
 // 输入:
 //   msg : 稻行中心线观测
-void PathTrackerNode::cropRowCallback(const weeder_msgs::msg::CropRowObservation::SharedPtr msg) {
+void PathTrackerNode::CropRowCallback(
+    const weeder_msgs::msg::CropRowObservation::SharedPtr msg) {
   if (msg->session_id != crop_row_session_) {
     crop_row_session_      = msg->session_id;
     crop_row_sequence_     = 0;
@@ -465,68 +450,65 @@ void PathTrackerNode::cropRowCallback(const weeder_msgs::msg::CropRowObservation
   crop_row_sequence_ = msg->sequence;
   if (usable) {
     latest_crop_row_ = msg;
-    ++crop_row_valid_streak_;
+    if (vision_acquire_paused_) {
+      crop_row_valid_streak_ = 0;
+    } else {
+      ++crop_row_valid_streak_;
+    }
   } else {
     latest_crop_row_.reset();
     crop_row_valid_streak_ = 0;
   }
 }
 
-// 将视觉中心线转换为 PID 使用的车体坐标前视误差。
-RowPidTarget PathTrackerNode::MakeVisionPidTarget(const weeder_msgs::msg::CropRowObservation& observation) const {
-  RowPidTarget target;
-  target.lateral_error_m   = observation.lateral_error_m;
-  target.heading_error_rad = observation.heading_error_rad;
-  target.lookahead_m       = row_pid_lookahead_m_;
-  return target;
+// 将 CropRowObservation 转换为 LQR 使用的车体解析直线。
+// 输入:
+//   observation : 已通过车体坐标和时效校验的视觉观测
+// 返回:
+//   中心线截距、航向和零曲率；单位分别为 m、rad、1/m
+LineReference PathTrackerNode::MakeVisionLineReference(
+    const weeder_msgs::msg::CropRowObservation& observation) const {
+  LineReference reference;
+  reference.lateral_error_m = observation.lateral_error_m;
+  reference.heading_error_rad = observation.heading_error_rad;
+  reference.curvature = 0.0;
+  return reference;
 }
 
-// 将当前全局 WORK 目标点及其切向转换为车体坐标下的行内直线。
-RowPidTarget PathTrackerNode::MakeGlobalPidTarget(const LQROutput& lqr_output) const {
-  const TrajectoryPoint& target = lqr_output.target_pt;
-  const double dx               = target.x - robot_state_.x;
-  const double dy               = target.y - robot_state_.y;
-  const double cos_yaw          = std::cos(robot_state_.heading);
-  const double sin_yaw          = std::sin(robot_state_.heading);
-  const double target_x_body    = cos_yaw * dx + sin_yaw * dy;
-  const double target_y_body    = -sin_yaw * dx + cos_yaw * dy;
-  const double heading_error    = NormalizeAngle(target.heading - robot_state_.heading);
-  const double slope            = std::tan(heading_error);
-
-  RowPidTarget pid_target;
-  pid_target.lateral_error_m   = target_y_body - slope * target_x_body;
-  pid_target.heading_error_rad = heading_error;
-  pid_target.lookahead_m       = row_pid_lookahead_m_;
-  return pid_target;
+// 根据全局路径 TURN 距离和视觉观测状态选择参考源。
+// 输入:
+//   match    : 当前全局路径连续投影
+//   now_time : 当前 ROS 时间
+// 返回:
+//   视觉在 TURN 前后预切换区内始终退出，恢复时需连续有效帧
+PathTrackerNode::ReferenceSource PathTrackerNode::SelectReferenceSource(
+    const PathMatch& match,
+    const rclcpp::Time& now_time) const {
+  if (!row_vision_enabled_) {
+    return ReferenceSource::kGlobalPath;
+  }
+  const bool near_turn =
+      match.target_point.waypoint_type == 1 ||
+      match.distance_to_next_turn_m <= row_vision_pre_turn_m_ ||
+      match.distance_from_previous_turn_m <= row_vision_pre_turn_m_;
+  if (near_turn) {
+    return ReferenceSource::kGlobalPath;
+  }
+  if (latest_crop_row_ &&
+      crop_row_valid_streak_ >= row_vision_resume_frames_ &&
+      IsCropRowObservationUsable(*latest_crop_row_, now_time)) {
+    return ReferenceSource::kVisionLine;
+  }
+  return ReferenceSource::kGlobalPath;
 }
 
-// 根据全局路径进度和视觉观测状态选择当前控制模式。
-PathTrackerNode::TrackingMode PathTrackerNode::SelectTrackingMode(const LQROutput& lqr_output, const rclcpp::Time& now_time) const {
-  if (lqr_output.steer_mode == 1) {
-    return TrackingMode::kLqrTurn;
-  }
-  if (!row_pid_enabled_) {
-    return TrackingMode::kLqrRow;
-  }
-  if (lqr_output.distance_to_turn_m <= row_pid_pre_turn_m_) {
-    return TrackingMode::kPidGlobal;
-  }
-  if (latest_crop_row_ && crop_row_valid_streak_ >= row_pid_resume_frames_ && IsCropRowObservationUsable(*latest_crop_row_, now_time)) {
-    return TrackingMode::kPidVision;
-  }
-  return TrackingMode::kLqrRow;
-}
-
-const char* PathTrackerNode::TrackingModeName(TrackingMode mode) {
-  switch (mode) {
-    case TrackingMode::kLqrRow:
-      return "lqr_row";
-    case TrackingMode::kPidVision:
-      return "pid_vision";
-    case TrackingMode::kPidGlobal:
-      return "pid_global";
-    case TrackingMode::kLqrTurn:
-      return "lqr_turn";
+// 返回参考源日志名称。
+const char* PathTrackerNode::ReferenceSourceName(ReferenceSource source) {
+  switch (source) {
+    case ReferenceSource::kGlobalPath:
+      return "global_path";
+    case ReferenceSource::kVisionLine:
+      return "vision_line";
   }
   return "unknown";
 }
@@ -534,27 +516,27 @@ const char* PathTrackerNode::TrackingModeName(TrackingMode mode) {
 // 发布零速、零转角和未使能状态的停车指令。
 // 副作用:
 //   发布 /chassis/cmd，并清零速度和转角变化率限制状态。
-void PathTrackerNode::publishStop() {
+void PathTrackerNode::PublishStop() {
   weeder_msgs::msg::ChassisCmd zero;
   zero.gear            = 0;
   zero.steer_mode      = 0;
   zero.release_brake   = false;
-  zero.estop           = false;
+  zero.estop           = true;
   zero.ctrl_mode       = false;
   zero.speed_m_s       = 0.0;
   zero.steer_angle_rad = 0.0;
   cmd_pub_->publish(zero);
   last_speed_cmd_     = 0.0;
   last_steer_cmd_rad_ = 0.0;
-  row_pid_.Reset();
   crop_row_valid_streak_ = 0;
-  tracking_mode_         = TrackingMode::kLqrRow;
+  vision_acquire_paused_ = false;
+  reference_source_ = ReferenceSource::kGlobalPath;
 }
 
 // 执行一次安全门控、轨迹推进和 LQR 控制。
 // 副作用:
 //   发布底盘指令，并在任一安全门控失败时输出停车。
-void PathTrackerNode::controlTick() {
+void PathTrackerNode::ControlTick() {
   const auto t = now();
 
   // ---- 门控 1：工作模式，也就是系统级使能信号 ----
@@ -565,36 +547,36 @@ void PathTrackerNode::controlTick() {
       "输出停车",
       work_mode_topic_,
       1.0 / work_mode_timeout_s_);
-    publishStop();
+    PublishStop();
     return;
   }
 
   // ---- 门控 2：RTK 位姿存在、新鲜且为固定解 ----
   if (!has_pose_) {
     SPDLOG_WARN("等待定位数据（{}），输出停车", pose_topic_);
-    publishStop();
+    PublishStop();
     return;
   }
   if ((t - last_pose_time_).seconds() > pose_timeout_s_) {
     SPDLOG_WARN("定位数据超时（{:.2f}s > {:.2f}s），输出停车", (t - last_pose_time_).seconds(), pose_timeout_s_);
-    publishStop();
+    PublishStop();
     return;
   }
   if (!pose_valid_) {
     SPDLOG_WARN("定位位姿无效（非 RTK 固定解），输出停车");
-    publishStop();
+    PublishStop();
     return;
   }
 
   // ---- 门控 3：存在可跟踪且未超时的路径 ----
   if (!has_path_) {
     SPDLOG_WARN("等待路径（{}），输出停车", path_topic_);
-    publishStop();
+    PublishStop();
     return;
   }
   if ((t - last_path_time_).seconds() > path_timeout_s_) {
     SPDLOG_WARN("路径超时（{:.2f}s > {:.2f}s），输出停车", (t - last_path_time_).seconds(), path_timeout_s_);
-    publishStop();
+    PublishStop();
     return;
   }
 
@@ -607,87 +589,99 @@ void PathTrackerNode::controlTick() {
         "输出停车",
         obstacle_status_age_s,
         velocity_planner_status_timeout_s_);
-      publishStop();
+      PublishStop();
       return;
     }
     if (!obstacle_sensor_valid_) {
       SPDLOG_WARN("避停感知数据无效，输出停车");
-      publishStop();
+      PublishStop();
       return;
     }
     if (obstacle_stop_required_) {
       SPDLOG_WARN("ROI 内检测到 {} 个障碍点，输出停车", obstacle_points_);
-      publishStop();
+      PublishStop();
       return;
     }
   }
 
   // ---- 所有门控通过，开始运行控制器 ----
 
-  LQRInput lqr_input;
-  lqr_input.robot_state = robot_state_;
-  LQROutput out;
-  if (!lqr_->ComputeCommand(lqr_input, out)) {
+  PathMatch match;
+  if (!path_locator_.Project(robot_state_.x, robot_state_.y, &match)) {
+    SPDLOG_ERROR("全局路径连续投影失败，输出停车");
+    PublishStop();
+    return;
+  }
+  LQROutput global_output;
+  if (!lqr_->ComputeCommand(robot_state_, match, global_output)) {
     SPDLOG_INFO("已到达路径末端，输出停车");
-    publishStop();
+    PublishStop();
     return;
   }
 
-  if (latest_crop_row_ && !IsCropRowObservationUsable(*latest_crop_row_, t)) {
-    SPDLOG_WARN("稻行观测已过期或无效，退出视觉 PID");
+  if (latest_crop_row_ &&
+      !IsCropRowObservationUsable(*latest_crop_row_, t)) {
+    SPDLOG_WARN("稻行观测已过期或无效，退出视觉 LQR");
     latest_crop_row_.reset();
     crop_row_valid_streak_ = 0;
   }
-  const TrackingMode previous_mode = tracking_mode_;
-  TrackingMode selected_mode       = SelectTrackingMode(out, t);
-  if (selected_mode == TrackingMode::kLqrTurn && previous_mode != TrackingMode::kLqrTurn) {
-    crop_row_valid_streak_ = 0;
-    row_pid_.Reset();
-  } else if (previous_mode == TrackingMode::kLqrTurn && selected_mode != TrackingMode::kLqrTurn) {
-    crop_row_valid_streak_ = 0;
-    row_pid_.Reset();
-    selected_mode = TrackingMode::kLqrRow;
-  } else if (selected_mode != previous_mode) {
-    row_pid_.Reset();
-  }
-  tracking_mode_ = selected_mode;
 
-  RowPidOutput pid_output;
-  RowPidTarget pid_target;
-  double target_delta           = out.vel_cmd.steer_angle;
-  double lateral_error_for_gate = out.lateral_error;
-  int steer_mode                = out.steer_mode;
-  const double max_steer_rad    = max_steer_deg_ / kRad2Deg;
-  if (tracking_mode_ == TrackingMode::kPidVision) {
-    pid_target             = MakeVisionPidTarget(*latest_crop_row_);
-    pid_output             = row_pid_.Compute(pid_target, 1.0 / control_hz_);
-    target_delta           = std::clamp(pid_output.steer_rad, -max_steer_rad, max_steer_rad);
-    lateral_error_for_gate = pid_target.lateral_error_m;
-    steer_mode             = 0;
-  } else if (tracking_mode_ == TrackingMode::kPidGlobal) {
-    pid_target             = MakeGlobalPidTarget(out);
-    pid_output             = row_pid_.Compute(pid_target, 1.0 / control_hz_);
-    target_delta           = std::clamp(pid_output.steer_rad, -max_steer_rad, max_steer_rad);
-    lateral_error_for_gate = pid_target.lateral_error_m;
-    steer_mode             = 0;
+  const bool near_turn =
+      match.target_point.waypoint_type == 1 ||
+      match.distance_to_next_turn_m <= row_vision_pre_turn_m_ ||
+      match.distance_from_previous_turn_m <= row_vision_pre_turn_m_;
+  if (near_turn != vision_acquire_paused_) {
+    crop_row_valid_streak_ = 0;
+    vision_acquire_paused_ = near_turn;
   }
-  if ((tracking_mode_ == TrackingMode::kPidVision || tracking_mode_ == TrackingMode::kPidGlobal) && !pid_output.valid) {
-    SPDLOG_WARN("稻行 PID 输入无效，降级为单阿克曼 LQR");
-    tracking_mode_ = TrackingMode::kLqrRow;
-    row_pid_.Reset();
-    target_delta           = out.vel_cmd.steer_angle;
-    lateral_error_for_gate = out.lateral_error;
-    steer_mode             = 0;
+
+  const ReferenceSource previous_source = reference_source_;
+  ReferenceSource selected_source = SelectReferenceSource(match, t);
+  LQROutput selected_output = global_output;
+  if (selected_source == ReferenceSource::kVisionLine) {
+    const LineReference reference =
+        MakeVisionLineReference(*latest_crop_row_);
+    LQROutput vision_output;
+    if (lqr_->ComputeLineCommand(robot_state_,
+                                 reference,
+                                 global_output.vel_cmd.linear_v,
+                                 vision_output)) {
+      vision_output.target_pt = match.target_point;
+      vision_output.distance_to_goal = match.distance_m;
+      vision_output.distance_to_turn_m = match.distance_to_next_turn_m;
+      vision_output.target_index = match.segment_index;
+      selected_output = vision_output;
+    } else {
+      SPDLOG_WARN("视觉直线 LQR 输入无效，降级为全局路径 LQR");
+      selected_source = ReferenceSource::kGlobalPath;
+      selected_output = global_output;
+      crop_row_valid_streak_ = 0;
+    }
   }
-  if (tracking_mode_ != previous_mode) {
-    SPDLOG_INFO("跟踪源切换: {} -> {}", TrackingModeName(previous_mode), TrackingModeName(tracking_mode_));
+  if (selected_source == ReferenceSource::kGlobalPath &&
+      previous_source == ReferenceSource::kVisionLine) {
+    crop_row_valid_streak_ = 0;
   }
+  reference_source_ = selected_source;
+  if (reference_source_ != previous_source) {
+    SPDLOG_INFO("参考源切换: {} -> {}",
+                ReferenceSourceName(previous_source),
+                ReferenceSourceName(reference_source_));
+  }
+
+  const double target_delta = std::clamp(
+      selected_output.vel_cmd.steer_angle,
+      -max_steer_deg_ / kRad2Deg,
+      max_steer_deg_ / kRad2Deg);
+  const double lateral_error_for_gate =
+      selected_output.lateral_error;
+  const int steer_mode = selected_output.steer_mode;
 
   // 超横差保护
   const double lateral_error_abs = std::fabs(lateral_error_for_gate);
   if (lateral_error_abs > max_lateral_error_m_) {
     SPDLOG_ERROR("横向误差 {:.3f} m > {:.3f} m，输出停车", lateral_error_abs, max_lateral_error_m_);
-    publishStop();
+    PublishStop();
     return;
   }
 
@@ -700,9 +694,9 @@ void PathTrackerNode::controlTick() {
   // 2026-10-15 仿真中曾出现目标点冻结在路径起点、车辆驶出 238 米，
   // 转角为 2.4e-14 且没有任何告警的情况，所有误差指标仍显示正常。
   //
-  // 本检查放在 ComputeCommand() 之后，使前向吸附先完成重新锚定；
+  // 本检查放在连续投影之后，用新的投影点发现车辆冲出有效路径。
   // 只有真正丢失跟踪时才会触发停车。
-  const double dist_to_goal = out.distance_to_goal;
+  const double dist_to_goal = match.distance_m;
   if (dist_to_goal > max_track_error_m_) {
     SPDLOG_ERROR(
       "偏离目标 {:.2f} m > {:.2f} m"
@@ -710,14 +704,14 @@ void PathTrackerNode::controlTick() {
       "输出停车。idx={}/{}",
       dist_to_goal,
       max_track_error_m_,
-      out.target_index,
+      match.segment_index,
       path_point_count_);
-    publishStop();
+    PublishStop();
     return;
   }
 
   // 速度平滑
-  const double target_v       = out.vel_cmd.linear_v;
+  const double target_v       = selected_output.vel_cmd.linear_v;
   const double max_speed_step = speed_ramp_mps2_ / control_hz_;
   double v                    = last_speed_cmd_;
   if (target_v > v) {
@@ -750,42 +744,38 @@ void PathTrackerNode::controlTick() {
     vision_confidence = latest_crop_row_->confidence;
   }
   SPDLOG_DEBUG(
-    "mode={} steer_mode={} type={} turn_distance={:.2f}m "
+    "source={} steer_mode={} type={} turn_distance={:.2f}m "
     "v={:.3f}/{:.3f} m/s delta={:+.2f}/{:+.2f} deg "
     "(fb={:+.2f} ff={:+.2f}) e_lat={:+.3f} m "
-    "e_head={:+.3f} rad pid={:+.2f}/{:+.2f}/{:+.2f}/{:+.2f} "
-    "vision_age={:.1f}ms vision_conf={:.2f} d_goal={:.2f} m idx={}/{}",
-    TrackingModeName(tracking_mode_),
+    "e_head={:+.3f} rad vision_age={:.1f}ms vision_conf={:.2f} "
+    "d_goal={:.2f} m idx={}/{}",
+    ReferenceSourceName(reference_source_),
     steer_mode,
-    static_cast<unsigned>(out.target_pt.waypoint_type),
-    out.distance_to_turn_m,
+    static_cast<unsigned>(match.target_point.waypoint_type),
+    match.distance_to_next_turn_m,
     v,
     target_v,
     delta * kRad2Deg,
     target_delta * kRad2Deg,
-    out.steer_fb * kRad2Deg,
-    out.steer_ff * kRad2Deg,
-    out.lateral_error,
-    out.heading_error,
-    pid_output.p_term_rad * kRad2Deg,
-    pid_output.i_term_rad * kRad2Deg,
-    pid_output.d_term_rad * kRad2Deg,
-    pid_output.heading_term_rad * kRad2Deg,
+    selected_output.steer_fb * kRad2Deg,
+    selected_output.steer_ff * kRad2Deg,
+    selected_output.lateral_error,
+    selected_output.heading_error,
     vision_age_ms,
     vision_confidence,
     dist_to_goal,
-    out.target_index,
+    match.segment_index,
     path_point_count_);
 
   if (viz_) {
-    publishViz(out.target_pt);
+    PublishViz(match.target_point);
   }
 }
 
 // 发布当前跟踪目标点的 RViz Marker。
 // 输入:
 //   target : 当前目标轨迹点
-void PathTrackerNode::publishViz(const TrajectoryPoint& target) {
+void PathTrackerNode::PublishViz(const TrajectoryPoint& target) {
   visualization_msgs::msg::Marker m;
   m.header.frame_id    = frame_id_;
   m.header.stamp       = now();

@@ -1,6 +1,6 @@
 # path_tracker
 
-激光除草机器人（四轮转向底盘）的 LQR/PID 路径跟踪控制器。
+激光除草机器人（四轮转向底盘）的统一 LQR 路径跟踪控制器。
 
 从 MegaTrak 履带拖拉机项目 `control_node/path_controller` 移植而来，**状态方程按阿克曼/四轮转向运动学重新推导**。本包依赖项目统一的 `weeder_msgs` 接口包。
 
@@ -52,7 +52,7 @@ A = [[1, v·dt], [0, 1]]      B = [[0], [v·dt/L]]    输入 δ
 
 ### 可以直接复用的部分
 
-- **Riccati 求解器** `calRicatti()`：定点迭代解 DARE，与模型无关，逐行沿用
+- **Riccati 求解器** `CalRicatti()`：定点迭代解 DARE，与模型无关，逐行沿用
 - **`discrete_points_math` 曲率/航向/弧长计算**：与 local_path_planner
   使用同一套 Apollo 离散点算法，并直接填充轨迹点容器
 - **WORK/TURN 分段速度**策略：与模型无关
@@ -116,28 +116,32 @@ LQR 根据分段类型选择速度：WORK 段默认 `0.6 m/s`，TURN 段及前�
 转角指令受 `max_steer_rate_deg_s` 变化率限制，避免 WORK/TURN 模式切换
 时等效转角发生阶跃。
 
-### 稻行 PID 混合跟踪
+### 视觉稻行与全局路径统一 LQR
 
-`row_pid_enabled=true` 时启用混合模式；默认关闭时完全使用原有 LQR：
+`row_vision_enabled=true` 时，普通行内优先消费视觉中心线；默认关闭时只使用全局路径：
 
 ```text
-普通行内：视觉中心线 PID，单阿克曼
-入弯前 row_pid_pre_turn_m：全局路径行内直线 PID，单阿克曼
-TURN 段：全局路径 LQR，双阿克曼
-视觉失效或出弯后：全局路径 LQR，单阿克曼
+普通行内：视觉中心线 -> LQR，单阿克曼
+TURN 前后 row_vision_pre_turn_m：全局路径 -> LQR，单/双阿克曼按段切换
+TURN 段：连续投影后的全局路径 -> LQR，双阿克曼
+视觉失效或出弯后：全局路径 LQR，重新取得连续有效帧后恢复视觉
 ```
 
-视觉目标直接使用 `CropRowObservation` 的车体坐标中心线。PID 在前视点计算横向误差，
-叠加横向 PID、航向对准项和滤波后的微分项；积分输出受 `row_pid_integral_limit_rad` 限制。
-预弯段把当前全局 WORK 目标点的位置和切向转换到车体坐标，不混用全局坐标。
+视觉和全局路径共用同一套 `[e_lateral, e_heading]` 反馈及曲率前馈，不再维护独立 PID。
+视觉中心线的 `lateral_error_m` 表示路径在左为正，与 LQR 的车辆相对路径符号相反；
+`LQR::ComputeLineCommand()` 在单阿克曼后轴控制点处完成符号和参考点转换。
+
+全局路径由 `GlobalPathLocator` 对相邻点组成的折线做连续垂足投影，返回插值后的目标点、
+航向、曲率、弧长、线段索引及 TURN 距离。搜索从上一命中线段开始且只向前推进，
+不允许自动回到已完成的作业行。
 
 只有 `VALID`、非回放、时间未超过 `crop_row_timeout_s`、置信度不低于
 `crop_row_min_confidence`、坐标系匹配且数值有限的观测才参与控制。视觉失效立即降级到
-单阿克曼 LQR，不保持旧视觉值。出弯或视觉恢复时必须连续取得
-`row_pid_resume_frames` 个有效新观测才重新进入视觉 PID。
+全局路径 LQR，不保持旧视觉值。TURN 前后 `row_vision_pre_turn_m` 范围内暂停视觉恢复计数，
+离开该范围后必须重新取得 `row_vision_resume_frames` 个连续有效帧。
 
-控制器和目标源切换会清空 PID 积分、上一误差和微分滤波状态，但保留上一转角指令，
-由 `max_steer_rate_deg_s` 平滑实际输出。安全停车和路径重载也会清空 PID 状态。
+参考源和转向模式切换会保留上一转角指令，由 `max_steer_rate_deg_s` 平滑实际输出。
+纯二维 LQR 没有积分状态；恒定转向零偏必须通过机械标定或后续 LQI 处理。
 
 规划器会持续重发路径。`path_tracker` 在首次接收有效路径后停止重建轨迹，
 但每条重发消息仍用于刷新路径心跳；只有 `/work_mode` 的模式值发生实际变化后，
@@ -215,9 +219,9 @@ LQR 的状态量只有 `[横向误差, 航向误差]`，**没有沿路径方向�
 
 仿真实测就是这样：目标点冻结在起点，车跑出 238 m，`steer_angle_rad = 2.4e-14`，所有误差指标都是 0，车径直冲出田块。`max_track_error_m` 这道门是唯一能发现该情况的手段，因此必须配置为正数。
 
-配套的 `snap_forward_points`（默认 20 点）让目标点每拍从上一目标点开始，
-在向前 `snap_forward_points` 个点的范围内吸附到离车最近的路径点，避免纯弧长累积
-在里程计打滑时与车越走越远。索引单调不减，所以永远不会把目标点拉回上一行
+配套的 `snap_forward_points`（默认 20 段）让连续投影每拍从上一命中线段开始，
+在向前 `snap_forward_points` 个线段的范围内寻找最近垂足，避免纯弧长累积
+在里程计打滑时与车越走越远。目标进度单调不减，所以永远不会把投影点拉回上一行
 （弓字形作业不会重跑已覆盖的垄）。
 
 ---
@@ -255,7 +259,7 @@ colcon test-result --verbose
 ros2 launch path_tracker path_tracker.launch.py
 ```
 
-纯算法层（`discrete_points_math.cpp` + `lqr.cpp` + `row_pid.cpp`，编成
+纯算法层（`discrete_points_math.cpp` + `global_path_locator.cpp` + `lqr.cpp`，编成
 `path_tracker_lib`）零 ROS 依赖，但**测试可执行文件依赖 rclcpp/gtest，
 且 `path_tracker_node` 依赖 weeder_msgs**，所以整个包必须在完整 ROS2
 环境里 `colcon build`，不能脱离 ROS 单独编译。
@@ -273,10 +277,10 @@ YAML 参数被视为可信输入，节点运行时不再对参数范围做自动
 | `wheelbase` | **最关键**。填真实前后轴距；控制器按 WORK/TURN 自动使用 `L` 或 `L/2` |
 | `pose_at_vehicle_center` | 默认 `true`；单阿克曼自动换算到后轴，双阿克曼使用中心 |
 | `max_steer_rate_deg_s` | 转角指令变化率上限，默认 `90°/s`，需按转向执行器能力标定 |
-| `row_pid_enabled` | 是否启用稻行 PID 混合跟踪，默认 `false` |
-| `row_pid_pre_turn_m` | 提前多少米从视觉 PID 切到全局行内直线 PID，默认 `3.0 m` |
-| `row_pid_resume_frames` | 视觉失效或出弯后恢复 PID 所需连续有效帧数，默认 `3` |
-| `row_pid_*` | PID、前视距离、滤波和积分限幅参数，启用前必须按实车标定 |
+| `row_vision_enabled` | 是否启用视觉稻行 LQR，默认 `false` |
+| `row_vision_pre_turn_m` | TURN 前后退出或暂停视觉的弧长距离，默认 `3.0 m` |
+| `row_vision_resume_frames` | 视觉失效或出弯后恢复所需连续有效帧数，默认 `3` |
+| `crop_row_min_confidence` | 视觉观测参与 LQR 的最低置信度 |
 | `work_speed_m_s` / `turn_speed_m_s` | WORK/TURN 基础速度，默认 0.6/0.3 m/s |
 | `turn_speed_preview_m` / `turn_speed_hold_m` | 转弯前预览和转弯后低速保持距离 |
 | `lqr_Q_*` / `lqr_R_steer` | 见上方"语义差异"，不能照抄履带项目的值 |
@@ -331,10 +335,11 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
 |---|---|
 | `test_lqr_kinematics.cpp` | 精确阿克曼前馈、运行时等效轴距、WORK/TURN 速度区、跟踪误差和曲率不参与降速、直线与对称阿克曼圆弧闭环、左右偏差符号、转角限幅、小位移弧长累计、沿路径盲区和前向吸附 |
 | `test_discrete_points_math.cpp` | 少于三点拒绝、空指针拒绝、直线零曲率、弧长累加、左/右转弯曲率符号、端点单边差分、相邻重合点与航向退化检查、四分之一圆曲率量级 |
+| `test_global_path_locator.cpp` | 线段内连续投影、终点夹取、单调前进、有限搜索窗口、跨界航向插值、TURN 距离和退化路径拒绝 |
 
 闭环测试同时覆盖直线横向误差收敛和 `L_eff=L/2` 的对称阿克曼圆弧跟踪。
 后者能同时检查精确前馈、等效轴距和路径目标推进是否一致。
 
 `LqrAlongTrackBlindSpot.RunningPastGoalReportsZeroError` 是**特意写成"记录盲区存在"**的回归测试：它断言车在目标点前方 200 m 处时横向/航向误差**都是 0**、转向指令为 0、但速度仍大于 0，同时 `distance_to_goal > 199`。这条测试的价值在于——如果将来有人认为 `e_lat`/`e_head` 已经足够而删掉偏离距离门，距离断言会失败，从而暴露那次删除的风险。
 
-`LqrSnap.GoalNeverSnapsBackward` 断言目标索引单调不减：车被"传送"回后方时目标点不许跟着倒退，否则弓字形作业会重跑已经除过草的垄。
+`GlobalPathLocator.NeverProjectsBackward` 断言连续投影进度单调不减：车被"传送"回后方时目标点不许跟着倒退，否则弓字形作业会重跑已经除过草的垄。
