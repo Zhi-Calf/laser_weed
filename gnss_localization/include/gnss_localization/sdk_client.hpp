@@ -36,11 +36,17 @@ constexpr int32_t kQxwzCoordFrameWgs84 = 2;
 // 二者为"二选一"的替代差分方案, 由 bringup 的 diff_mode 参数决定启动哪个。
 class SdkClient : public rclcpp::Node {
 public:
+  // 创建千寻 SDK 客户端节点。
   explicit SdkClient(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+  // 停止线程并释放 SDK 与串口资源。
   ~SdkClient() override;
+  // 同步写入一帧 RTCM 数据。
   bool writeRtcm(const uint8_t* data, uint32_t len);
+  // 将 RTCM 数据加入异步写队列。
   void enqueueRtcm(const uint8_t* data, uint32_t len);
+  // 记录 SDK 返回的坐标系信息。
   void handleNosrCoordInfo(int32_t status_code, int32_t server_frame, uint32_t available_count, bool requested_supported, const std::string& server_epoch);
+  // 返回当前 NOSR 坐标框架。
   int32_t coordFrame() const;
 
 public:
@@ -60,15 +66,25 @@ public:
   std::atomic<int> transient_error_count_{0};                      // 会话内累计 SDK 瞬时错误数 (网络/数据质量类, 不因单次成功清零, 会话/重连时重置)
 
 private:
+  // 读取日志配置参数。
   void loadLogParameters();
+  // 读取串口、SDK 和差分参数。
   void loadParameters();
+  // 执行 SDK 会话、串口和重连主循环。
   void workerLoop();
+  // 打开并初始化差分串口。
   bool openSerial();
+  // 尝试读取一条完整 GGA。
   std::optional<std::string> tryReadGga();
+  // 在超时时间内等待一条 GGA。
   std::optional<std::pair<std::string, std::chrono::steady_clock::time_point>> waitForGga(double timeout_seconds);
+  // 初始化千寻 SDK 并等待认证结果。
   bool initSdk();
+  // 启动 NOSR 服务并等待回调。
   bool startNosr();
+  // 从异步队列取出并写入 RTCM。
   void rtcmWriterLoop();
+  // 清空待写 RTCM 队列。
   void clearRtcmQueue();
 
 private:
@@ -82,6 +98,7 @@ private:
     kNosrStartFail,       // NOSR 启动异步失败 (start_cb 报告)
     kDisconnected,        // running_ 变 false / 正常退出
   };
+  // 执行一次 SDK 差分会话直到超时、断线或退出。
   SessionEnd runSession(const std::string& first_gga, std::chrono::steady_clock::time_point first_gga_time);
 
 private:

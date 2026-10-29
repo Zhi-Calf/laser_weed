@@ -195,32 +195,38 @@ struct AdcuCommand01 {
 // ============================================================
 class CanProtocol {
 public:
-  // 字节工具 (Intel 小端)
+  // 读取小端无符号 16 位整数。
   static uint16_t readU16LE(const uint8_t* p);
+  // 读取小端有符号 16 位整数。
   static int16_t readI16LE(const uint8_t* p);
+  // 写入小端无符号 16 位整数。
   static void writeU16LE(uint8_t* p, uint16_t v);
+  // 写入小端有符号 16 位整数。
   static void writeI16LE(uint8_t* p, int16_t v);
 
-  // 通用位提取 (按起始bit + 长度, Intel 格式)
-  // start_bit: 从 0 开始; len: 位数 (1~32)
+  // 从 Intel 位域中提取无符号数值。
   static uint32_t extractUnsigned(const uint8_t* data, uint8_t start_bit, uint8_t len);
+  // 从 Intel 位域中提取有符号数值。
   static int32_t extractSigned(const uint8_t* data, uint8_t start_bit, uint8_t len);
 
-  // 编码 ADCU -> VCU
+  // 编码 ADCU 控制指令为 CAN 帧。
   static CanFrame encodeAdcuCmd01(const AdcuCommand01& cmd);
 
-  // 解码 VCU -> ADCU
+  // 解码底盘主状态帧。
   static bool decodeState01(const CanFrame& f, ChassisState01& out);
+  // 解码四轮转速状态帧。
   static bool decodeState02(const CanFrame& f, ChassisState02& out);
+  // 解码四轮转向角状态帧。
   static bool decodeState03(const CanFrame& f, ChassisState03& out);
 
-  // State_04~11 电参 (行走/转向电机, 结构相同)
+  // 判断 CAN ID 是否属于电机电参状态帧。
   static bool isMotorElecStateId(uint32_t id);
+  // 解码行走或转向电机电参状态帧。
   static bool decodeMotorElec(const CanFrame& f, MotorElecState& out);
 
-  // State_21 / 22 BMS (第二版修)
-  // 第二版修已取消 decodeState23
+  // 解码 BMS 基本状态帧。
   static bool decodeState21(const CanFrame& f, ChassisState21& out);
+  // 解码 BMS 故障与电压状态帧。
   static bool decodeState22(const CanFrame& f, ChassisState22& out);
 };
 

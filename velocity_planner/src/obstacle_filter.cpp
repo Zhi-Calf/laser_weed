@@ -11,6 +11,11 @@ namespace velocity_planner {
 namespace {
 
 // 检查点云是否包含指定名称的 FLOAT32 字段。
+// 输入:
+//   cloud      : 待检查点云
+//   field_name : 字段名
+// 返回:
+//   true = 字段存在且类型可读取
 bool HasFloatField(const sensor_msgs::msg::PointCloud2& cloud, const std::string& field_name) {
   for (const auto& field : cloud.fields) {
     if (field.name == field_name) {
@@ -26,6 +31,10 @@ bool HasFloatField(const sensor_msgs::msg::PointCloud2& cloud, const std::string
 RoiFilter::RoiFilter(const RoiConfig& config) : config_(config) {}
 
 // 遍历点云并统计前向矩形 ROI 内的有效障碍点。
+// 输入:
+//   cloud : 传感器坐标系下的点云
+// 返回:
+//   点云有效性、障碍点数、最近距离和是否要求停车
 RoiResult RoiFilter::Evaluate(const sensor_msgs::msg::PointCloud2& cloud) const {
   RoiResult result;
   if (!HasFloatField(cloud, "x") || !HasFloatField(cloud, "y") || !HasFloatField(cloud, "z")) {
@@ -72,8 +81,12 @@ RoiResult RoiFilter::Evaluate(const sensor_msgs::msg::PointCloud2& cloud) const 
 // 保存障碍消失后的停车保持时间。
 StopHoldFilter::StopHoldFilter(double hold_time_s) : hold_time_s_(std::max(hold_time_s, 0.0)), last_hit_s_(0.0), has_hit_(false) {}
 
-// 更新障碍命中状态，
-// 并在障碍消失后保持输出停车一段时间。
+// 更新障碍命中状态并计算停车保持结果。
+// 输入:
+//   obstacle_detected : 当前帧是否检测到障碍
+//   now_s             : 当前单调时间 (s)
+// 返回:
+//   true = 当前仍需停车；false = 可以清除停车请求
 bool StopHoldFilter::Update(bool obstacle_detected, double now_s) {
   if (obstacle_detected) {
     has_hit_    = true;

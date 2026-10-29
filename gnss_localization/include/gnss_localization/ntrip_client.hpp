@@ -25,17 +25,27 @@ class SerialPort;
 // startup_commands 里的 `set ntrip ...` 命令, 不需要本节点。
 class NtripClient : public rclcpp::Node {
 public:
+  // 创建 NTRIP 客户端节点并启动工作线程。
   explicit NtripClient(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+  // 停止工作线程并关闭串口。
   ~NtripClient() override;
 
 private:
+  // 读取日志配置参数。
   void loadLogParameters();
+  // 读取串口和 NTRIP 参数。
   void loadParameters();
+  // 执行 NTRIP 连接、收发和重连主循环。
   void workerLoop();
+  // 尝试读取一条完整 GGA。
   std::optional<std::string> tryReadGga();
+  // 在超时时间内等待一条 GGA。
   std::optional<std::pair<std::string, std::chrono::steady_clock::time_point>> waitForGga(double timeout_seconds);
+  // 打开并初始化差分串口。
   bool openSerial();
+  // 建立 NTRIP socket 并保留响应中的多余数据。
   int openNtripSocket(std::string& pending_data);
+  // 构造 NTRIP HTTP 请求。
   std::string buildRequest() const;
 
 private:
@@ -46,6 +56,7 @@ private:
     kSerialWriteFail,   // 串口写 RTCM 连续失败
     kDisconnected,      // 连接断开/收发失败/正常退出
   };
+  // 执行一次 NTRIP 会话直到超时、断线或退出。
   SessionEnd runSession(int socket_fd, const std::string& first_gga, std::chrono::steady_clock::time_point first_gga_time, std::string pending_data);
 
 private:

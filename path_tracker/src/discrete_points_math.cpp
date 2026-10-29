@@ -35,7 +35,16 @@ void ClearProfile(std::vector<double>* headings, std::vector<double>* accumulate
 
 }   // namespace
 
-// 使用首末单边差分、中间中心差分计算路径的几何参数。
+// 使用首末单边差分、中间中心差分计算路径几何参数。
+// 输入:
+//   xy_points     : ENU 平面二维点列 (m)
+// 输出:
+//   headings      : 逐点航向角 (rad)
+//   accumulated_s : 逐点累计弧长 (m)
+//   kappas        : 逐点曲率 (1/m)
+//   dkappas       : 逐点曲率变化率
+// 返回:
+//   true = 成功；false = 点数不足、输入退化或数值无效
 bool ComputePathProfile(const std::vector<std::pair<double, double>>& xy_points, std::vector<double>* headings, std::vector<double>* accumulated_s, std::vector<double>* kappas, std::vector<double>* dkappas) {
   if (headings == nullptr || accumulated_s == nullptr || kappas == nullptr || dkappas == nullptr) {
     return false;
@@ -159,6 +168,12 @@ bool ComputePathProfile(const std::vector<std::pair<double, double>>& xy_points,
 }
 
 // 将离散点路径几何参数写入轨迹点容器。
+// 输入:
+//   xy_points : ENU 平面二维点列 (m)
+// 输出:
+//   trajectory : 完整轨迹点和曲率信息
+// 返回:
+//   true = 成功；false = 输入退化或计算失败
 bool ComputePathProfile(const std::vector<std::pair<double, double>>& xy_points, std::vector<TrajectoryPoint>* trajectory) {
   if (trajectory == nullptr) {
     return false;

@@ -64,6 +64,9 @@ visualization_msgs::msg::Marker MakePathTypeMarker(
 
 }   // namespace
 
+// 创建全局路径规划节点并加载配置。
+// 输入:
+//   options : ROS 节点创建选项
 GlobalPathPlannerNode::GlobalPathPlannerNode(const rclcpp::NodeOptions& options) : Node("global_path_planner", options) {
 
   loadLogParameters();
@@ -104,6 +107,9 @@ GlobalPathPlannerNode::GlobalPathPlannerNode(const rclcpp::NodeOptions& options)
   path_pub_                  = create_publisher<weeder_msgs::msg::Path>("~/path", rclcpp::QoS(1).transient_local());
 }
 
+// 读取日志配置参数。
+// 输出:
+//   日志目录、文件大小、文件数量和日志级别。
 void GlobalPathPlannerNode::loadLogParameters() {
   declare_parameter("log_dir", "/opt/agri/logs");
   declare_parameter("log_file_size_mb", 50);
@@ -118,6 +124,9 @@ void GlobalPathPlannerNode::loadLogParameters() {
   log_level_          = get_parameter("log_level").as_string();
 }
 
+// 读取路径分辨率和地块几何参数。
+// 输出:
+//   raw_vertices_、ridge_width_、field_margin_ 和 first_row_margin_。
 void GlobalPathPlannerNode::loadParameters() {
   declare_parameter("path_resolution", 0.2);
   declare_parameter("first_row_margin", 0.005);
@@ -167,7 +176,9 @@ void GlobalPathPlannerNode::loadParameters() {
   SPDLOG_INFO("===========================================");
 }
 
-// 投影顶点: 把顶点从经纬度投影到 ENU (平面直角坐标系)。
+// 把配置的经纬度顶点投影到 ENU 平面。
+// 输出:
+//   cell_ : 以 poly 首个顶点为原点的平面多边形。
 void GlobalPathPlannerNode::projectVerticesToEnu() {
   cell_.clear();
   for (const auto& v : raw_vertices_) {
@@ -178,7 +189,9 @@ void GlobalPathPlannerNode::projectVerticesToEnu() {
   }
 }
 
-// 全流程规划。
+// 根据当前地块输入执行弓形路径规划。
+// 输出:
+//   更新路径、关键点和内缩区域；失败时清空现有规划结果。
 void GlobalPathPlannerNode::planGeometry() {
   BowInput input;
   input.cell             = cell_;
@@ -202,7 +215,9 @@ void GlobalPathPlannerNode::planGeometry() {
   inner_cell_     = out.inner_polygon;
 }
 
-// 100ms 定时器: 发布当前生效路径 (/global_path_planner/path) + RViz Markers。
+// 周期性发布当前路径和 RViz Marker。
+// 输出:
+//   /global_path_planner/path 及路径、作业段、掉头段等 Marker。
 void GlobalPathPlannerNode::timerCallback() {
   const rclcpp::Time stamp = get_clock()->now();
 

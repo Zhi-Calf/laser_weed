@@ -28,6 +28,9 @@ CanDriver::~CanDriver() {
   close();
 }
 
+// 打开并绑定 SocketCAN 接口。
+// 返回:
+//   true = socket 已创建、接口已绑定且接收线程可启动
 bool CanDriver::open() {
   if (socket_fd_ >= 0) {
     return true;   // 幂等
@@ -83,6 +86,9 @@ bool CanDriver::open() {
   return true;
 }
 
+// 停止接收线程并关闭 socket。
+// 副作用:
+//   将 socket 文件描述符重置为 -1。
 void CanDriver::close() {
   if (socket_fd_ >= 0) {
     ::close(socket_fd_);
@@ -90,6 +96,11 @@ void CanDriver::close() {
   }
 }
 
+// 串行发送一帧 CAN 数据。
+// 输入:
+//   frame : CAN ID、长度、帧类型和数据
+// 返回:
+//   true = 整帧已写入 socket
 bool CanDriver::send(const protocol::CanFrame& frame) {
   if (socket_fd_ < 0) {
     SPDLOG_WARN("CAN 未打开, 丢弃发送帧 ID=0x{:08X}", frame.id);
@@ -117,10 +128,16 @@ bool CanDriver::send(const protocol::CanFrame& frame) {
   return true;
 }
 
+// 设置接收线程使用的帧回调。
+// 输入:
+//   callback : 每收到一帧调用的处理函数
 void CanDriver::setReceiveCallback(CanReceiveCallback callback) {
   receive_callback_ = std::move(callback);
 }
 
+// 启动 CAN 接收线程。
+// 副作用:
+//   重复调用不会创建第二个接收线程。
 void CanDriver::startReceiveThread() {
   if (running_) {
     return;
@@ -134,6 +151,9 @@ void CanDriver::startReceiveThread() {
   receive_thread_ = std::thread(&CanDriver::receiveLoop, this);
 }
 
+// 停止并等待 CAN 接收线程退出。
+// 副作用:
+//   清除 running_ 并在 join 后释放线程句柄。
 void CanDriver::stopReceiveThread() {
   running_ = false;
   if (receive_thread_.joinable()) {
@@ -141,11 +161,17 @@ void CanDriver::stopReceiveThread() {
   }
 }
 
+// 设置 CAN ID 过滤表；空列表表示恢复接收全部帧。
+// 输入:
+//   ids : 允许接收的扩展帧或标准帧 ID
 void CanDriver::setFilters(const std::vector<uint32_t>& ids) {
   filters_ = ids;
   applyFilters();
 }
 
+// 将当前过滤表应用到内核 socket。
+// 副作用:
+//   失败时记录错误但保留已有过滤配置供重试。
 void CanDriver::applyFilters() {
   if (socket_fd_ < 0) {
     return;   // open() 末尾会再调一次
@@ -187,6 +213,9 @@ void CanDriver::applyFilters() {
   SPDLOG_INFO("CAN 滤波: 只收 {} 个 ID", raw.size());
 }
 
+// 轮询 socket 并分发接收到的 CAN 帧。
+// 副作用:
+//   调用已注册的接收回调；超时轮询保证 stop 请求可及时退出。
 void CanDriver::receiveLoop() {
   struct can_frame cf;
 

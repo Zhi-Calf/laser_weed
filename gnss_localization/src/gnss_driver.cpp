@@ -92,7 +92,9 @@ GnssDriver::~GnssDriver() {
   serial_.close();
 }
 
-// 根据串口、数据新鲜度和定位质量记录健康状态。
+// 根据串口、数据新鲜度和定位质量更新健康状态。
+// 输出:
+//   更新 last_health_state_ 并发布对应故障状态。
 void GnssDriver::updateHealth() {
   if (!serial_.is_open()) {
     updateHealthState(HealthState::kSerial, "GNSS 串口已断开");
@@ -115,7 +117,12 @@ void GnssDriver::updateHealth() {
   updateHealthState(HealthState::kOk, "GNSS 定位正常，RTK 固定解");
 }
 
-// 健康状态变化时只记录一次日志，避免 100 Hz 定时器刷屏。
+// 健康状态变化时只记录一次日志。
+// 输入:
+//   state   : 新健康状态
+//   message : 状态说明
+// 副作用:
+//   更新健康状态，避免 100 Hz 定时器重复刷屏。
 void GnssDriver::updateHealthState(HealthState state, const std::string& message) {
   if (last_health_state_ == state)
     return;
@@ -128,6 +135,10 @@ void GnssDriver::updateHealthState(HealthState state, const std::string& message
 }
 
 // 判断当前帧是否具备可用于 ENU 投影的位置。
+// 输入:
+//   data : 一帧 GIAVP 数据
+// 返回:
+//   true = 解算状态有效且经纬高均为有限数
 bool GnssDriver::positionUsable(const GiavpData& data) const {
   return data.status != 0 && std::isfinite(data.latitude_deg) && std::isfinite(data.longitude_deg) && std::isfinite(data.altitude_m);
 }
@@ -225,7 +236,9 @@ void GnssDriver::loadParameters() {
   SPDLOG_INFO("=========================================");
 }
 
-// 定时器回调
+// 定时读取串口数据并刷新健康状态和输出。
+// 副作用:
+//   处理完整数据行，并更新健康状态。
 void GnssDriver::timerCallback() {
   serial_.read_lines([this](const std::string& line) {
     processLine(line);
@@ -243,7 +256,11 @@ void GnssDriver::timerCallback() {
   }
 }
 
-// 处理一行数据
+// 处理串口收到的一行文本。
+// 输入:
+//   line : 去除行结束符的单行数据
+// 副作用:
+//   完整 GIAVP 帧会进入 handleGiavp。
 void GnssDriver::processLine(const std::string& line) {
   if (debug_giavp_) {
     std::string preview = line.size() > 120u ? line.substr(0, 120) + "..." : line;
@@ -260,7 +277,11 @@ void GnssDriver::processLine(const std::string& line) {
   handleGiavp(parser_.data());
 }
 
-// 处理 GIAVP 数据
+// 处理一帧有效 GIAVP 数据并刷新输出。
+// 输入:
+//   d : 已解析的导航数据
+// 副作用:
+//   更新最近状态和有效数据时间，并发布定位、姿态、速度和位姿。
 void GnssDriver::handleGiavp(const GiavpData& d) {
   // 上电后首次进入 RTK 固定解时, 记录该点为 ENU 原点并发布。
   // datum_proj_ 是否为空即表示原点是否已设置。
@@ -322,7 +343,11 @@ double GnssDriver::positionAccuracyForStatus(int status) const {
   }
 }
 
-// 把 GIAVP 的 GPS 周和周内秒转换为 ROS 时间，非法时回退到本机时间。
+// 把 GIAVP 的 GPS 周和周内秒转换为 ROS 时间。
+// 输入:
+//   data : 当前 GIAVP 数据
+// 返回:
+//   有效 GPS 时间；非法时回退到本机时间。
 rclcpp::Time GnssDriver::timestampFor(const GiavpData& data) const {
   if (!use_gps_timestamp_ || data.gps_week <= 0 || !std::isfinite(data.gps_time_sec) || data.gps_time_sec < 0.0 || data.gps_time_sec >= kSecondsPerWeek) {
     return now();
@@ -342,7 +367,9 @@ rclcpp::Time GnssDriver::timestampFor(const GiavpData& data) const {
   return rclcpp::Time(seconds, nanoseconds, RCL_ROS_TIME);
 }
 
-// 发布ENU原点
+// 发布 ENU 原点经纬度。
+// 输出:
+//   /gnss_driver/origin。
 void GnssDriver::publishOriginLlh() {
   std::lock_guard<std::mutex> lock(datum_mutex_);
   if (!datum_proj_ || !origin_llh_pub_) {
@@ -358,7 +385,11 @@ void GnssDriver::publishOriginLlh() {
   origin_llh_pub_->publish(msg);
 }
 
-// 发布经纬度数据
+// 发布原始经纬度定位。
+// 输入:
+//   d : 当前 GIAVP 数据
+// 输出:
+//   /gnss_driver/fix；无解时经纬高写 NaN。
 void GnssDriver::publishFix(const GiavpData& d) {
   auto msg            = sensor_msgs::msg::NavSatFix();
   msg.header.stamp    = timestampFor(d);
@@ -412,6 +443,10 @@ void GnssDriver::publishFix(const GiavpData& d) {
 }
 
 // 发布修正位姿和仅供标定使用的原始里程计。
+// 输入:
+//   d : 当前 GIAVP 数据
+// 输出:
+//   /gnss_driver/pose、pose_stamped、odom_raw 和 TF。
 void GnssDriver::publishPose(const GiavpData& d) {
   if (!positionUsable(d))
     return;
@@ -579,7 +614,11 @@ void GnssDriver::publishPose(const GiavpData& d) {
   }
 }
 
-// 发布IMU数据
+// 发布 IMU 姿态数据。
+// 输入:
+//   d : 当前 GIAVP 数据
+// 输出:
+//   /gnss_driver/imu。
 void GnssDriver::publishImu(const GiavpData& d) {
   auto msg            = sensor_msgs::msg::Imu();
   msg.header.stamp    = timestampFor(d);
@@ -632,6 +671,10 @@ void GnssDriver::publishImu(const GiavpData& d) {
 }
 
 // 发布车体线速度和角速度。
+// 输入:
+//   d : 当前 GIAVP 数据
+// 输出:
+//   /gnss_driver/vel。
 void GnssDriver::publishVelocity(const GiavpData& d) {
   auto msg            = geometry_msgs::msg::TwistWithCovarianceStamped();
   msg.header.stamp    = timestampFor(d);
@@ -668,7 +711,11 @@ void GnssDriver::publishVelocity(const GiavpData& d) {
   vel_pub_->publish(msg);
 }
 
-// 转与X轴正方向夹角 (弧度)
+// 将真北顺时针航向转换为 ENU yaw。
+// 输入:
+//   heading_deg : 真北起算、顺时针为正的航向 (deg)
+// 返回:
+//   ENU 下逆时针为正的 yaw (rad)
 double GnssDriver::headingToEnuYaw(double heading_deg) const {
   // 航向: 北起算, 顺时针为正 (度)。
   // ENU yaw: 东起算, 逆时针为正 (弧度)。

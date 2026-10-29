@@ -16,13 +16,19 @@ namespace velocity_planner {
 
 class VelocityPlannerNode : public rclcpp::Node {
 public:
+  // 创建避停状态节点并初始化过滤器。
   explicit VelocityPlannerNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
 
 private:
+  // 读取日志配置参数。
   void LoadLogParameters();
+  // 读取 ROI 和超时参数。
   void LoadParameters();
+  // 创建订阅者、发布者和定时器。
   void SetupInterfaces();
+  // 缓存最新点云供定时处理。
   void CloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr cloud);
+  // 处理最新点云并发布避停状态。
   void PublishStatus();
 
   std::string input_cloud_topic_;       // 输入点云话题

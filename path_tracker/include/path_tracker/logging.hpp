@@ -1,5 +1,4 @@
-#ifndef PATH_TRACKER_LOGGING_H_
-#define PATH_TRACKER_LOGGING_H_
+#pragma once
 
 #include <cstddef>
 #include <string>
@@ -16,8 +15,7 @@ struct LogConfig {
   std::string log_level           = "info";                // 日志级别
 };
 
+// 按配置初始化滚动文件日志和可选控制台输出。
 void ConfigureLogging(const LogConfig& config);
 
 }   // namespace path_tracker
-
-#endif   // PATH_TRACKER_LOGGING_H_

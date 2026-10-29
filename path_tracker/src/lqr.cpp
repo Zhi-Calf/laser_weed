@@ -8,19 +8,7 @@
 #include <limits>
 
 namespace path_tracker {
-
 namespace {
-
-// 将角度归一化到 [-pi, pi]。
-double NormalizeAngle(double angle) {
-  while (angle > M_PI) {
-    angle -= 2.0 * M_PI;
-  }
-  while (angle < -M_PI) {
-    angle += 2.0 * M_PI;
-  }
-  return angle;
-}
 
 // 对称阿克曼的等效轴距为物理轴距的一半。
 double EffectiveWheelbase(double wheelbase, bool symmetric_ackermann) {
@@ -30,195 +18,175 @@ double EffectiveWheelbase(double wheelbase, bool symmetric_ackermann) {
 
 }   // namespace
 
-// 使用完整配置结构初始化 LQR。
+// 使用完整配置结构初始化 LQR 权重和迭代参数。
+// 输入:
+//   config : LQR 几何、权重、速度和模式切换配置
+// 副作用:
+//   保存归一化配置、打印配置日志并重置控制器状态
 void LQR::Configure(const LQRConfig& config) {
   config_  = config;
-  Q_       = Eigen::Matrix2d::Zero();
-  Q_(0, 0) = std::max(config_.q_lateral, 0.0);
-  Q_(1, 1) = std::max(config_.q_heading, 0.0);
-  R_       = Eigen::MatrixXd::Zero(1, 1);
-  R_(0, 0) = std::max(config_.r_steer, 1e-6);   // 防止矩阵不可逆
+  q_       = Eigen::Matrix2d::Zero();
+  q_(0, 0) = std::max(config_.q_lateral, 0.0);
+  q_(1, 1) = std::max(config_.q_heading, 0.0);
+  r_       = Eigen::MatrixXd::Zero(1, 1);
+  r_(0, 0) = std::max(config_.r_steer, 1e-6);
+  SPDLOG_INFO("LQR 求解配置: dt={:.3f}s eps={:g} max_iteration={}", config_.dt, config_.eps, config_.max_iteration);
+  SPDLOG_INFO("LQR 权重配置: Q_lateral={:.3f} Q_heading={:.3f} R_steer={:.3f}", config_.q_lateral, config_.q_heading, config_.r_steer);
+  SPDLOG_INFO(
+    "LQR 几何限幅: wheelbase={:.3f}m max_steer={:.3f}rad "
+    "pose_at_center={}",
+    config_.wheelbase,
+    config_.max_steer_rad,
+    config_.pose_at_vehicle_center);
+  SPDLOG_INFO("LQR 速度配置: work={:.3f}m/s turn={:.3f}m/s", config_.work_speed, config_.turn_speed);
+  Reset();
 }
 
-// 更新路径
-void LQR::SetTrajectory(const std::vector<TrajectoryPoint>& points) {
-  path_             = points;
-  turn_mode_active_ = false;
-  target_idx_       = 0;
-  goal_             = path_[0];
+// 重置控制器；工作模式滞回由 GlobalPathLocator 持有。
+void LQR::Reset() {}
+
+// 根据定位器工作模式选择单阿克曼或对称阿克曼。
+// 输入:
+//   center_match : 几何中心当前最近点
+// 返回:
+//   true = 对称阿克曼；false = 单阿克曼
+bool LQR::SelectSymmetricAckermann(const PathMatchResult& center_match) {
+  return center_match.work_mode == PathWorkMode::kTurn;
 }
 
-// 将固定车体中心位姿转换为当前转向模型的控制参考点。
-RobotState LQR::ControlStateForMode(bool symmetric_ackermann) const {
-  RobotState control_state = robot_state_;
-  if (!config_.pose_at_vehicle_center || symmetric_ackermann) {
-    return control_state;
+// 求解离散代数黎卡提方程并得到反馈增益。
+// 输入:
+//   a / b : 离散状态矩阵和输入矩阵
+// 输出:
+//   gain : 反馈增益矩阵
+void LQR::CalRicatti(const Eigen::MatrixXd& a, const Eigen::MatrixXd& b, Eigen::MatrixXd& gain) const {
+  const Eigen::MatrixXd a_transpose = a.transpose();
+  const Eigen::MatrixXd b_transpose = b.transpose();
+  Eigen::MatrixXd p                 = q_;
+  int iteration                     = 0;
+  double difference                 = std::numeric_limits<double>::max();
+  while (iteration++ < config_.max_iteration && difference > config_.eps) {
+    const Eigen::MatrixXd next = q_ + a_transpose * p * a - (a_transpose * p * b) * (r_ + b_transpose * p * b).inverse() * b_transpose * p * a;
+    difference                 = std::fabs((next - p).maxCoeff());
+    p                          = next;
   }
-
-  const double half_wheelbase = config_.wheelbase * 0.5;
-  control_state.x -= half_wheelbase * std::cos(control_state.heading);
-  control_state.y -= half_wheelbase * std::sin(control_state.heading);
-  return control_state;
+  gain = (r_ + b_transpose * p * b).inverse() * b_transpose * p * a;
 }
 
-// 更新最近点
-void LQR::UpdateTargetIndex() {
-  const size_t search_start_idx = target_idx_;
-  const size_t end              = std::min(path_.size() - 1, search_start_idx + config_.snap_forward_points);
-  size_t best                   = search_start_idx;
-  double best_d2                = std::numeric_limits<double>::max();
-  for (size_t i = search_start_idx; i <= end; ++i) {
-    const double dx = path_[i].x - robot_state_.x;
-    const double dy = path_[i].y - robot_state_.y;
-    const double d2 = dx * dx + dy * dy;
-    if (d2 < best_d2) {
-      best_d2 = d2;
-      best    = i;
-    }
+// 根据几何中心路径最近点计算 WORK/TURN 目标速度。
+// 输入:
+//   match : 几何中心当前最近点
+// 返回:
+//   TURN 预览和保持区使用低速，其余使用 WORK 速度 (m/s)
+double LQR::ScaleSpeed(const PathMatchResult& match) const {
+  if (match.work_mode == PathWorkMode::kTurn) {
+    return config_.turn_speed;
   }
-  target_idx_ = best;
-  goal_       = path_[target_idx_];
+  return config_.work_speed;
 }
 
-// 当前目标已经是路径最后一个点时，表示路径已结束。
-bool LQR::IsAtPathEnd() const {
-  return target_idx_ + 1 >= path_.size();
-}
-
-// 判断当前目标点前后给定弧长范围内是否存在掉头点。
-bool LQR::HasTurnNear(double before_m, double after_m) const {
-  const double current_s = path_[target_idx_].s;
-  const double lower_s   = current_s - std::max(after_m, 0.0);
-  const double upper_s   = current_s + std::max(before_m, 0.0);
-  for (const TrajectoryPoint& point : path_) {
-    if (point.s < lower_s) {
-      continue;
-    }
-    if (point.s > upper_s) {
-      break;
-    }
-    if (point.waypoint_type == 1) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// 更新里卡提方程
-void LQR::CalRicatti(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B, Eigen::MatrixXd& K) const {
-  Eigen::MatrixXd AT = A.transpose();
-  Eigen::MatrixXd BT = B.transpose();
-  Eigen::MatrixXd P  = Q_;
-  int num_iter       = 0;
-  double diff        = std::numeric_limits<double>::max();
-  while (num_iter++ < config_.max_iteration && diff > config_.eps) {
-    Eigen::MatrixXd P_next = Q_ + AT * P * A - (AT * P * B) * (R_ + BT * P * B).inverse() * BT * P * A;
-    diff                   = std::fabs((P_next - P).maxCoeff());
-    P                      = P_next;
-  }
-  K = (R_ + BT * P * B).inverse() * BT * P * A;
-}
-
-// 计算路径分段对应的基础速度。
-double LQR::ScaleSpeed() const {
-  double v = config_.work_speed;
-  if (HasTurnNear(config_.turn_speed_preview_m, config_.turn_speed_hold_m)) {
-    v = config_.turn_speed;
-  }
-  return v;
-}
-
-// 计算反馈控制量
-LQROutput LQR::ComputeFeedbackControl(double effective_wheelbase) const {
+// 计算指定误差状态和曲率的 LQR 反馈控制量。
+// 输入:
+//   lateral_error       : 车辆相对路径的横向误差 (m)，左正
+//   heading_error       : 车辆航向减路径航向 (rad)
+//   target_kappa        : 目标曲率 (1/m)，左正
+//   commanded_speed_m_s : 本拍输出速度指令 (m/s)
+//   gain_speed_m_s      : 用于 A/B 矩阵的实测车速 (m/s)
+//   effective_wheelbase : 当前模式等效轴距 (m)
+// 返回:
+//   横向、航向误差及各控制分项；前馈使用 atan(L*kappa)
+LQROutput LQR::ComputeFeedbackControl(double lateral_error, double heading_error, double target_kappa, double commanded_speed_m_s, double gain_speed_m_s, double effective_wheelbase) const {
   LQROutput output;
-  output.target_pt = goal_;
+  const double commanded_speed = std::max(commanded_speed_m_s, 0.0);
+  const double gain_speed      = std::max(gain_speed_m_s, 0.0);
+  const double speed_period    = gain_speed * config_.dt;
+  Eigen::MatrixXd a            = Eigen::MatrixXd::Zero(2, 2);
+  a << 1.0, speed_period, 0.0, 1.0;
 
-  TrajectoryPoint target_pt   = path_[target_idx_];
-  const double target_heading = target_pt.heading;
-  const double target_kappa   = target_pt.kappa;
+  // 连续模型为零阶保持时，转角在本周期内作用于航向，
+  // 并通过加速度积分产生 v^2*dt^2/(2L) 的直接横向位移。
+  Eigen::MatrixXd b             = Eigen::MatrixXd::Zero(2, 1);
+  const double lateral_response = speed_period * speed_period / (2.0 * effective_wheelbase);
+  b << lateral_response, speed_period / effective_wheelbase;
 
-  // 在目标点坐标系中计算误差。符号约定为左正，与 CAN 协议的转向角一致，
-  // 因此后续无需再取反。
-  const double dx            = robot_state_.x - target_pt.x;
-  const double dy            = robot_state_.y - target_pt.y;
-  const double heading_error = NormalizeAngle(robot_state_.heading - target_heading);
-  const double lateral_error = dy * std::cos(target_heading) - dx * std::sin(target_heading);
-
-  // 目标速度只由路径分段和全局速度限幅决定。
-  const double v_cmd = ScaleSpeed();
-
-  // 在指令速度处线性化运动学自行车模型的误差动力学。
-  // 使用指令速度而非实测速度，可在车辆短暂停止时保持 B_d 良态。
-  const double v = v_cmd;
-  const double L = effective_wheelbase;
-
-  Eigen::MatrixXd A = Eigen::MatrixXd::Zero(2, 2);
-  A << 1.0, v * config_.dt, 0.0, 1.0;
-  Eigen::MatrixXd B = Eigen::MatrixXd::Zero(2, 1);
-  B << 0.0, (v * config_.dt) / L;
-
-  Eigen::MatrixXd K = Eigen::MatrixXd::Zero(1, 2);
-  CalRicatti(A, B, K);
-
-  Eigen::VectorXd X(2);
-  X << lateral_error, heading_error;
-
-  // 计算反馈转角。此处 U = -K*x 已经是转角（弧度），因为阿克曼模型的控制输入是 delta，而不是角速度 omega。
-  const Eigen::VectorXd U = -K * X;
-  const double steer_fb   = U(0);
-
-  // 定曲率稳态前馈使用精确的自行车模型关系。
-  const double steer_ff = std::atan(L * target_kappa);
-
-  double steer = steer_fb + steer_ff;
-
-  // 物理限制：协议允许 ±90 度转角，速度范围为 0～1.4 米/秒。
-  steer = std::clamp(steer, -config_.max_steer_rad, config_.max_steer_rad);
-
-  output.target_pt           = target_pt;
-  output.vel_cmd.linear_v    = v_cmd;
-  output.vel_cmd.steer_angle = steer;
-  output.lateral_error       = lateral_error;
-  output.heading_error       = heading_error;
-  output.steer_ff            = steer_ff;
-  output.steer_fb            = steer_fb;
+  Eigen::MatrixXd gain = Eigen::MatrixXd::Zero(1, 2);
+  CalRicatti(a, b, gain);
+  Eigen::VectorXd error(2);
+  error << lateral_error, heading_error;
+  const Eigen::VectorXd control = -gain * error;
+  const double steer_fb         = control(0);
+  const double steer_ff         = std::atan(effective_wheelbase * target_kappa);
+  const double steer            = std::clamp(steer_fb + steer_ff, -config_.max_steer_rad, config_.max_steer_rad);
+  output.vel_cmd.linear_v       = commanded_speed;
+  output.vel_cmd.steer_angle    = steer;
+  output.lateral_error          = lateral_error;
+  output.heading_error          = heading_error;
+  output.steer_ff               = steer_ff;
+  output.steer_fb               = steer_fb;
+  output.effective_wheelbase    = effective_wheelbase;
+  output.success                = true;
   return output;
 }
 
-// 根据路径段类型和滞回区选择当前转向模式。
-bool LQR::SelectSymmetricAckermann() {
-  const bool previous_mode = turn_mode_active_;
-  if (!turn_mode_active_ && HasTurnNear(config_.turn_mode_enter_m, 0.0)) {
-    turn_mode_active_ = true;
-  } else if (turn_mode_active_ && !HasTurnNear(config_.turn_mode_enter_m, config_.turn_mode_exit_m)) {
-    turn_mode_active_ = false;
+// 使用统一定位结果确定模式、速度和目标点并计算 LQR。
+// 输入:
+//   robot_state         : 车体中心 ENU 位姿
+//   match               : 最近点、工作模式、控制状态、目标点和终点信息
+// 返回:
+//   控制量；失败时 success 为 false
+LQROutput LQR::ComputeCommand(const RobotState& robot_state, const PathMatchResult& match) {
+  if (!match.success || match.at_path_end) {
+    return LQROutput{};
+  }
+  if (!std::isfinite(robot_state.linear_v)) {
+    return LQROutput{};
   }
 
-  if (turn_mode_active_ != previous_mode) {
-    const double effective_wheelbase = EffectiveWheelbase(config_.wheelbase, turn_mode_active_);
-    SPDLOG_INFO("转向模式切换为 {}（{}），等效轴距 {:.3f} m", turn_mode_active_ ? 1 : 0, turn_mode_active_ ? "对称阿克曼" : "单阿克曼", effective_wheelbase);
+  const bool symmetric_ackermann   = SelectSymmetricAckermann(match);
+  const RobotState& control_state  = match.control_state;
+  const double effective_wheelbase = EffectiveWheelbase(config_.wheelbase, symmetric_ackermann);
+  const TrajectoryPoint& target    = match.target_point;
+  const LQRInputResult input       = input_calculator_.CalculatePath(control_state, target);
+  if (!input.success) {
+    return LQROutput{};
   }
-  return turn_mode_active_;
+  const double speed      = ScaleSpeed(match);
+  const double gain_speed = std::max(robot_state.linear_v, 0.0);
+  LQROutput output        = ComputeFeedbackControl(input.lateral_error, input.heading_error, input.target_kappa, speed, gain_speed, effective_wheelbase);
+  output.target_pt        = target;
+  output.steer_mode       = symmetric_ackermann ? 1 : 0;
+  output.target_index     = match.point_index;
+  output.distance_to_goal = std::hypot(robot_state.x - match.nearest_point.x, robot_state.y - match.nearest_point.y);
+  return output;
 }
 
-// 完成一次路径推进、转向模式选择和控制量计算。
-bool LQR::ComputeCommand(const LQRInput& input, LQROutput& output) {
-  output       = LQROutput{};
-  robot_state_ = input.robot_state;
-  UpdateTargetIndex();
-  if (IsAtPathEnd()) {
-    return false;
+// 跟踪视觉中心线的解析直线。
+// 输入:
+//   robot_state          : 当前车体位姿，仅用于接口一致性
+//   reference            : 车体参考点处的中心线截距和航向
+//   commanded_speed_m_s  : 沿用全局路径分段的速度 (m/s)
+// 返回:
+//   单阿克曼控制量；失败时 success 为 false
+LQROutput LQR::ComputeLineCommand(const RobotState& robot_state, const LineReference& reference, double commanded_speed_m_s) {
+  if (!std::isfinite(commanded_speed_m_s) || commanded_speed_m_s < 0.0) {
+    return LQROutput{};
+  }
+  if (!std::isfinite(robot_state.linear_v)) {
+    return LQROutput{};
   }
 
-  const bool symmetric_ackermann   = SelectSymmetricAckermann();
-  robot_state_                     = ControlStateForMode(symmetric_ackermann);
-  const double effective_wheelbase = EffectiveWheelbase(config_.wheelbase, symmetric_ackermann);
-  output                           = ComputeFeedbackControl(effective_wheelbase);
-  output.steer_mode                = symmetric_ackermann ? 1 : 0;
-  output.effective_wheelbase       = effective_wheelbase;
-  output.target_index              = target_idx_;
-  output.distance_to_goal          = std::hypot(input.robot_state.x - goal_.x, input.robot_state.y - goal_.y);
-  return true;
+  const LQRInputResult input = input_calculator_.CalculateLine(reference);
+  if (!input.success) {
+    return LQROutput{};
+  }
+  const double effective_wheelbase = EffectiveWheelbase(config_.wheelbase, false);
+  TrajectoryPoint target;
+  target.kappa            = input.target_kappa;
+  const double gain_speed = std::max(robot_state.linear_v, 0.0);
+  LQROutput output        = ComputeFeedbackControl(input.lateral_error, input.heading_error, input.target_kappa, commanded_speed_m_s, gain_speed, effective_wheelbase);
+  output.target_pt        = target;
+  output.steer_mode       = 0;
+  return output;
 }
 
 }   // namespace path_tracker

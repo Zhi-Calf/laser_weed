@@ -11,11 +11,7 @@
 
 namespace sim_vehicle {
 
-// ============================================================
-// 仿真实例编排状态机。
-// 等待全局路径出现后发布一次 UNMANNED, 让 path_tracker 接管车辆;
-// 路径超时只进入失败状态, 不负责关闭仿真进程。
-// ============================================================
+// 仿真编排状态机：路径就绪后切换 UNMANNED，超时后进入失败状态。
 class SimOrchestratorNode : public rclcpp::Node {
 public:
   explicit SimOrchestratorNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
@@ -29,9 +25,13 @@ private:
   };
 
   void Initialize();
+  void LoadLogParameters();
+  void SetupLogging();
   void LoadParameters();
   void SetupInterfaces();
   void SetupTimers();
+
+private:
   void OnPath(const weeder_msgs::msg::Path::SharedPtr message);
   void Tick();
   void HandleWaitPath(double elapsed_s);
@@ -40,13 +40,25 @@ private:
   void Fail(const std::string& reason, const std::string& hint);
   static const char* PhaseName(Phase phase);
 
-  double timeout_path_s_{30.0};                                        // 等待路径超时时间
-  Phase phase_{Phase::kWaitPath};                                      // 当前编排阶段
-  rclcpp::Time phase_start_;                                           // 当前阶段开始时刻
-  std::size_t got_path_points_{0};                                     // 最近路径的有效点数
+private:
+  std::string log_dir_     = "/opt/agri/logs";   // 日志目录 (支持 ~ 与 $VAR 展开)
+  std::string log_level_   = "info";             // 日志级别
+  int log_file_size_mb_    = 50;                 // 单个日志文件大小上限 (MB)
+  int log_file_count_      = 10;                 // 滚动保留的日志文件数量
+  bool log_enable_console_ = true;               // 是否同时输出到终端
+
+private:
+  double timeout_path_s_       = 30.0;                               // 等待路径超时时间 (s)
+  Phase phase_                 = Phase::kWaitPath;                   // 当前编排阶段
+  rclcpp::Time phase_start_    = rclcpp::Time(0, 0, RCL_ROS_TIME);   // 当前阶段开始时刻
+  std::size_t got_path_points_ = 0;                                  // 最近路径的有效点数
+
+private:
   rclcpp::Subscription<weeder_msgs::msg::Path>::SharedPtr path_sub_;   // 全局路径订阅
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr unmanned_pub_;     // 无人模式切换发布
-  rclcpp::TimerBase::SharedPtr timer_;                                 // 编排状态机定时器
+
+private:
+  rclcpp::TimerBase::SharedPtr timer_ = nullptr;   // 编排状态机定时器
 };
 
 }   // namespace sim_vehicle

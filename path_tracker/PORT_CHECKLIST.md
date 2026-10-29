@@ -1,8 +1,8 @@
 # 移植配置清单（PORT_CHECKLIST）
 
 > **历史说明：** 当前 CAN 接口已统一为 `/chassis/cmd`
-> （`weeder_msgs/ChassisCmd`，同时携带速度与转角）。本文档中
-> `/cmd_vel` + `/weeder/steer_cmd` 的双话题方案已废弃，仅保留作移植记录。
+> （`weeder_msgs/ChassisCmd`，同时携带速度与转角）。不再需要
+> `/cmd_vel` + `/weeder/steer_cmd` 的双话题方案或历史底盘替换补丁。
 
 整包移植**不改源码，只改配置**。下面每一项都是除草机与履带拖拉机不一样、必须动的地方。
 按包分节，改完打勾。**带 🔴 的是不改就会出错的，🟡 是按硬件实际填的，🟢 是可选优化。**
@@ -98,41 +98,32 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 | 参数 | 默认值 | 除草机要改成 | 级别 |
 |---|---|---|---|
 | `wheelbase` | `1.2` | **除草机真实前后轴距(m)** | 🔴 |
-| `steer_mode` | `0` | 无有效 `waypoint_types` 时的回退模式 | 🔴 |
+| `pose_at_vehicle_center` | `true` | GNSS 位姿参考点是否为车体中心；当前驱动应为 `true` | 🔴 |
+| `turn_mode_enter_m` / `turn_mode_exit_m` | `0.6/0.6` | `GlobalPathLocatorConfig` 中进入/保持双阿克曼的弧长窗口 | 🟡 |
+| `goal_reached_distance_m` | `1.0` | 当前位姿距路径终点的到达阈值 (m) | 🟡 |
+| `max_steer_rate_deg_s` | `90.0` | 转向执行器允许的等效转角变化率 | 🔴 |
+| `row_vision_enabled` | `false` | 稻行视觉中心线统一 LQR 总开关 | 🟡 |
+| `row_vision_resume_frames` | `3` | 视觉恢复所需连续有效帧数 | 🟡 |
 | `work_speed_m_s` / `turn_speed_m_s` | `0.6/0.3` | 按路径段固定基础速度 | 🟡 |
-| `lqr_target_v` | `0.6` | 无有效分段类型时的回退速度 | 🟡 |
 | `log_dir` | `/opt/agri/logs` | 统一 spdlog 滚动日志目录 | 🟡 |
 | `lqr_Q_lateral/heading`、`lqr_R_steer` | 50/25/25 | **不能照抄履带调参值**：R 的语义从角速度代价变成了转向角代价，量纲不同，需重标 | 🟡 |
 
 `wheelbase` 填错会直接导致横向跟踪振荡或收敛过慢，是最关键的参数。
 `waypoint_types` 有效时节点自动切换模式，并在 TURN 模式下使用 `L/2`
-作为等效轴距；模式 2/3 不支持。
+作为等效轴距。全局路径用 `turn_mode_enter_m/exit_m` 决定工作模式；
+单阿克曼在中心点前后各 `L` 范围内搜索后轴目标点，双阿克曼直接使用中心最近点。
+全局路径和视觉中心线共用同一 LQR；模式 2/3 不支持。
 
 ---
 
-## 4. CAN 桥（weeder_base/chassis_node.cpp）—— 唯一要改源码的地方
+## 4. CAN 桥（weeder_base/chassis_node.cpp）
 
-这个包是你除草机自己的（不是 MegaTrak 的）。`patch/chassis_node.cpp` 是**完整替换文件**
-（基于你 2026-10-15 提供的版本改写，9 项已有修复全部保留），直接覆盖：
+底盘已统一使用 `/chassis/cmd`（`weeder_msgs/ChassisCmd`）接收速度和转角，
+不再需要 `/weeder/steer_cmd` 或 `/cmd_vel` 的历史兼容补丁。
 
-```bash
-cp ~/path_tracker/patch/chassis_node.cpp \
-   ~/ros2_ws/src/laser_weed_ros2_node/weeder_base/src/chassis_node.cpp
-cd ~/ros2_ws
-colcon build --packages-select weeder_base --symlink-install
-```
-
-改动内容、新增参数、`steer_mode` 一致性要求、台架验证方法见 `patch/PATCH_NOTES.md`。
-不改的话 path_tracker 发的转向指令到不了底盘。
-
-一句话：新增 `/weeder/steer_cmd`（Float64，弧度，左正，符号与协议同向不取反）作为权威转向来源；
-原 `/cmd_vel` 的 `angular.z` 映射降级为可选回退（供手动遥控），自动作业时不生效。
-
-⚠️ **`steer_mode` 必须与 path_tracker 的同名参数填同一个值**。原代码没设这个字段（恒为 0），
-若控制器按双阿克曼（等效轴距 L/2）算转角而底盘按单阿克曼执行，转角会差一倍。
-
-⚠️ **实车自动作业建议关掉回退**：`-p steer_fallback_to_cmd_vel:=false`，
-只认 `/weeder/steer_cmd`，超时即回正，避免量纲不严谨的 angular.z 映射影响转向。
+控制指令中的 `speed_m_s`、`steer_angle_rad`、`steer_mode` 和使能字段
+必须保持同一控制周期一致。`steer_mode` 必须与 `path_tracker` 当前选择的模式一致，
+否则控制器角度和底盘执行模型会不匹配。
 
 ---
 

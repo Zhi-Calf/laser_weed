@@ -27,6 +27,11 @@ SerialPort::~SerialPort() {
 }
 
 // 打开串口并配置为 8N1 原始模式。
+// 输入:
+//   device    : 串口设备路径
+//   baud_rate : 标准波特率
+// 返回:
+//   true = 已成功打开并应用终端参数
 bool SerialPort::open(const std::string& device, int baud_rate) {
   const std::optional<speed_t> speed = BaudToSpeed(baud_rate);
   if (!speed.has_value()) {
@@ -101,6 +106,8 @@ bool SerialPort::open(const std::string& device, int baud_rate) {
 }
 
 // 关闭串口并清空当前行缓冲。
+// 副作用:
+//   将文件描述符置为无效；重复调用安全。
 void SerialPort::close() {
   if (fd_ >= 0) {
     const int fd = fd_;
@@ -114,11 +121,20 @@ void SerialPort::close() {
 }
 
 // 返回串口是否已打开。
+// 返回:
+//   true = 文件描述符有效
 bool SerialPort::is_open() const {
   return fd_ >= 0;
 }
 
-// 写入原始字节，缓冲区满时最多等待 1 秒。
+// 写入完整原始字节流，缓冲区满时最多等待 1 秒。
+// 输入:
+//   data : 待写数据
+//   size : 字节数
+// 返回:
+//   true = 全部写出；false = 参数无效、超时或通道失效
+// 失败:
+//   写失败会关闭串口。
 bool SerialPort::write_raw(const char* data, std::size_t size) {
   if (fd_ < 0) {
     SPDLOG_ERROR("串口写入失败: 串口未打开");
@@ -179,7 +195,11 @@ bool SerialPort::write_raw(const char* data, std::size_t size) {
   return true;
 }
 
-// 非阻塞读取完整行，返回本次处理的行数。
+// 非阻塞读取当前可用数据，并逐行调用回调。
+// 输入:
+//   line_callback : 每读到一条非空文本行调用一次
+// 返回:
+//   本次处理的非空行数；无数据或串口关闭时返回 0。
 int SerialPort::read_lines(const std::function<void(const std::string&)>& line_callback) {
   if (fd_ < 0) {
     return 0;

@@ -30,7 +30,10 @@ set(DEPS
 # 该结构与 MegaTrak global_path_planner 的弓字形算法库一致。
 add_library(${PROJECT_NAME}_lib SHARED
   src/discrete_points_math.cpp
+  src/global_path_locator.cpp
+  src/lqr_input.cpp
   src/lqr.cpp
+  src/speed_limiter.cpp
 )
 target_link_libraries(${PROJECT_NAME}_lib
   Eigen3::Eigen
@@ -63,9 +66,19 @@ if(BUILD_TESTING)
   ament_add_gtest(test_lqr_kinematics test/test_lqr_kinematics.cpp)
   target_link_libraries(test_lqr_kinematics ${PROJECT_NAME}_lib)
 
+  ament_add_gtest(test_lqr_input test/test_lqr_input.cpp)
+  target_link_libraries(test_lqr_input ${PROJECT_NAME}_lib)
+
+  ament_add_gtest(test_speed_limiter test/test_speed_limiter.cpp)
+  target_link_libraries(test_speed_limiter ${PROJECT_NAME}_lib)
+
   ament_add_gtest(
     test_discrete_points_math test/test_discrete_points_math.cpp)
   target_link_libraries(test_discrete_points_math ${PROJECT_NAME}_lib)
+
+  ament_add_gtest(
+    test_global_path_locator test/test_global_path_locator.cpp)
+  target_link_libraries(test_global_path_locator ${PROJECT_NAME}_lib)
 
   ament_add_gtest_executable(test_path_tracker_obstacle_integration
     test/test_path_tracker_obstacle_integration.cpp

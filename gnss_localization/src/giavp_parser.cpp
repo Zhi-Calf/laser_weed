@@ -12,6 +12,10 @@ constexpr size_t kGiavpFieldCount = 24;   // 包含语句头在内的字段数
 }   // namespace
 
 // 校验 NMEA 校验和，并要求语句在校验值后立即结束。
+// 输入:
+//   sentence : 含 '$' 和 '*checksum' 的完整语句
+// 返回:
+//   true = 校验和正确且没有尾随字符
 bool GiavpParser::verifyChecksum(const std::string& sentence) {
   if (sentence.empty() || sentence[0] != '$')
     return false;
@@ -52,6 +56,12 @@ std::vector<std::string> GiavpParser::splitFields(const std::string& body) {
 }
 
 // 严格解析有限浮点数，拒绝空字段、尾随垃圾和溢出值。
+// 输入:
+//   text : 待解析字段
+// 输出:
+//   value : 解析结果；失败时不修改
+// 返回:
+//   true = 全文合法且结果有限
 bool GiavpParser::parseDouble(const std::string& text, double* value) {
   if (text.empty() || value == nullptr)
     return false;
@@ -67,6 +77,12 @@ bool GiavpParser::parseDouble(const std::string& text, double* value) {
 }
 
 // 严格解析整数，拒绝空字段和尾随垃圾。
+// 输入:
+//   text : 待解析字段
+// 输出:
+//   value : 解析结果；失败时不修改
+// 返回:
+//   true = 全文均为合法整数
 bool GiavpParser::parseInt(const std::string& text, int* value) {
   if (text.empty() || value == nullptr)
     return false;
@@ -81,6 +97,12 @@ bool GiavpParser::parseInt(const std::string& text, int* value) {
 }
 
 // 解析完整 GIAVP 语句，任一字段损坏时整句判无效。
+// 输入:
+//   line : 不含行结束符的完整语句
+// 返回:
+//   true = 校验和及全部必需字段有效
+// 输出:
+//   data_ : 仅在成功时更新
 bool GiavpParser::parse(const std::string& line) {
   if (line.size() < 7 || line[0] != '$')
     return false;
