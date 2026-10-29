@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -152,6 +153,14 @@ int main(int argc, char** argv) {
             std::cerr << "error: failed to write " << path << '\n';
             return EXIT_FAILURE;
         }
+        auto metadata_path = path;
+        metadata_path.replace_extension(".json");
+        std::ofstream metadata(metadata_path);
+        metadata << "{\"capture_monotonic_ns\":" << frame.value().capture_time_ns
+                 << ",\"clock\":\"CLOCK_MONOTONIC\",\"source\":\"v4l2_exposure_start\","
+                 << "\"timestamp_valid\":" << (frame.value().capture_time_ns > 0 ? "true" : "false") << "}\n";
+        metadata.close();
+        if (!metadata) { std::cerr << "error: failed to save capture timestamp\n"; return EXIT_FAILURE; }
         const auto quality = measureQuality(frame.value().image);
         std::cout << "saved=" << saved << '/' << requested << " path=" << path
                   << std::fixed << std::setprecision(1)

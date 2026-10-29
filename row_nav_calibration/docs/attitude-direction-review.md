@@ -51,8 +51,9 @@ python3 install/row_nav_calibration/bin/row-nav-attitude-bridge \
 ## 验证边界
 
 本次新增部分在本地通过 Python 和浏览器模拟测试。真实 ROS 订阅及现场倾斜动作尚未验证。
-本步骤没有实现标定照片与姿态的精确同步、相机六自由度求解或动态 BEV 参数发布；
-这些仍是后续标定链路工作。保存方向核查不会修改运行端 vehicle_axes_confirmed 等开关。
+本步骤只保存方向确认，不修改运行端 vehicle_axes_confirmed 等开关。
+照片姿态同步、相机外参求解和动态参数发布已接到单独的动态 BEV 标定流程，
+见 [动态 BEV 标定说明](dynamic-bev-calibration.md)；仍需通过该流程才能发布动态运行配置。
 
 本地验证：54 项 Python 测试、2 项页面重试测试通过；Chrome 实际按钮流程通过，
 包括两方向检查及模拟保存拦截。页面截图使用模拟输入，不代表实机验收。

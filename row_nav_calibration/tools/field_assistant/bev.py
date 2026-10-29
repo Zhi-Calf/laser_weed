@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from .sessions import SessionError, SessionStore
 from .bev_worker_io import read_json, write_json
+from .dynamic_sync import checked_installation, capture_sync
 
 
 class BevService:
@@ -55,17 +56,39 @@ class BevService:
         intrinsic = root / ("cmd108-intrinsics.yaml" if choice == "session" else "candidate-intrinsics.yaml")
         if choice not in {"session", "configured"} or not intrinsic.is_file():
             raise SessionError("所选内参不存在，请先完成内参标定或联系部署人员配置")
+        dynamic = payload.get("dynamic_enabled") is True
+        height = 0.
+        if dynamic:
+            checked_installation(self.config)
+            if payload.get("dynamic_reference_confirmed") is not True:
+                raise SessionError("请确认动态输出以后轮轴实体中心为原点，地面测量仍从其垂直投影开始")
+            try:
+                height = float(payload["origin_height_m"])
+                if not math.isfinite(height) or not .05 <= height <= 3:
+                    raise ValueError()
+            except (ValueError, TypeError, KeyError):
+                raise SessionError("请填写后轮轴实体中心离地垂直高度（0.05–3 m），不是相机高度")
         # Capture into the separate BEV slot; it never touches intrinsic photos.
         self.sessions.capture({"group": "bev", "slot": 0})
         raw = root / "captures" / "bev" / "position-00.jpg"
+        sync = capture_sync(self.config, raw, height) if dynamic else None
         with tempfile.TemporaryDirectory(dir=root) as tmp:
             staging = Path(tmp) / "bev"
             staging.mkdir()
             shutil.copy2(raw, staging / "raw.jpg")
             shutil.copy2(intrinsic, staging / "intrinsics.yaml")
             self.worker("prepare", staging, staging / "raw.jpg", staging / "intrinsics.yaml", self.config.mode)
+            if sync:
+                snapshot = read_json(staging / "snapshot.json")
+                sync["image_id"] = snapshot["image_id"]
+                write_json(staging / "dynamic-sync.json", sync)
+                snapshot["dynamic_enabled"] = True
+                snapshot["reference"] = "rear_axle_center"
+                write_json(staging / "snapshot.json", snapshot)
             write_json(staging / "reference.json", {"reference": "rear_axle_ground", "axes": "x_forward_y_left",
-                "reference_confirmed": True, "intrinsic_confirmed": True, "intrinsic_source": choice})
+                "reference_confirmed": True, "intrinsic_confirmed": True, "intrinsic_source": choice,
+                "dynamic_enabled": dynamic, "origin_height_m": height,
+                "output_reference": "rear_axle_center" if dynamic else "rear_axle_ground"})
             destination = root / "bev"
             if destination.exists():
                 shutil.rmtree(destination)
@@ -148,6 +171,22 @@ class BevService:
             raise SessionError("参数文件缺失或已改变，请重新标定")
         if hashlib.sha256(bev.read_bytes()).hexdigest() != summary.get("bev_sha256"):
             raise SessionError("BEV 参数已改变，请重新计算并检查")
+        dynamic = summary.get("dynamic")
+        sync = None
+        if snapshot.get("dynamic_enabled"):
+            if not dynamic or not dynamic.get("validated"):
+                raise SessionError("动态外参未通过检查")
+            sync = read_json(root / "bev/dynamic-sync.json")
+            review, review_hash = checked_installation(self.config)
+            if not sync or sync.get("direction_review_sha256") != review_hash or sync.get("installation") != review["identity"]:
+                raise SessionError("安装方向确认已经变化，请重新拍照标定")
+            evidence = summary.get("dynamic_evidence_sha256", {})
+            if set(evidence) != {"dynamic-sync.json", "points.json", "snapshot.json", "raw.jpg"}:
+                raise SessionError("动态标定证据不完整，请重新标定")
+            for name, digest in evidence.items():
+                path = root/"bev"/name
+                if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                    raise SessionError("动态标定证据已变化，请重新标定")
         output = self.config.effective_runtime_calibration_root
         release = f"{root.name}-{uuid.uuid4().hex[:12]}"
         versions = output / "versions"
@@ -160,24 +199,35 @@ class BevService:
                 stage.mkdir()
                 shutil.copy2(intrinsic, stage / "intrinsics.yaml")
                 shutil.copy2(bev, stage / "bev.yaml")
+                if sync:
+                    write_json(stage / "dynamic-sync.json", sync)
+                    write_json(stage / "dynamic-extrinsics.json", dynamic)
                 self.worker("accept", stage)
                 manifest = {"release_id": release, "session_id": root.name,
                     "created_at": datetime.now(timezone.utc).isoformat(), "reviewer": metadata.get("operator"),
-                    "reference": "rear_axle_ground", "axes": "x_forward_y_left", "image_id": snapshot["image_id"],
+                    "reference": snapshot.get("reference", "rear_axle_ground"), "axes": "x_forward_y_left", "image_id": snapshot["image_id"],
+                    "dynamic_enabled": bool(sync),
                     "intrinsic_path": str((target / "intrinsics.yaml").absolute()),
                     "bev_path": str((target / "bev.yaml").absolute()),
                     "sha256": {name: hashlib.sha256((stage / name).read_bytes()).hexdigest()
-                               for name in ("intrinsics.yaml", "bev.yaml")}}
+                               for name in (("intrinsics.yaml", "bev.yaml", "dynamic-sync.json", "dynamic-extrinsics.json") if sync else ("intrinsics.yaml", "bev.yaml"))}}
                 write_json(stage / "manifest.json", manifest)
                 # Pin both paths to this immutable version, even if current changes at startup.
                 write_json(stage / "sdk-calibration.json", {key: manifest[key]
                     for key in ("intrinsic_path", "bev_path")})
+                overlay = {"intrinsic_path": manifest["intrinsic_path"], "bev_path": manifest["bev_path"],
+                    "calibration_id": release, "dynamic_bev.enabled": bool(sync), "attitude_gate.enabled": bool(sync)}
+                if sync:
+                    overlay.update({"vehicle_frame": "rear_axle_center", "attitude_gate.reference_measured": True, "attitude_gate.vehicle_axes_confirmed": True,
+                        "attitude_gate.reference_roll_rad": sync["reference_roll_rad"],
+                        "attitude_gate.reference_pitch_rad": sync["reference_pitch_rad"],
+                        "attitude_gate.pose_topic": sync["installation"]["topic"],
+                        "attitude_gate.pose_frame": sync["installation"]["frame_id"],
+                        "attitude_gate.max_delta_rad": 0.035, "attitude_gate.max_sample_age_ms": 50.0})
                 import json
                 (stage / "observer.calibration.yaml").write_text(
                     "crop_row_perception:\n  ros__parameters:\n"
-                    + "".join(f"    {key}: {json.dumps(value)}\n" for key, value in {
-                        "intrinsic_path": manifest["intrinsic_path"], "bev_path": manifest["bev_path"],
-                        "calibration_id": release}.items()), encoding="utf-8")
+                    + "".join(f"    {key}: {json.dumps(value)}\n" for key, value in overlay.items()), encoding="utf-8")
                 stage.rename(target)
             pointer.symlink_to(Path("versions") / release, target_is_directory=True)
             os.replace(pointer, output / "current")

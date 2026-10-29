@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import time
 import uuid
+from collections import deque
 
 
 def main():
@@ -22,28 +23,32 @@ def main():
     rclpy.init()
     node = rclpy.create_node('row_nav_calibration_attitude_bridge')
     bridge_id = str(uuid.uuid4())
+    history = deque(maxlen=512)
     previous = 0
     clock_fault = False
     args.output.parent.mkdir(parents=True, exist_ok=True)
     def receive(msg):
         nonlocal previous, clock_fault
+        received = time.monotonic_ns()
         now = node.get_clock().now().nanoseconds
         stamp = msg.header.stamp.sec * 1000000000 + msg.header.stamp.nanosec
         if stamp <= previous or stamp > now:
             clock_fault = True
         previous = stamp
         age = (now - stamp) / 1e6
-        valid = bool(msg.valid and not clock_fault and stamp > 0 and
+        valid = bool(msg.valid and not node.get_parameter("use_sim_time").value and not clock_fault and stamp > 0 and
                      0 <= msg.header.stamp.nanosec < 1000000000 and
                      msg.header.frame_id == args.frame and 0 <= age <= 200 and
                      all(math.isfinite(x) for x in (msg.roll, msg.pitch, msg.speed_m_s)))
         sample = dict(installation_id=args.installation_id, topic=args.topic,
             frame_id=msg.header.frame_id, bridge_id=bridge_id, stamp_ns=stamp,
-            received_monotonic_ns=time.monotonic_ns(), source_age_ms=age,
+            received_monotonic_ns=received, sample_monotonic_ns=received-(now-stamp), source_age_ms=age,
             publishers=node.count_publishers(args.topic), valid=valid,
             roll_rad=msg.roll if math.isfinite(msg.roll) else 0,
             pitch_rad=msg.pitch if math.isfinite(msg.pitch) else 0,
             speed_m_s=msg.speed_m_s if math.isfinite(msg.speed_m_s) else 0)
+        history.append(dict(sample))
+        sample["history"] = list(history)
         tmp = args.output.with_name(args.output.name + '.' + bridge_id + '.tmp')
         tmp.write_text(json.dumps(sample))
         os.replace(tmp, args.output)

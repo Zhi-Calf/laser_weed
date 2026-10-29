@@ -361,6 +361,13 @@ class SessionStore:
             images = self._images_in(scratch)
             if len(images) != 1:
                 raise SessionError("拍照程序未生成一张有效照片")
+            capture_metadata = images[0].with_suffix(".json")
+            target_metadata = target.with_suffix(".json")
+            target_metadata.unlink(missing_ok=True)
+            if capture_metadata.is_file() and self.config.mode == "hardware":
+                evidence = json.loads(capture_metadata.read_text())
+                evidence["raw_sha256"] = hashlib.sha256(images[0].read_bytes()).hexdigest()
+                target_metadata.write_text(json.dumps(evidence))
             images[0].replace(target)
         # Re-taking a position replaces only that position; old exports are stale.
         (root / "field-session-result.zip").unlink(missing_ok=True)

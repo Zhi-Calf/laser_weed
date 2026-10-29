@@ -24,6 +24,9 @@ function renderBev(session) {
     $("#bev-reference-confirmed").checked = !!bevData?.reference?.reference_confirmed;
     $("#bev-intrinsic-confirmed").checked = !!bevData?.reference?.intrinsic_confirmed;
     $("#bev-intrinsic").value = bevData?.reference?.intrinsic_source || "configured";
+    $("#bev-dynamic").checked = !!bevData?.reference?.dynamic_enabled;
+    $("#bev-origin-height").value = bevData?.reference?.origin_height_m || "";
+    $("#bev-dynamic-reference").checked = !!bevData?.reference?.dynamic_enabled;
     bevPoints = bevData?.points?.points || Array.from({length: 12}, (_, i) => blankPoint(i < 8 ? "fit" : "check"));
     if (bevData) {
       bevPhoto.src = bevUrl("snapshot.jpg");
@@ -44,6 +47,8 @@ function bevResult() {
   $("#bev-result").hidden = !summary;
   if (!summary) return;
   $("#bev-metrics").textContent = `${bevData.snapshot.mode === "mock" ? "模拟流程；" : ""}标定内点 ${summary.fit_inliers}/${summary.fit.count}；独立检查 ${summary.check.count} 点，RMSE ${(summary.check.rmse_m * 100).toFixed(2)} cm，最大误差 ${(summary.check.max_m * 100).toFixed(2)} cm。阈值：RMSE ≤ 5 cm，最大 ≤ 10 cm。候选参数尚未启用。`;
+  const d = summary.dynamic;
+  $("#bev-dynamic-result").textContent = d ? `动态外参已计算（姿态时间差 ${d.sync_age_ms.toFixed(1)} ms）：相机离地 ${d.camera_height_ground_m.toFixed(3)} m；相对后轴中心位置 [${d.camera_position_vehicle_m.map(v=>v.toFixed(3)).join(", ")}] m；光轴下俯 ${d.camera_down_angle_deg.toFixed(2)}°、向左偏 ${d.camera_left_angle_deg.toFixed(2)}°；重投影 RMSE ${d.reprojection_rmse_px.toFixed(2)} px；动态独立检查 ${(d.check_rmse_m*100).toFixed(2)} cm。输出原点：实体后轴中心。候选结果仍需复核。` : "本次为静态 BEV，不会启用姿态补偿。";
   $("#bev-errors").replaceChildren(...summary.point_errors_m.map((error, i) => {
     const item = document.createElement("li");
     item.textContent = `${bevPoints[i]?.role === "check" ? "独立检查" : "标定"}点 ${(error * 100).toFixed(2)} cm`;
@@ -160,7 +165,9 @@ async function bevAction(action, payload) {
 $("#bev-prepare").addEventListener("click", () => {
   if (bevData && !window.confirm("重新拍摄将清空本会话已有地面点和 BEV 结果。确定继续吗？")) return;
   bevAction("prepare", {reference_confirmed: $("#bev-reference-confirmed").checked,
-    intrinsic_confirmed: $("#bev-intrinsic-confirmed").checked, intrinsic_source: $("#bev-intrinsic").value});
+    intrinsic_confirmed: $("#bev-intrinsic-confirmed").checked, intrinsic_source: $("#bev-intrinsic").value,
+    dynamic_enabled: $("#bev-dynamic").checked, origin_height_m: $("#bev-origin-height").value,
+    dynamic_reference_confirmed: $("#bev-dynamic-reference").checked});
 });
 for (const action of ["save", "run"]) $("#bev-" + action).addEventListener("click", () => {
   if (!bevData) return;

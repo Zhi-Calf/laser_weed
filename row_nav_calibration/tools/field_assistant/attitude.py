@@ -39,6 +39,7 @@ class AttitudeReview:
             if not all(isinstance(sample[k], str) and sample[k].strip()
                        for k in ('installation_id', 'topic', 'frame_id', 'bridge_id')):
                 raise ValueError('缺少安装或数据源标识')
+            sample.pop("history", None)
             return dict(sample, available=True, age_ms=round(age, 1),
                 roll_deg=math.degrees(sample['roll_rad']), pitch_deg=math.degrees(sample['pitch_rad']))
         except (OSError, ValueError, KeyError, TypeError) as exc:

@@ -9,6 +9,7 @@ import re
 
 import cv2
 import numpy as np
+from dynamic_solver import body_points, solve, validate_file
 
 
 def save_json(path, value):
@@ -45,7 +46,12 @@ def calculate(root: Path):
     fit = np.array([p["role"] == "fit" for p in points])
     if np.linalg.matrix_rank(np.c_[uv[fit], np.ones(fit.sum())]) < 3 or np.linalg.matrix_rank(np.c_[xy[fit], np.ones(fit.sum())]) < 3:
         raise ValueError("标定点不能排在同一直线上，请覆盖近、远、左、右")
-    target = np.c_[320 - xy[:, 1] / .01, 799 - xy[:, 0] / .01]
+    snapshot = json.loads((root / "snapshot.json").read_text())
+    sync = json.loads((root / "dynamic-sync.json").read_text()) if snapshot.get("dynamic_enabled") else None
+    if sync and sync["image_id"] != snapshot["image_id"]:
+        raise ValueError("姿态证据与照片不匹配")
+    body_xy = body_points(xy, sync)[:,:2] if sync else xy
+    target = np.c_[320 - body_xy[:, 1] / .01, 799 - body_xy[:, 0] / .01]
     h, mask = cv2.findHomography(uv[fit], target[fit], cv2.RANSAC, 3.0)
     if h is None or not np.isfinite(h).all() or abs(np.linalg.det(h)) < 1e-12:
         raise ValueError("无法计算有效 BEV，请检查点的对应关系")
@@ -54,7 +60,7 @@ def calculate(root: Path):
         raise ValueError("有点位于投影奇异位置，请检查地面点")
     mapped = homogeneous[:, :2] / homogeneous[:, 2:]
     recovered = np.c_[(799 - mapped[:, 1]) * .01, (320 - mapped[:, 0]) * .01]
-    errors = np.linalg.norm(recovered - xy, axis=1)
+    errors = np.linalg.norm(recovered - body_xy, axis=1)
     metrics = lambda e: {"count": int(len(e)), "rmse_m": float(np.sqrt(np.mean(e ** 2))), "max_m": float(e.max())}
     inliers = int(mask.sum())
     checks = metrics(errors[~fit])
@@ -66,9 +72,19 @@ def calculate(root: Path):
         "image_id": snapshot["image_id"], "source_mode": snapshot["mode"],
         "point_errors_m": errors.tolist(), "output_width": 640, "output_height": 800,
         "meters_per_pixel": .01, "vehicle_origin_u": 320, "vehicle_origin_v": 799}
+    dynamic = None
+    if sync:
+        intrinsic = cv2.FileStorage(str(root / "intrinsics.yaml"), cv2.FILE_STORAGE_READ)
+        k = intrinsic.getNode("camera_matrix").mat(); intrinsic.release()
+        dynamic = solve(k, uv, xy, fit, mask, sync, h)
+        dynamic["sync_age_ms"] = sync["sync_age_ms"]
+        summary["dynamic"] = dynamic
+        summary["reference"] = "rear_axle_center"
+        summary["dynamic_evidence_sha256"] = {name: hashlib.sha256((root/name).read_bytes()).hexdigest()
+            for name in ("dynamic-sync.json", "points.json", "snapshot.json", "raw.jpg")}
     fs = cv2.FileStorage(str(root / "candidate-bev.yaml"), cv2.FILE_STORAGE_WRITE)
     for key, value in {"schema_version": 1, "calibration_valid": 0, "human_review_required": 1,
-        "coordinate_reference": "rear_axle_ground", "axis_convention": "x_forward_y_left",
+        "coordinate_reference": summary["reference"], "axis_convention": "x_forward_y_left",
         "source_mode": snapshot["mode"], "intrinsic_sha256": snapshot["intrinsic_sha256"],
         "output_width": 640, "output_height": 800, "meters_per_pixel": .01,
         "vehicle_origin_u": 320., "vehicle_origin_v": 799., "max_check_rmse_m": .05,
@@ -76,6 +92,15 @@ def calculate(root: Path):
         "fit_rmse_m": summary["fit"]["rmse_m"], "check_rmse_m": checks["rmse_m"],
         "check_max_error_m": checks["max_m"], "image_to_bev": h}.items():
         fs.write(key, value)
+    if dynamic:
+        fs.startWriteStruct("dynamic_bev", cv2.FILE_NODE_MAP)
+        for key,value in {"enabled":1,"calibration_valid":0,
+            "camera_to_vehicle_rotation":np.array(dynamic["camera_to_vehicle_rotation"]),
+            "camera_position_vehicle_m":np.array(dynamic["camera_position_vehicle_m"]).reshape(3,1),
+            "origin_height_m":dynamic["origin_height_m"],"reference_roll_rad":dynamic["reference_roll_rad"],
+            "reference_pitch_rad":dynamic["reference_pitch_rad"],"max_tilt_rad":.35,
+            "max_attitude_age_ms":50.,"max_reference_error_m":.05}.items(): fs.write(key,value)
+        fs.endWriteStruct()
     fs.release()
     image = cv2.imread(str(root / "snapshot.jpg"))
     bev = cv2.warpPerspective(image, h, (640, 800))
@@ -102,6 +127,9 @@ def calculate(root: Path):
 
 def accept_files(root: Path):
     """Validate the staged pair and mark copies accepted; never edit evidence."""
+    dynamic = validate_file(root / "bev.yaml", root / "intrinsics.yaml")
+    if (root / "dynamic-sync.json").exists() and not dynamic:
+        raise ValueError("动态标定发布缺少动态投影模型")
     for name, matrix_key in (("intrinsics.yaml", "camera_matrix"), ("bev.yaml", "image_to_bev")):
         path = root / name
         fs = cv2.FileStorage(str(path), cv2.FILE_STORAGE_READ)
@@ -116,6 +144,10 @@ def accept_files(root: Path):
             if matches > 1:
                 raise ValueError("参数文件包含重复的验收标记")
             text = re.sub(pattern, f"{key}: {value}", text) if matches else text.rstrip() + f"\n{key}: {value}\n"
+        if name == "bev.yaml" and dynamic:
+            text, count = re.subn(r"(?m)^( +)calibration_valid:.*$", r"\1calibration_valid: 1", text)
+            if count != 1:
+                raise ValueError("动态验收标记缺失或重复")
         path.write_text(text, encoding="utf-8")
         fs = cv2.FileStorage(str(path), cv2.FILE_STORAGE_READ)
         if fs.getNode("calibration_valid").real() != 1:

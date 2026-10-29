@@ -210,6 +210,7 @@ Status CameraVideoSource::open() {
 }
 
 Result<Frame> CameraVideoSource::read() {
+    std::int64_t capture_ns = 0; // Zero means driver timestamp is unverified.
 #ifdef __linux__
     if (impl_->descriptor < 0 || !impl_->streaming) {
         return Status::unavailable("camera source is not open");
@@ -233,6 +234,13 @@ Result<Frame> CameraVideoSource::read() {
     }
     if (buffer.index >= impl_->buffers.size()) {
         return Status::internal("camera returned an invalid buffer index");
+    }
+    // Preserve dequeue metadata before re-queueing; only exposure-start monotonic timestamps qualify.
+    if ((buffer.flags & V4L2_BUF_FLAG_TIMESTAMP_MASK) == V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC &&
+        (buffer.flags & V4L2_BUF_FLAG_TSTAMP_SRC_MASK) == V4L2_BUF_FLAG_TSTAMP_SRC_SOE &&
+        buffer.timestamp.tv_sec >= 0 && buffer.timestamp.tv_usec >= 0 && buffer.timestamp.tv_usec < 1000000) {
+        capture_ns = static_cast<std::int64_t>(buffer.timestamp.tv_sec) * 1000000000LL +
+                     static_cast<std::int64_t>(buffer.timestamp.tv_usec) * 1000LL;
     }
     const std::size_t required = static_cast<std::size_t>(impl_->options.width) *
         static_cast<std::size_t>(impl_->options.height) * 3U / 2U;
@@ -280,10 +288,10 @@ Result<Frame> CameraVideoSource::read() {
     }
 #endif
     rotateFrame(image, impl_->options.rotation_degrees);
-    const auto elapsed = std::chrono::steady_clock::now() - impl_->started_at;
+
     Frame frame;
     frame.image = std::move(image);
-    frame.capture_time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
+    frame.capture_time_ns = capture_ns;
     frame.sequence = impl_->sequence++;
     return frame;
 }

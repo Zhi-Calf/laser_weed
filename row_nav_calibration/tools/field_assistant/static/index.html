@@ -179,9 +179,9 @@
 
       <section id="bev-panel" class="bev-panel" hidden aria-labelledby="bev-title">
         <div class="section-heading"><div><p class="section-index">装车后 · 外参 / BEV</p>
-          <h2 id="bev-title">把画面中的地面点，对齐后轮轴中心</h2></div>
+          <h2 id="bev-title">把画面中的地面点，对齐后轮轴参考点</h2></div>
           <span id="bev-state" class="tag">未开始</span></div>
-        <div class="bev-reference"><strong>原点 O：后轮轴中心在地面的垂直投影</strong>
+        <div class="bev-reference"><strong>地面测量起点 O：后轮轴中心在地面的垂直投影</strong>
           <p>沿车头方向为 x 正方向；车辆左侧为 y 正方向，右侧填负数。测两个方向的直角距离，不量斜线。</p>
           <svg viewBox="0 0 360 150" role="img" aria-label="俯视：车头向上，后轴中心为原点，向前 x 正，向左 y 正">
             <rect x="145" y="30" width="70" height="95" rx="8" fill="#d9e9c5" stroke="#173c30"/>
@@ -195,6 +195,10 @@
         <label class="field"><span>使用哪份内参</span><select id="bev-intrinsic"><option value="configured">部署人员预先配置的内参</option><option value="session">本次会话计算的内参</option></select></label>
         <label class="confirm-row"><input id="bev-reference-confirmed" type="checkbox"><span>已确认后轴原点和坐标方向，地面平整，相机已固定装车</span></label>
         <label class="confirm-row"><input id="bev-intrinsic-confirmed" type="checkbox"><span>所选内参已人工复核，当前相机分辨率、焦距和裁剪设置与标定时一致</span></label>
+        <label class="confirm-row"><input id="bev-dynamic" type="checkbox"><span>同时标定动态 BEV（需要姿态方向核查通过及曝光时间同步）</span></label>
+        <label class="field"><span>后轮轴实体中心离地垂直高度 / m（不是相机高度）</span><input id="bev-origin-height" type="number" min="0.05" max="3" step="0.001" placeholder="例如 0.45"></label>
+        <label class="confirm-row"><input id="bev-dynamic-reference" type="checkbox"><span>已确认动态输出以实体后轴中心为原点；地面点仍从其垂直投影量起，前向沿车头在地面的投影方向，左向与其垂直。地面平整且车辆停稳。</span></label>
+        <p class="helper">动态模式会用参考姿态将地面实测坐标转换到车体坐标。拍照时横滚、俯仰各不超过 5°；高度按本次标定测量，悬架升降和坡地变化不在本模型补偿范围内。</p>
         <button id="bev-prepare" class="button button-primary" type="button">准备好了，拍摄地面照片</button>
         <p class="helper">重新拍摄会清空已有点位和 BEV 结果，请先导出需要保留的记录。模拟模式使用回放照片。</p>
         <div id="bev-editor" hidden>
@@ -210,9 +214,9 @@
         </div>
         <p id="bev-message" class="message" role="status"></p>
         <div id="bev-result" hidden><h3>3 · 检查鸟瞰图和独立点误差</h3>
-          <p id="bev-metrics"></p><p class="helper">BEV 左为车辆左侧，上为车头方向；O 为后轴原点。当前显示前方约 8 m、左右各约 3.2 m；范围外的点仍参与误差检查。通过阈值只代表几何检查通过，候选结果仍需现场复核。</p>
+          <p id="bev-metrics"></p><p id="bev-dynamic-result"></p><p class="helper">BEV 左为车辆左侧，上为车头方向。静态模式参考后轴地面投影；动态模式输出实体后轴中心的车体坐标。当前显示前方约 8 m、左右各约 3.2 m；范围外的点仍参与误差检查。通过阈值只代表几何检查通过，候选结果仍需现场复核。</p>
           <details><summary>查看每个点的误差，排查填错或点错的位置</summary><ol id="bev-errors"></ol></details>
-          <div class="bev-results"><figure><img id="bev-overlay" alt="原图点号叠加"><figcaption>去畸变原图与点号</figcaption></figure><figure><img id="bev-output" alt="以后轴地面投影为原点的 BEV"><figcaption>BEV：1 像素对应 1 cm；彩色圈为投影位置，白十字为实测位置</figcaption></figure></div>
+          <div class="bev-results"><figure><img id="bev-overlay" alt="原图点号叠加"><figcaption>去畸变原图与点号</figcaption></figure><figure><img id="bev-output" alt="后轴参考坐标系的 BEV"><figcaption>BEV：1 像素对应 1 cm；彩色圈为投影位置，白十字为实测位置</figcaption></figure></div>
           <p>使用上方“导出测试包”保存照片、内参、地面点、误差和候选 BEV 参数。</p>
           <label class="confirm-row"><input id="bev-publish-reviewed" type="checkbox"><span>内参和检查图已人工复核，后轴参考点与算法接口一致，同事已有的轴距补偿已核对</span></label>
           <button id="bev-publish" class="button button-primary" type="button" disabled>复核后设为算法参数</button>
