@@ -173,10 +173,10 @@ WORK 模式下把位姿参考点换算到后轴中心，只在中心锚点前后
 最近点和原车辆位姿。后轴局部搜索不推进全局
 进度，失败时 `Project()` 返回失败；起点或终点之外的坐标仍由搜索接口夹到路径端点。
 
-只有 `VALID`、非回放、时间未超过 `crop_row_timeout_s`、置信度不低于
-`crop_row_min_confidence`、坐标系匹配且数值有限的观测才参与控制。视觉失效立即降级到
-全局路径 LQR，不保持旧视觉值。进入可配置的 TURN 前预览或后保持窗口后暂停
-视觉恢复计数，离开该窗口后必须重新取得 `row_vision_resume_frames` 个连续有效帧。
+`CropRowCallback()` 仅在观测为 `VALID`、序号变化且未超过 `crop_row_timeout_s`
+时更新缓存的 `LineReference`。参考线超时、观测无效或视觉 LQR 输入失败时立即
+降级到全局路径。TURN 前后窗口内使用全局路径；离开窗口后，只要缓存参考线仍有效
+且未超时，就恢复视觉跟踪。
 
 参考源和转向模式切换会保留上一转角指令，由 `max_steer_rate_deg_s` 平滑实际输出。
 纯二维 LQR 没有积分状态；恒定转向零偏必须通过机械标定或后续 LQI 处理。
@@ -318,8 +318,7 @@ YAML 参数被视为可信输入，节点运行时不再对参数范围做自动
 | `speed_ramp_mps2` | 最终选中速度指令的加速度上限，默认 `0.5 m/s²`，由节点统一限制 |
 | `max_steer_rate_deg_s` | 转角指令变化率上限，默认 `90°/s`，需按转向执行器能力标定 |
 | `row_vision_enabled` | 是否启用视觉稻行 LQR，默认 `false` |
-| `row_vision_resume_frames` | 视觉失效或出弯后恢复所需连续有效帧数，默认 `3` |
-| `crop_row_min_confidence` | 视觉观测参与 LQR 的最低置信度 |
+| `crop_row_timeout_s` | 视觉参考线超时时间，默认 `0.3 s` |
 | `work_speed_m_s` / `turn_speed_m_s` | WORK/TURN 基础速度，默认 0.6/0.3 m/s |
 | `turn_mode_enter_m` / `turn_mode_exit_m` | `GlobalPathLocatorConfig` 的工作模式进入/保持距离，同时决定单/双阿克曼和车速，默认 0.6/0.6 m |
 | `goal_reached_distance_m` | 当前位姿距路径终点不超过此距离时判定到达终点，默认 `1.0 m` |

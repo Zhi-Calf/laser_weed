@@ -4,7 +4,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
 #include <thread>
@@ -129,7 +128,8 @@ void SpinForWithCropRow(
     publishers.path->publish(path);
     publishers.mode->publish(mode);
     auto crop_row_msg         = observation;
-    crop_row_msg.header.stamp = clock_node->now() - rclcpp::Duration::from_seconds(capture_age_s);
+    crop_row_msg.header.stamp =
+        clock_node->now() - rclcpp::Duration::from_seconds(capture_age_s);
     crop_row_msg.sequence     = ++sequence;
     publishers.crop->publish(crop_row_msg);
     executor.spin_some();
@@ -397,7 +397,7 @@ TEST(PathTrackerSteerRateIntegration, LimitsSteeringCommandRate) {
   executor.remove_node(tester);
 }
 
-TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackWhenStale) {
+TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackOnInvalidStatus) {
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
@@ -407,7 +407,6 @@ TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackWhenStale) {
     rclcpp::Parameter("max_lateral_error_m", 0.3),
     rclcpp::Parameter("max_steer_rate_deg_s", 180.0),
     rclcpp::Parameter("row_vision_enabled", true),
-    rclcpp::Parameter("row_vision_resume_frames", 2),
     rclcpp::Parameter("crop_row_timeout_s", 0.2),
   });
 
@@ -436,28 +435,32 @@ TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackWhenStale) {
   executor.add_node(tracker);
 
   std::uint64_t sequence = 0;
-  auto invalid_replay    = MakeCropRowObservation();
-  invalid_replay.replay  = true;
-  SpinForWithCropRow(executor, publishers, tester, pose, path, mode, invalid_replay, sequence, 0.3);
+  auto invalid_status = MakeCropRowObservation();
+  invalid_status.status = CropRowObservation::INVALID;
+  SpinForWithCropRow(
+      executor,
+      publishers,
+      tester,
+      pose,
+      path,
+      mode,
+      invalid_status,
+      sequence,
+      0.3);
   EXPECT_NEAR(last_command.steer_angle_rad, 0.0, 1e-9);
 
-  auto wrong_frame            = MakeCropRowObservation();
-  wrong_frame.header.frame_id = "camera_optical_frame";
-  SpinForWithCropRow(executor, publishers, tester, pose, path, mode, wrong_frame, sequence, 0.2);
-
-  auto low_confidence       = MakeCropRowObservation();
-  low_confidence.confidence = 0.49;
-  SpinForWithCropRow(executor, publishers, tester, pose, path, mode, low_confidence, sequence, 0.2);
-
-  auto non_finite            = MakeCropRowObservation();
-  non_finite.lateral_error_m = std::numeric_limits<double>::quiet_NaN();
-  SpinForWithCropRow(executor, publishers, tester, pose, path, mode, non_finite, sequence, 0.2);
-
   const auto stale_observation = MakeCropRowObservation();
-  SpinForWithCropRow(executor, publishers, tester, pose, path, mode, stale_observation, sequence, 0.2, 0.5);
-
-  const auto future_observation = MakeCropRowObservation();
-  SpinForWithCropRow(executor, publishers, tester, pose, path, mode, future_observation, sequence, 0.2, -0.1);
+  SpinForWithCropRow(
+      executor,
+      publishers,
+      tester,
+      pose,
+      path,
+      mode,
+      stale_observation,
+      sequence,
+      0.3,
+      0.5);
   EXPECT_NEAR(last_command.steer_angle_rad, 0.0, 1e-9);
 
   const auto valid_observation = MakeCropRowObservation();
@@ -466,7 +469,33 @@ TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackWhenStale) {
   EXPECT_EQ(last_command.steer_mode, 0U);
 
   const double vision_steer = last_command.steer_angle_rad;
-  SpinFor(executor, publishers, pose, path, mode, nullptr, 0.5);
+  SpinFor(executor, publishers, pose, path, mode, nullptr, 0.4);
+  EXPECT_LT(std::abs(last_command.steer_angle_rad), std::abs(vision_steer));
+
+  SpinForWithCropRow(
+      executor,
+      publishers,
+      tester,
+      pose,
+      path,
+      mode,
+      valid_observation,
+      sequence,
+      0.3);
+  EXPECT_GT(std::abs(last_command.steer_angle_rad), 0.0);
+
+  auto invalid_after_vision = MakeCropRowObservation();
+  invalid_after_vision.status = CropRowObservation::INVALID;
+  SpinForWithCropRow(
+      executor,
+      publishers,
+      tester,
+      pose,
+      path,
+      mode,
+      invalid_after_vision,
+      sequence,
+      0.4);
   EXPECT_LT(std::abs(last_command.steer_angle_rad), std::abs(vision_steer));
   EXPECT_EQ(last_command.steer_mode, 0U);
 

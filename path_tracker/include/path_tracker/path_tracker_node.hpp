@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
@@ -31,6 +30,13 @@ private:
 
   void InitializeLogging();
   void LoadParameters();
+  void LoadNodeParameters();
+  LQRConfig LoadLQRConfig(
+      double wheelbase,
+      bool pose_at_vehicle_center);
+  GlobalPathLocatorConfig LoadGlobalPathLocatorConfig(
+      double wheelbase,
+      bool pose_at_vehicle_center);
   void SetupInterfaces();
   void ControlTick();
 
@@ -40,9 +46,9 @@ private:
   void ObstacleStatusCallback(const weeder_msgs::msg::ObstacleStatus::SharedPtr msg);
   void CropRowCallback(const weeder_msgs::msg::CropRowObservation::SharedPtr msg);
 
-  ReferenceSource SelectReferenceSource(const PathMatchResult& match, const rclcpp::Time& now) const;
-  LineReference MakeVisionLineReference(const weeder_msgs::msg::CropRowObservation& observation) const;
-  bool IsCropRowObservationUsable(const weeder_msgs::msg::CropRowObservation& observation, const rclcpp::Time& now) const;
+  ReferenceSource SelectReferenceSource(
+      const PathMatchResult& match,
+      const rclcpp::Time& now) const;
   static const char* ReferenceSourceName(ReferenceSource source);
 
   void PublishViz(const TrajectoryPoint& target);
@@ -67,14 +73,11 @@ private:
   bool viz_             = true;
 
 private:
-  bool row_vision_enabled_              = false;
-  std::string crop_row_frame_id_        = "base_link";   // 后轴车体坐标系
-  double crop_row_timeout_s_            = 0.3;
-  double crop_row_min_confidence_       = 0.5;
-  std::size_t row_vision_resume_frames_ = 3;   // 恢复视觉所需连续帧数
+  bool row_vision_enabled_   = false;
+  double crop_row_timeout_s_ = 0.3;
 
 private:
-  std::unique_ptr<LQR> lqr_;
+  LQR lqr_;
   GlobalPathLocator path_locator_;
 
 private:
@@ -101,12 +104,11 @@ private:
   std::uint32_t obstacle_points_          = 0;   // ROI 内障碍点数
 
 private:
-  weeder_msgs::msg::CropRowObservation::SharedPtr latest_crop_row_;
-  std::string crop_row_session_;
-  std::uint64_t crop_row_sequence_   = 0;
-  std::size_t crop_row_valid_streak_ = 0;
-  bool vision_acquire_paused_        = false;   // TURN 窗口内暂停恢复计数
-  ReferenceSource reference_source_  = ReferenceSource::kGlobalPath;
+  LineReference line_reference_;
+  std::uint64_t crop_row_sequence_ = 0;
+  rclcpp::Time last_crop_row_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+  bool line_reference_valid_ = false;
+  ReferenceSource reference_source_ = ReferenceSource::kGlobalPath;
 
 private:
   double last_speed_cmd_m_s_ = 0.0;   // 上一拍速度指令 (m/s)

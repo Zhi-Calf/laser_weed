@@ -80,17 +80,8 @@ path_tracker:
     # TURN 前预览或后保持窗口内切回全局路径。
     row_vision_enabled: false
 
-    # 视觉观测位于后轴车体坐标系，固定使用 base_link。
-    crop_row_frame_id: base_link
-
-    # 观测超时 (s)，必须大于 0。
+    # 视觉观测超时 (s)，必须大于 0。
     crop_row_timeout_s: 0.3
-
-    # 最低置信度，取值范围 [0, 1]。
-    crop_row_min_confidence: 0.5
-
-    # 退出 TURN 窗口后，恢复视觉跟踪所需的连续有效帧数，必须不小于 1。
-    row_vision_resume_frames: 3
 
     # ============================================================
     # 安全门控
