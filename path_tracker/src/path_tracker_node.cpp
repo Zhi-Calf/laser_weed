@@ -614,10 +614,8 @@ void PathTrackerNode::ControlTick() {
   }
   const PathMatchResult& center_match = center_result;
 
-  const bool symmetric_ackermann = lqr_->SelectSymmetricAckermann(center_match);
-
-  LQROutput global_output;
-  if (!lqr_->ComputeCommand(robot_state_, symmetric_ackermann, center_match, center_match, global_output)) {
+  const LQROutput global_output = lqr_->ComputeCommand(robot_state_, center_match);
+  if (!global_output.success) {
     SPDLOG_ERROR("全局路径控制输入无效，输出停车");
     PublishStop();
     return;
@@ -642,8 +640,8 @@ void PathTrackerNode::ControlTick() {
   LQROutput selected_output             = global_output;
   if (selected_source == ReferenceSource::kVisionLine) {
     const LineReference reference = MakeVisionLineReference(*latest_crop_row_);
-    LQROutput vision_output;
-    if (lqr_->ComputeLineCommand(robot_state_, reference, global_output.vel_cmd.linear_v, vision_output)) {
+    LQROutput vision_output       = lqr_->ComputeLineCommand(robot_state_, reference, global_output.vel_cmd.linear_v);
+    if (vision_output.success) {
       vision_output.target_pt        = center_match.target_point;
       vision_output.distance_to_goal = dist_to_goal;
       vision_output.target_index     = center_match.point_index;

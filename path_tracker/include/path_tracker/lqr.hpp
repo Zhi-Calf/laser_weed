@@ -14,6 +14,7 @@ struct VelocityCommand {
 
 // LQR 输出的目标状态、误差、前馈和控制量。
 struct LQROutput {
+  bool success = false;               // 控制量计算是否成功
   TrajectoryPoint target_pt;          // 当前目标点或默认目标
   VelocityCommand vel_cmd;            // 目标速度和等效转角
   double lateral_error       = 0.0;   // 车辆相对路径，左正 (m)
@@ -49,11 +50,11 @@ public:
   void Configure(const LQRConfig& config);
   void Reset();
   bool SelectSymmetricAckermann(const PathMatchResult& center_match);
-  bool ComputeCommand(const RobotState& robot_state, bool symmetric_ackermann, const PathMatchResult& center_match, const PathMatchResult& control_match, LQROutput& output);
-  bool ComputeLineCommand(const RobotState& robot_state, const LineReference& reference, double commanded_speed_m_s, LQROutput& output);
+  LQROutput ComputeCommand(const RobotState& robot_state, const PathMatchResult& match);
+  LQROutput ComputeLineCommand(const RobotState& robot_state, const LineReference& reference, double commanded_speed_m_s);
 
 private:
-  LQROutput ComputeFeedbackControl(double lateral_error, double heading_error, double target_kappa, double linear_v, double effective_wheelbase, const TrajectoryPoint& target_point) const;
+  LQROutput ComputeFeedbackControl(double lateral_error, double heading_error, double target_kappa, double commanded_speed_m_s, double gain_speed_m_s, double effective_wheelbase) const;
   void CalRicatti(const Eigen::MatrixXd& a, const Eigen::MatrixXd& b, Eigen::MatrixXd& gain) const;
   double ScaleSpeed(const PathMatchResult& match) const;
 

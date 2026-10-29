@@ -9,6 +9,8 @@
 #include <limits>
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "path_tracker/global_path_locator.hpp"
 #include "path_tracker/lqr.hpp"
 
@@ -52,22 +54,17 @@ class TestPathTracker {
     lqr_.Reset();
   }
 
-  bool ComputeCommand(const LQRInput& input, LQROutput& output) {
+  LQROutput ComputeCommand(const LQRInput& input) {
     const PathMatchResult center_result =
         locator_.Project(input.robot_state);
     if (!center_result.success ||
         center_result.at_path_end) {
-      return false;
+      return LQROutput{};
     }
     const PathMatchResult& center_match = center_result;
-    const bool symmetric_ackermann =
-        lqr_.SelectSymmetricAckermann(center_match);
     return lqr_.ComputeCommand(
         input.robot_state,
-        symmetric_ackermann,
-        center_match,
-        center_match,
-        output);
+        center_match);
   }
 
  private:
@@ -97,8 +94,8 @@ TestPathTracker makeController(double wheelbase = 1.2,
 LQROutput RunControl(TestPathTracker& lqr, const RobotState& state) {
   LQRInput input;
   input.robot_state = state;
-  LQROutput output;
-  EXPECT_TRUE(lqr.ComputeCommand(input, output));
+  const LQROutput output = lqr.ComputeCommand(input);
+  EXPECT_TRUE(output.success);
   return output;
 }
 
@@ -117,6 +114,30 @@ std::vector<TrajectoryPoint> straightLine(double length = 20.0, double step = 0.
     s += step;
   }
   return pts;
+}
+
+// 使用独立构造的离散模型求解反馈增益。
+Eigen::Matrix<double, 1, 2> SolveFeedbackGain(
+    const Eigen::Matrix2d& a,
+    const Eigen::Matrix<double, 2, 1>& b,
+    const Eigen::Matrix2d& q,
+    double r,
+    int max_iterations,
+    double eps) {
+  Eigen::Matrix2d p = q;
+  double difference = std::numeric_limits<double>::max();
+  for (int iteration = 0;
+       iteration < max_iterations && difference > eps;
+       ++iteration) {
+    const Eigen::Matrix<double, 2, 1> pb = p * b;
+    const Eigen::Matrix<double, 2, 1> pa = a.transpose() * pb;
+    const double denominator             = r + b.dot(pb);
+    const Eigen::Matrix2d next =
+        q + a.transpose() * p * a - pa * pa.transpose() / denominator;
+    difference = (next - p).cwiseAbs().maxCoeff();
+    p          = next;
+  }
+  return b.transpose() * p * a / (r + b.dot(p * b));
 }
 
 }   // namespace
@@ -215,47 +236,33 @@ TEST(LqrReferencePoint, SingleModeUsesRearAxleStationOnCurve) {
   EXPECT_EQ(output.steer_mode, 0);
 }
 
-// 单阿克曼的误差和曲率必须取控制点匹配，路径级指标仍取中心匹配。
-TEST(LqrCommandInputs, SingleModeUsesControlMatchForTracking) {
+// 单阿克曼必须使用统一匹配结果中的控制状态和目标点。
+TEST(LqrCommandInputs, SingleModeUsesSelectedTargetAndState) {
   LQRConfig config              = makeConfig(1.2);
   config.pose_at_vehicle_center = false;
   path_tracker::LQR lqr;
   lqr.Configure(config);
 
-  PathMatchResult center_match;
-  center_match.success                 = true;
-  center_match.nearest_point.x         = 10.0;
-  center_match.nearest_point.y         = 2.0;
-  center_match.target_point.x          = 10.0;
-  center_match.target_point.y          = 2.0;
-  center_match.target_point.heading    = 0.3;
-  center_match.point_index             = 7;
-  center_match.work_mode               = PathWorkMode::kWork;
-
-  PathMatchResult control_match;
-  control_match.success              = true;
-  control_match.target_point.x       = 10.0;
-  control_match.target_point.y       = 2.0;
-  control_match.target_point.heading = 0.1;
-  control_match.target_point.kappa   = 0.05;
-  control_match.point_index          = 6;
+  PathMatchResult match;
+  match.success                      = true;
+  match.nearest_point.x              = 10.0;
+  match.nearest_point.y              = 2.0;
+  match.target_point.x               = 10.0;
+  match.target_point.y               = 2.0;
+  match.target_point.heading         = 0.1;
+  match.target_point.kappa           = 0.05;
+  match.point_index                  = 6;
+  match.work_mode                    = PathWorkMode::kWork;
 
   RobotState state;
   state.x        = 10.0;
   state.y        = 2.2;
   state.linear_v = 0.5;
-  center_match.control_state = state;
-  const bool symmetric_ackermann =
-      lqr.SelectSymmetricAckermann(center_match);
-  ASSERT_FALSE(symmetric_ackermann);
+  match.control_state = state;
 
-  LQROutput output;
-  ASSERT_TRUE(lqr.ComputeCommand(
-      state,
-      symmetric_ackermann,
-      center_match,
-      control_match,
-      output));
+  const LQROutput output =
+      lqr.ComputeCommand(state, match);
+  ASSERT_TRUE(output.success);
   EXPECT_NEAR(output.heading_error, -0.1, 1e-12);
   EXPECT_NEAR(output.lateral_error, 0.2 * std::cos(0.1), 1e-12);
   EXPECT_NEAR(output.steer_ff, std::atan(1.2 * 0.05), 1e-12);
@@ -264,38 +271,31 @@ TEST(LqrCommandInputs, SingleModeUsesControlMatchForTracking) {
   EXPECT_NEAR(output.distance_to_goal, 0.2, 1e-12);
 }
 
-// 双阿克曼模式必须由中心匹配选择，但允许调用方显式传入同一控制点匹配。
-TEST(LqrCommandInputs, SymmetricModeUsesCenterMatchForRoute) {
+// 双阿克曼模式必须由统一匹配结果中的工作模式选择。
+TEST(LqrCommandInputs, SymmetricModeUsesTurnWorkMode) {
   LQRConfig config              = makeConfig(1.2);
   config.pose_at_vehicle_center = false;
   path_tracker::LQR lqr;
   lqr.Configure(config);
 
-  PathMatchResult center_match;
-  center_match.success                      = true;
-  center_match.nearest_point.x              = 2.6;
-  center_match.nearest_point.waypoint_type = 1;
-  center_match.target_point.waypoint_type  = 1;
-  center_match.target_point.kappa          = 0.1;
-  center_match.target_point.x              = 3.0;
-  center_match.point_index                 = 12;
-  center_match.work_mode                   = PathWorkMode::kTurn;
+  PathMatchResult match;
+  match.success                      = true;
+  match.nearest_point.x              = 2.6;
+  match.nearest_point.waypoint_type = 1;
+  match.target_point.waypoint_type  = 1;
+  match.target_point.kappa          = 0.1;
+  match.target_point.x              = 3.0;
+  match.point_index                 = 12;
+  match.work_mode                   = PathWorkMode::kTurn;
 
   RobotState state;
   state.x        = 3.0;
   state.linear_v = 0.3;
-  center_match.control_state = state;
-  const bool symmetric_ackermann =
-      lqr.SelectSymmetricAckermann(center_match);
-  ASSERT_TRUE(symmetric_ackermann);
+  match.control_state = state;
 
-  LQROutput output;
-  ASSERT_TRUE(lqr.ComputeCommand(
-      state,
-      symmetric_ackermann,
-      center_match,
-      center_match,
-      output));
+  const LQROutput output =
+      lqr.ComputeCommand(state, match);
+  ASSERT_TRUE(output.success);
   EXPECT_EQ(output.steer_mode, 1);
   EXPECT_NEAR(output.steer_ff, std::atan(0.6 * 0.1), 1e-12);
   EXPECT_NEAR(output.distance_to_goal, 0.4, 1e-12);
@@ -497,8 +497,9 @@ TEST(LqrLineCommand, ConvertsVisualLateralSignAtRearAxle) {
   reference.lateral_error_m = 0.2;
   RobotState state;
   state.linear_v = 0.5;
-  LQROutput output;
-  ASSERT_TRUE(lqr.ComputeLineCommand(state, reference, 0.6, output));
+  const LQROutput output =
+      lqr.ComputeLineCommand(state, reference, 0.6);
+  ASSERT_TRUE(output.success);
 
   EXPECT_NEAR(output.lateral_error, -0.2, 1e-12);
   EXPECT_NEAR(output.heading_error, 0.0, 1e-12);
@@ -517,11 +518,88 @@ TEST(LqrLineCommand, ConvertsVisualHeadingSign) {
   reference.heading_error_rad = 0.1;
   RobotState state;
   state.linear_v = 0.5;
-  LQROutput output;
-  ASSERT_TRUE(lqr.ComputeLineCommand(state, reference, 0.6, output));
+  const LQROutput output =
+      lqr.ComputeLineCommand(state, reference, 0.6);
+  ASSERT_TRUE(output.success);
 
   EXPECT_NEAR(output.heading_error, -0.1, 1e-12);
   EXPECT_GT(output.vel_cmd.steer_angle, 0.0);
+}
+
+// LQR 增益必须使用实测车速，输出速度仍使用参考指令。
+TEST(LqrFeedback, UsesActualSpeedForGainScheduling) {
+  path_tracker::LQR lqr;
+  lqr.Configure(makeConfig(1.2));
+
+  LineReference reference;
+  reference.lateral_error_m = 0.2;
+
+  RobotState slow_state;
+  slow_state.linear_v = 0.1;
+  RobotState fast_state;
+  fast_state.linear_v = 0.6;
+
+  const LQROutput slow =
+      lqr.ComputeLineCommand(slow_state, reference, 0.6);
+  const LQROutput fast =
+      lqr.ComputeLineCommand(fast_state, reference, 0.6);
+  ASSERT_TRUE(slow.success);
+  ASSERT_TRUE(fast.success);
+  EXPECT_NEAR(slow.vel_cmd.linear_v, 0.6, 1e-12);
+  EXPECT_NEAR(fast.vel_cmd.linear_v, 0.6, 1e-12);
+  EXPECT_GT(std::abs(slow.steer_fb - fast.steer_fb), 1e-9);
+}
+
+// 精确零阶保持必须计入转角在本周期内产生的直接横向位移。
+TEST(LqrFeedback, UsesExactZeroOrderHoldInputMatrix) {
+  constexpr double kActualSpeed = 0.5;
+  constexpr double kHeadingError = 0.1;
+  LQRConfig config = makeConfig(1.2);
+  path_tracker::LQR lqr;
+  lqr.Configure(config);
+
+  LineReference reference;
+  reference.heading_error_rad = -kHeadingError;
+  RobotState state;
+  state.linear_v = kActualSpeed;
+  const LQROutput output =
+      lqr.ComputeLineCommand(state, reference, 0.6);
+  ASSERT_TRUE(output.success);
+
+  const double speed_period = kActualSpeed * config.dt;
+  const Eigen::Matrix2d a = (Eigen::Matrix2d() <<
+      1.0, speed_period,
+      0.0, 1.0).finished();
+  const Eigen::Matrix<double, 2, 1> exact_b =
+      (Eigen::Matrix<double, 2, 1>() <<
+          speed_period * speed_period / (2.0 * config.wheelbase),
+          speed_period / config.wheelbase)
+          .finished();
+  const Eigen::Matrix<double, 2, 1> euler_b =
+      (Eigen::Matrix<double, 2, 1>() <<
+          0.0,
+          speed_period / config.wheelbase)
+          .finished();
+  const Eigen::Matrix2d q =
+      (Eigen::Matrix2d() <<
+          config.q_lateral, 0.0,
+          0.0, config.q_heading)
+          .finished();
+  const Eigen::Vector2d error(0.0, kHeadingError);
+  const double exact_steer =
+      -(SolveFeedbackGain(
+            a, exact_b, q, config.r_steer, config.max_iteration,
+            config.eps) *
+        error)(0);
+  const double euler_steer =
+      -(SolveFeedbackGain(
+            a, euler_b, q, config.r_steer, config.max_iteration,
+            config.eps) *
+        error)(0);
+
+  EXPECT_GT(std::abs(exact_steer - euler_steer), 1e-5);
+  EXPECT_NEAR(output.steer_fb, exact_steer, 1e-9);
+  EXPECT_NEAR(output.vel_cmd.linear_v, 0.6, 1e-12);
 }
 
 // 闭环收敛：向前积分自行车模型并检查横向误差是否减小。
@@ -606,8 +684,8 @@ TEST(LqrConvergence, SymmetricAckermannTracksCircularArc) {
     state.linear_v = 0.3;
     LQRInput input;
     input.robot_state = state;
-    LQROutput output;
-    ASSERT_TRUE(lqr.ComputeCommand(input, output));
+    const LQROutput output = lqr.ComputeCommand(input);
+    ASSERT_TRUE(output.success);
     const double speed = output.vel_cmd.linear_v;
     const double delta = output.vel_cmd.steer_angle;
     x += speed * std::cos(heading) * kDt;
@@ -681,8 +759,8 @@ TEST(LqrGuards, StopsAtPathEnd) {
   state.x = 100.0;
   LQRInput input;
   input.robot_state = state;
-  LQROutput out;
-  EXPECT_FALSE(lqr.ComputeCommand(input, out)) << "should report the path is exhausted";
+  const LQROutput out = lqr.ComputeCommand(input);
+  EXPECT_FALSE(out.success) << "should report the path is exhausted";
   EXPECT_DOUBLE_EQ(out.vel_cmd.linear_v, 0.0);
   EXPECT_DOUBLE_EQ(out.vel_cmd.steer_angle, 0.0);
 }

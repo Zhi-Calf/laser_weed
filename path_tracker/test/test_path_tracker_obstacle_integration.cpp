@@ -40,6 +40,7 @@ Pose MakePose(bool valid = true) {
   pose.header.frame_id = "odom";
   pose.valid           = valid;
   pose.satellites      = 30;
+  pose.speed_m_s       = 0.5;   // 提供非零实测车速以验证增益调度
   return pose;
 }
 

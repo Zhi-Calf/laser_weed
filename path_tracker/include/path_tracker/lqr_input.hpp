@@ -11,11 +11,6 @@ struct LineReference {
   double curvature         = 0.0;   // 路径曲率 (1/m)，左转为正
 };
 
-struct LQRInputConfig {
-  double wheelbase            = 1.0;    // 车辆物理轴距 (m)
-  bool pose_at_vehicle_center = true;   // 位姿参考点是否为几何中心
-};
-
 struct LQRInputResult {
   bool success         = false;   // 输入计算是否成功
   double lateral_error = 0.0;     // 车辆相对路径横向误差，左正 (m)
@@ -25,12 +20,8 @@ struct LQRInputResult {
 
 class LQRInputCalculator {
 public:
-  void Configure(const LQRInputConfig& config);
   LQRInputResult CalculatePath(const RobotState& control_state, const TrajectoryPoint& target) const;
   LQRInputResult CalculateLine(const LineReference& reference) const;
-
-private:
-  LQRInputConfig config_;   // 输入坐标换算配置
 };
 
 }   // namespace path_tracker
