@@ -31,6 +31,31 @@
         <div id="check-strip" class="check-strip" aria-live="polite"></div>
       </section>
 
+      <section class="readiness" aria-labelledby="attitude-title">
+        <h2 id="attitude-title">首次安装：姿态方向核查</h2>
+        <p>车体坐标：↑ 前方 x　← 左侧 y　⊙ 上方 z。此步骤只确认方向，不代替外参标定。</p>
+        <p>在安全支撑、可控条件下操作。无法安全倾斜车辆时请暂缓，不要强行试验。</p>
+        <p id="attitude-live" role="status">等待姿态数据…</p>
+        <p id="attitude-source"></p>
+        <ol>
+          <li>车辆停稳并回到基准位置，点击“记录基准”。</li>
+          <li>车头抬高约 2–10°并保持，确认动作后点击“检查车头抬高”。预期俯仰减小。</li>
+          <li>回到基准位置，再次“记录基准”。左侧抬高约 2–10°并保持，点击“检查左侧抬高”。预期横滚增大。</li>
+        </ol>
+        <button type="button" class="button button-quiet" id="attitude-baseline">记录基准</button>
+        <label><input type="checkbox" id="attitude-performed"> 我已实际完成下方所选动作并保持</label>
+        <button type="button" class="button button-quiet" id="attitude-nose">检查车头抬高</button>
+        <button type="button" class="button button-quiet" id="attitude-left">检查左侧抬高</button>
+        <p id="attitude-results" aria-live="polite"></p>
+        <label>核查人 <input id="attitude-operator" placeholder="姓名" autocomplete="name"></label>
+        <label><input type="checkbox" id="attitude-reviewed"> 两项实际动作无误，安装方向和驱动配置已核对且未改变</label>
+        <button type="button" class="button" id="attitude-save">确认并保存方向核查</button>
+        <button type="button" class="button button-quiet" id="attitude-reset">清除结果，重新核查</button>
+        <p id="attitude-saved"></p>
+        <p id="attitude-message" role="status"></p>
+        <p>若安装方向或驱动转换设置改变，必须更新安装标识并重新核查。方向异常时检查接入配置，程序不会自动交换轴或反转符号。</p>
+      </section>
+
       <section class="workspace-grid">
         <article class="preview-panel">
           <div class="panel-title">
@@ -233,5 +258,6 @@
 
     <script src="/static/app.js" defer></script>
     <script src="/static/bev.js" defer></script>
+    <script src="/static/attitude.js" defer></script>
   </body>
 </html>

@@ -390,3 +390,22 @@ footer {
   .check-item:nth-child(4) { animation-delay: 150ms; }
   @keyframes arrive { from { opacity: 0; transform: translateY(7px); } }
 }
+
+/* Keep direction review controls legible without inheriting full-width text inputs. */
+section[aria-labelledby="attitude-title"] {
+  padding: 24px;
+  border: 1px solid var(--line, #cdd8d0);
+  border-radius: 12px;
+  margin-block: 24px;
+}
+section[aria-labelledby="attitude-title"] p,
+section[aria-labelledby="attitude-title"] ol { margin-block: 14px; line-height: 1.65; }
+section[aria-labelledby="attitude-title"] label {
+  display: flex; align-items: center; gap: 10px; margin-block: 14px;
+}
+section[aria-labelledby="attitude-title"] input[type="checkbox"] {
+  width: 20px; height: 20px; min-height: 20px; flex: 0 0 20px; margin: 0;
+}
+#attitude-operator { max-width: 280px; }
+#attitude-live { font-weight: 700; font-size: 1.1rem; }
+#attitude-message { color: #8c3a20; }

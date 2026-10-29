@@ -9,6 +9,7 @@ import sys
 class AssistantConfig:
     workspace: Path
     session_root: Path
+    attitude_file: Path | None = None
     mode: str = "mock"
     camera_device: Path = Path("/dev/video12")
     preview_path: Path | None = None

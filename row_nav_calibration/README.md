@@ -83,3 +83,7 @@ ctest --test-dir build/calibration --output-on-failure
 Node 可用时还运行页面失败重试测试。没有硬件时，测试通过仅代表软件流程通过。
 
 本次迁入的已验证项与目标机待验证项见 [验证记录](docs/migration-validation.md)。
+
+## 姿态方向核查
+
+页面已增加首次安装方向核查，操作和 ROS 接入见 [姿态方向核查说明](docs/attitude-direction-review.md)。本步骤不会自动开启动态 BEV。

@@ -19,7 +19,7 @@ if(ROW_NAV_CALIBRATION_BUILD_CAPTURE)
   target_link_libraries(charuco_capture PRIVATE ${OpenCV_LIBS} Threads::Threads)
   install(TARGETS charuco_capture RUNTIME DESTINATION lib/${PROJECT_NAME})
 endif()
-install(PROGRAMS scripts/row-nav-calibration DESTINATION bin)
+install(PROGRAMS scripts/row-nav-calibration scripts/row-nav-attitude-bridge DESTINATION bin)
 install(DIRECTORY scripts/calibration DESTINATION share/${PROJECT_NAME}/scripts
   PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
 install(DIRECTORY tools output docs

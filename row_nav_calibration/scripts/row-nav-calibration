@@ -19,7 +19,7 @@ def main():
     parser.description = "laser_weed field calibration (default: simulation, localhost)"
     parser.set_defaults(workspace=data, sessions=Path("sessions"),
         runtime_calibration_dir=Path("runtime"), import_root=Path("imports"),
-        capture_binary=capture)
+        capture_binary=capture, attitude_file=Path("attitude/live.json"))
     args = parser.parse_args()
     config = make_config(args)
     config.validate()

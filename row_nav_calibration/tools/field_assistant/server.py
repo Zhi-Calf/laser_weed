@@ -15,6 +15,7 @@ from .config import AssistantConfig
 from .sessions import SessionError, SessionStore
 from .status import StatusService
 from .bev import BevService
+from .attitude import AttitudeReview
 
 
 class FieldAssistantServer(ThreadingHTTPServer):
@@ -25,6 +26,7 @@ class FieldAssistantServer(ThreadingHTTPServer):
         self.sessions = SessionStore(config)
         self.bev = BevService(self.sessions)
         self.operation_lock = threading.Lock()
+        self.attitude = AttitudeReview(config)
 
 
 class FieldAssistantHandler(BaseHTTPRequestHandler):
@@ -35,6 +37,8 @@ class FieldAssistantHandler(BaseHTTPRequestHandler):
         route = urlparse(self.path).path
         if route == "/healthz":
             self._json({"ok": True})
+        elif route == "/api/attitude":
+            self._json(self.server.attitude.snapshot())
         elif route == "/api/status":
             self._json(self.server.status_service.snapshot())
         elif route == "/api/sessions/current":
@@ -92,7 +96,10 @@ class FieldAssistantHandler(BaseHTTPRequestHandler):
         route = urlparse(self.path).path
         try:
             payload = self._read_json()
-            if route == "/api/sessions/start":
+            if route == "/api/attitude/action":
+                self._json(self.server.attitude.save(payload) if payload.get("action") == "save"
+                           else self.server.attitude.action(payload))
+            elif route == "/api/sessions/start":
                 result = self.server.sessions.start(
                     payload, self.server.status_service.snapshot()
                 )
@@ -178,6 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-calibration-dir", type=Path, default=Path("configs/calibration"))
     parser.add_argument("--navigation-log", type=Path)
     parser.add_argument("--gnss-log", type=Path)
+    parser.add_argument("--attitude-file", type=Path, help="本机 ROS 姿态桥接器的实时文件")
     parser.add_argument("--import-root", type=Path, default=Path("data/field-import"))
     parser.add_argument("--calibration-python", type=Path, default=Path(sys.executable))
     return parser
@@ -204,6 +212,7 @@ def make_config(args: argparse.Namespace) -> AssistantConfig:
         runtime_calibration_root=absolute(args.runtime_calibration_dir),
         navigation_log=absolute(args.navigation_log),
         gnss_log=absolute(args.gnss_log),
+        attitude_file=absolute(args.attitude_file),
         import_root=absolute(args.import_root),
         # Preserve a venv executable symlink: resolving it drops that venv's packages.
         calibration_python=(args.calibration_python if args.calibration_python.is_absolute()
