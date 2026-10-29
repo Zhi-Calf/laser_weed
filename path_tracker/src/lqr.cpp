@@ -1,6 +1,8 @@
 // 版权所有 2026。四轮转向 LQR 横向控制器实现。
 #include "path_tracker/lqr.hpp"
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -19,6 +21,8 @@ double EffectiveWheelbase(double wheelbase, bool symmetric_ackermann) {
 // 使用完整配置结构初始化 LQR 权重和迭代参数。
 // 输入:
 //   config : LQR 几何、权重、速度和模式切换配置
+// 副作用:
+//   保存归一化配置、打印配置日志并重置控制器状态
 void LQR::Configure(const LQRConfig& config) {
   config_  = config;
   q_       = Eigen::Matrix2d::Zero();
@@ -26,6 +30,15 @@ void LQR::Configure(const LQRConfig& config) {
   q_(1, 1) = std::max(config_.q_heading, 0.0);
   r_       = Eigen::MatrixXd::Zero(1, 1);
   r_(0, 0) = std::max(config_.r_steer, 1e-6);
+  SPDLOG_INFO("LQR 求解配置: dt={:.3f}s eps={:g} max_iteration={}", config_.dt, config_.eps, config_.max_iteration);
+  SPDLOG_INFO("LQR 权重配置: Q_lateral={:.3f} Q_heading={:.3f} R_steer={:.3f}", config_.q_lateral, config_.q_heading, config_.r_steer);
+  SPDLOG_INFO(
+    "LQR 几何限幅: wheelbase={:.3f}m max_steer={:.3f}rad "
+    "pose_at_center={}",
+    config_.wheelbase,
+    config_.max_steer_rad,
+    config_.pose_at_vehicle_center);
+  SPDLOG_INFO("LQR 速度配置: work={:.3f}m/s turn={:.3f}m/s", config_.work_speed, config_.turn_speed);
   Reset();
 }
 

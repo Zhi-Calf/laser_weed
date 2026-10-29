@@ -33,6 +33,7 @@ add_library(${PROJECT_NAME}_lib SHARED
   src/global_path_locator.cpp
   src/lqr_input.cpp
   src/lqr.cpp
+  src/speed_limiter.cpp
 )
 target_link_libraries(${PROJECT_NAME}_lib
   Eigen3::Eigen
@@ -67,6 +68,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_lqr_input test/test_lqr_input.cpp)
   target_link_libraries(test_lqr_input ${PROJECT_NAME}_lib)
+
+  ament_add_gtest(test_speed_limiter test/test_speed_limiter.cpp)
+  target_link_libraries(test_speed_limiter ${PROJECT_NAME}_lib)
 
   ament_add_gtest(
     test_discrete_points_math test/test_discrete_points_math.cpp)

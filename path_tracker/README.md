@@ -112,9 +112,11 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 | 发布 | `/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
 | 发布 | `/path_tracker/target_point` | `visualization_msgs/Marker` | RViz |
 
+上述话题名固定定义在 `path_tracker_node.cpp` 中，不再通过 YAML 参数配置。
+
 当前路径回调读取 `Path.x/y` 和 `waypoint_types`，轨迹点本身不保存速度。
 LQR 根据分段类型选择速度：WORK 段默认 `0.6 m/s`，TURN 段及前后过渡区
-默认 `0.3 m/s`；速度指令受 `speed_ramp_mps2` 加速度限制。
+默认 `0.3 m/s`；最终选中指令的速度受 `speed_ramp_mps2` 加速度限制。
 航向和横向误差只参与转向控制，不改变目标速度。
 转角指令受 `max_steer_rate_deg_s` 变化率限制，避免 WORK/TURN 模式切换
 时等效转角发生阶跃。
@@ -133,8 +135,9 @@ TURN 进入/保持窗口：全局路径 -> LQR，PathWorkMode=TURN，双阿克�
 视觉中心线的 `lateral_error_m` 表示路径在左为正，与 LQR 的车辆相对路径符号相反；
 `LQRInputCalculator` 统一完成路径和视觉输入的横向误差、航向误差及符号转换。
 视觉观测已经位于后轴车体坐标系，不再进行几何中心到后轴的二次偏移；
-`LQR` 只负责反馈求解、限幅和输出组装。LQR 的 `A/B` 矩阵使用定位消息中的实测
-车速进行增益调度，输出的速度指令仍采用当前路径分段对应的参考速度。
+`LQR` 负责反馈求解、转角限幅和输出组装；节点在最终参考源确定后调用独立
+速度限制函数。LQR 的 `A/B` 矩阵使用定位消息中的实测车速进行增益调度，
+目标速度仍来自当前路径分段。
 
 全局路径由 `GlobalPathLocator` 在有限前向窗口内搜索欧氏距离最近的离散路径点，
 直接返回该点的航向、曲率、弧长、点索引及速度/转向模式窗口。搜索从上一命中点开始且只向前推进，
@@ -311,6 +314,8 @@ YAML 参数被视为可信输入，节点运行时不再对参数范围做自动
 |---|---|
 | `wheelbase` | **最关键**。填真实前后轴距；控制器按 WORK/TURN 自动使用 `L` 或 `L/2` |
 | `pose_at_vehicle_center` | 默认 `true`；单阿克曼自动换算到后轴，双阿克曼使用中心 |
+| `max_steer_deg` | 前轮转角上限，默认 `90°`，由 LQR 统一限制 |
+| `speed_ramp_mps2` | 最终选中速度指令的加速度上限，默认 `0.5 m/s²`，由节点统一限制 |
 | `max_steer_rate_deg_s` | 转角指令变化率上限，默认 `90°/s`，需按转向执行器能力标定 |
 | `row_vision_enabled` | 是否启用视觉稻行 LQR，默认 `false` |
 | `row_vision_resume_frames` | 视觉失效或出弯后恢复所需连续有效帧数，默认 `3` |
@@ -370,6 +375,7 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
 |---|---|
 | `test_lqr_input.cpp` | 路径横差/航差、角度归一化、后轴视觉直线符号转换和非法输入拒绝 |
 | `test_lqr_kinematics.cpp` | 精确阿克曼前馈、运行时等效轴距、WORK/TURN 速度区、跟踪误差和曲率不参与降速、直线与对称阿克曼圆弧闭环、左右偏差符号、转角限幅、小位移弧长累计、沿路径盲区和前向吸附 |
+| `test_speed_limiter.cpp` | 加速、减速、零周期和零加速度下的速度限制，以及正负转角速率限制 |
 | `test_discrete_points_math.cpp` | 少于三点拒绝、空指针拒绝、直线零曲率、弧长累加、左/右转弯曲率符号、端点单边差分、相邻重合点与航向退化检查、四分之一圆曲率量级 |
 | `test_global_path_locator.cpp` | 离散最近点、终点夹取、单调前进、可配置 TURN 预览/保持窗口、模式相关目标点和退化路径拒绝 |
 
