@@ -4,17 +4,21 @@
 // 重点验证前馈使用 atan(L*kappa)，而不是履带差速模型的 v*kappa。
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include "path_tracker/global_path_locator.hpp"
 #include "path_tracker/lqr.hpp"
 
 using path_tracker::GlobalPathLocator;
+using path_tracker::GlobalPathLocatorConfig;
 using path_tracker::LineReference;
 using path_tracker::LQRConfig;
 using path_tracker::LQROutput;
-using path_tracker::PathMatch;
+using path_tracker::PathMatchResult;
+using path_tracker::PathWorkMode;
 using path_tracker::RobotState;
 using path_tracker::TrajectoryPoint;
 
@@ -24,13 +28,23 @@ struct LQRInput {
   RobotState robot_state;
 };
 
-// 将连续投影与 LQR 组合为路径跟踪测试控制器。
+// 将最近点搜索与 LQR 组合为路径跟踪测试控制器。
 class TestPathTracker {
  public:
   void Configure(const LQRConfig& config,
-                 std::size_t forward_segment_window = 20) {
+                 int forward_point_window = 20,
+                 double turn_mode_enter_m = 0.6,
+                 double turn_mode_exit_m = 0.6) {
     lqr_.Configure(config);
-    locator_.Configure(forward_segment_window);
+    GlobalPathLocatorConfig path_locator_config;
+    path_locator_config.forward_point_window = forward_point_window;
+    path_locator_config.turn_mode_enter_m    = turn_mode_enter_m;
+    path_locator_config.turn_mode_exit_m     = turn_mode_exit_m;
+    path_locator_config.wheelbase_m          = config.wheelbase;
+    path_locator_config.goal_reached_distance_m = 0.0;
+    path_locator_config.pose_at_vehicle_center =
+        config.pose_at_vehicle_center;
+    locator_.Configure(path_locator_config);
   }
 
   void SetTrajectory(const std::vector<TrajectoryPoint>& path) {
@@ -39,17 +53,26 @@ class TestPathTracker {
   }
 
   bool ComputeCommand(const LQRInput& input, LQROutput& output) {
-    PathMatch match;
-    if (!locator_.Project(
-            input.robot_state.x, input.robot_state.y, &match)) {
+    const PathMatchResult center_result =
+        locator_.Project(input.robot_state);
+    if (!center_result.success ||
+        center_result.at_path_end) {
       return false;
     }
-    return lqr_.ComputeCommand(input.robot_state, match, output);
+    const PathMatchResult& center_match = center_result;
+    const bool symmetric_ackermann =
+        lqr_.SelectSymmetricAckermann(center_match);
+    return lqr_.ComputeCommand(
+        input.robot_state,
+        symmetric_ackermann,
+        center_match,
+        center_match,
+        output);
   }
 
  private:
   path_tracker::LQR lqr_;              // 被测控制器
-  GlobalPathLocator locator_;          // 连续路径投影
+  GlobalPathLocator locator_;          // 全局路径最近点搜索
 };
 
 /// 使用文档中的默认参数构建配置。
@@ -63,10 +86,10 @@ LQRConfig makeConfig(double wheelbase = 1.2) {
 
 /// 使用测试配置构建控制器。
 TestPathTracker makeController(double wheelbase = 1.2,
-                               std::size_t snap_forward_points = 20) {
+                               int forward_point_window = 20) {
   TestPathTracker lqr;
   LQRConfig config           = makeConfig(wheelbase);
-  lqr.Configure(config, snap_forward_points);
+  lqr.Configure(config, forward_point_window);
   return lqr;
 }
 
@@ -135,13 +158,148 @@ TEST(LqrReferencePoint, AutoSelectsPoseReferenceBySteerMode) {
   single_ackermann.Configure(config, 100);
   single_ackermann.SetTrajectory(build_path(0));
   const auto single_output = RunControl(single_ackermann, center_state);
-  EXPECT_NEAR(single_output.lateral_error, kWheelbase * 0.5 - kCenterX, 1e-9);
+  EXPECT_NEAR(
+      single_output.lateral_error,
+      kWheelbase * 0.5 - kCenterX,
+      1e-9);
 
   TestPathTracker symmetric_ackermann;
   symmetric_ackermann.Configure(config, 100);
   symmetric_ackermann.SetTrajectory(build_path(1));
   const auto symmetric_output = RunControl(symmetric_ackermann, center_state);
   EXPECT_NEAR(symmetric_output.lateral_error, -kCenterX, 1e-9);
+}
+
+// 弯道上必须使用后轴投影点，而不是几何中心对应的前方路径站。
+TEST(LqrReferencePoint, SingleModeUsesRearAxleStationOnCurve) {
+  constexpr double kRadius    = 5.0;
+  constexpr double kWheelbase = 1.2;
+  constexpr double kStep      = 0.05;
+
+  std::vector<TrajectoryPoint> arc;
+  const double sweep = M_PI / 2.0;
+  const int samples =
+      static_cast<int>(std::ceil(kRadius * sweep / kStep));
+  for (int index = 0; index <= samples; ++index) {
+    const double theta =
+        sweep * static_cast<double>(index) / static_cast<double>(samples);
+    TrajectoryPoint point;
+    point.x       = kRadius * std::sin(theta);
+    point.y       = kRadius * (1.0 - std::cos(theta));
+    point.heading = theta;
+    point.kappa   = 1.0 / kRadius;
+    point.s       = kRadius * theta;
+    arc.push_back(point);
+  }
+
+  LQRConfig config              = makeConfig(kWheelbase);
+  config.pose_at_vehicle_center = true;
+  TestPathTracker lqr;
+  lqr.Configure(config, 100);
+  lqr.SetTrajectory(arc);
+
+  constexpr double kCenterTheta = 0.5;
+  RobotState state;
+  state.x = kRadius * std::sin(kCenterTheta);
+  state.y = kRadius * (1.0 - std::cos(kCenterTheta));
+  state.heading  = kCenterTheta;
+  state.linear_v = 0.5;
+
+  const auto output = RunControl(lqr, state);
+  EXPECT_NEAR(
+      output.target_pt.s,
+      kRadius * kCenterTheta - kWheelbase * 0.5,
+      0.06);
+  EXPECT_LT(output.target_pt.heading, kCenterTheta);
+  EXPECT_LT(output.lateral_error, 0.0);
+  EXPECT_EQ(output.steer_mode, 0);
+}
+
+// 单阿克曼的误差和曲率必须取控制点匹配，路径级指标仍取中心匹配。
+TEST(LqrCommandInputs, SingleModeUsesControlMatchForTracking) {
+  LQRConfig config              = makeConfig(1.2);
+  config.pose_at_vehicle_center = false;
+  path_tracker::LQR lqr;
+  lqr.Configure(config);
+
+  PathMatchResult center_match;
+  center_match.success                 = true;
+  center_match.nearest_point.x         = 10.0;
+  center_match.nearest_point.y         = 2.0;
+  center_match.target_point.x          = 10.0;
+  center_match.target_point.y          = 2.0;
+  center_match.target_point.heading    = 0.3;
+  center_match.point_index             = 7;
+  center_match.work_mode               = PathWorkMode::kWork;
+
+  PathMatchResult control_match;
+  control_match.success              = true;
+  control_match.target_point.x       = 10.0;
+  control_match.target_point.y       = 2.0;
+  control_match.target_point.heading = 0.1;
+  control_match.target_point.kappa   = 0.05;
+  control_match.point_index          = 6;
+
+  RobotState state;
+  state.x        = 10.0;
+  state.y        = 2.2;
+  state.linear_v = 0.5;
+  center_match.control_state = state;
+  const bool symmetric_ackermann =
+      lqr.SelectSymmetricAckermann(center_match);
+  ASSERT_FALSE(symmetric_ackermann);
+
+  LQROutput output;
+  ASSERT_TRUE(lqr.ComputeCommand(
+      state,
+      symmetric_ackermann,
+      center_match,
+      control_match,
+      output));
+  EXPECT_NEAR(output.heading_error, -0.1, 1e-12);
+  EXPECT_NEAR(output.lateral_error, 0.2 * std::cos(0.1), 1e-12);
+  EXPECT_NEAR(output.steer_ff, std::atan(1.2 * 0.05), 1e-12);
+  EXPECT_NEAR(output.target_pt.heading, 0.1, 1e-12);
+  EXPECT_EQ(output.target_index, 6);
+  EXPECT_NEAR(output.distance_to_goal, 0.2, 1e-12);
+}
+
+// 双阿克曼模式必须由中心匹配选择，但允许调用方显式传入同一控制点匹配。
+TEST(LqrCommandInputs, SymmetricModeUsesCenterMatchForRoute) {
+  LQRConfig config              = makeConfig(1.2);
+  config.pose_at_vehicle_center = false;
+  path_tracker::LQR lqr;
+  lqr.Configure(config);
+
+  PathMatchResult center_match;
+  center_match.success                      = true;
+  center_match.nearest_point.x              = 2.6;
+  center_match.nearest_point.waypoint_type = 1;
+  center_match.target_point.waypoint_type  = 1;
+  center_match.target_point.kappa          = 0.1;
+  center_match.target_point.x              = 3.0;
+  center_match.point_index                 = 12;
+  center_match.work_mode                   = PathWorkMode::kTurn;
+
+  RobotState state;
+  state.x        = 3.0;
+  state.linear_v = 0.3;
+  center_match.control_state = state;
+  const bool symmetric_ackermann =
+      lqr.SelectSymmetricAckermann(center_match);
+  ASSERT_TRUE(symmetric_ackermann);
+
+  LQROutput output;
+  ASSERT_TRUE(lqr.ComputeCommand(
+      state,
+      symmetric_ackermann,
+      center_match,
+      center_match,
+      output));
+  EXPECT_EQ(output.steer_mode, 1);
+  EXPECT_NEAR(output.steer_ff, std::atan(0.6 * 0.1), 1e-12);
+  EXPECT_NEAR(output.distance_to_goal, 0.4, 1e-12);
+  EXPECT_EQ(output.target_index, 12);
 }
 
 // 定曲率稳态前馈必须使用 atan(L*kappa)，不能在大转角时继续用 L*kappa。
@@ -237,10 +395,8 @@ TEST(LqrSpeedProfile, TurnZoneUsesFixedLowSpeed) {
   LQRConfig config            = makeConfig();
   config.work_speed           = 0.6;
   config.turn_speed           = 0.3;
-  config.turn_speed_preview_m = 1.0;
-  config.turn_speed_hold_m    = 0.5;
   TestPathTracker lqr;
-  lqr.Configure(config, 100);
+  lqr.Configure(config, 100, 1.0, 0.5);
 
   auto pts = straightLine(20.0, kStep);
   for (size_t i = 0; i < pts.size(); ++i) {
@@ -263,8 +419,8 @@ TEST(LqrSpeedProfile, TurnZoneUsesFixedLowSpeed) {
   EXPECT_NEAR(RunControl(lqr, state).vel_cmd.linear_v, 0.6, 1e-9);
 }
 
-// 到弯道距离必须沿路径弧长计算，供入弯前控制源切换使用。
-TEST(LqrPathProgress, ReportsArcDistanceToNextTurn) {
+// 速度预览窗口之外的 TURN 不得降低目标速度。
+TEST(LqrPathProgress, IgnoresTurnOutsideSpeedPreviewWindow) {
   constexpr double kStep = 0.1;
   auto points            = straightLine(20.0, kStep);
   for (std::size_t index = 50; index <= 60; ++index) {
@@ -273,14 +429,14 @@ TEST(LqrPathProgress, ReportsArcDistanceToNextTurn) {
 
   LQRConfig config = makeConfig();
   TestPathTracker lqr;
-  lqr.Configure(config, 100);
+  lqr.Configure(config, 8);
   lqr.SetTrajectory(points);
 
   RobotState state;
   state.x           = 1.0;
   const auto output = RunControl(lqr, state);
 
-  EXPECT_NEAR(output.distance_to_turn_m, 4.0, kStep);
+  EXPECT_NEAR(output.vel_cmd.linear_v, config.work_speed, 1e-9);
 }
 
 // ---------------------------------------------------------------------------
@@ -434,10 +590,8 @@ TEST(LqrConvergence, SymmetricAckermannTracksCircularArc) {
   LQRConfig config            = makeConfig(kPhysicalWheelbase);
   config.work_speed           = 0.6;
   config.turn_speed           = 0.3;
-  config.turn_speed_preview_m = 1.0;
-  config.turn_speed_hold_m    = 0.5;
   TestPathTracker lqr;
-  lqr.Configure(config);
+  lqr.Configure(config, 20, 1.0, 0.5);
   lqr.SetTrajectory(arc);
 
   double x                = 0.0;
@@ -624,7 +778,7 @@ TEST(LqrSnap, WindowStartsAtPreviousNearestPoint) {
   EXPECT_NEAR(next_out.target_pt.x, 9.0, 0.1) << "下一帧应使用当前位姿继续向前搜索";
 }
 
-// 单次吸附最多向前搜索 snap_forward_points 条路径线段。
+// 单次吸附最多向前搜索 forward_point_window 个路径点索引偏移。
 TEST(LqrSnap, SearchDoesNotExceedForwardWindow) {
   TestPathTracker lqr = makeController(1.2, 10);
   lqr.SetTrajectory(straightLine(/*length*/ 50.0, /*step*/ 0.1));
@@ -633,12 +787,12 @@ TEST(LqrSnap, SearchDoesNotExceedForwardWindow) {
   state.x        = 8.0;
   state.linear_v = 0.5;
   const auto out = RunControl(lqr, state);
-  EXPECT_NEAR(out.target_pt.x, 1.0, 1e-9) << "10 个 0.1 m 点距的窗口只能搜索到前方 1 m";
+  EXPECT_NEAR(out.distance_to_goal, 7.0, 1e-9)
+      << "10 个 0.1 m 点距的窗口只能把中心目标推进到 x=1";
 }
 
-// 吸附不得向后移动目标点。搜索从上一最近点开始，
-// 因此落后的车辆不能把目标拉回弓字形田块的上一行，避免重复作业。
-TEST(LqrSnap, GoalNeverSnapsBackward) {
+// 局部控制目标只能围绕单调推进的中心目标移动，不能回到车辆当前所在路径位置。
+TEST(LqrSnap, GoalStaysNearMonotonicCenterProgress) {
   TestPathTracker lqr = makeController(1.2, 300);
   lqr.SetTrajectory(straightLine(/*length*/ 50.0, /*step*/ 0.1));
 
@@ -651,6 +805,9 @@ TEST(LqrSnap, GoalNeverSnapsBackward) {
   EXPECT_NEAR(x_advanced, 20.0, 0.1) << "目标应吸附到车辆 x=20 附近的最近点";
 
   state.x              = 5.0;
-  const double x_after = RunControl(lqr, state).target_pt.x;
-  EXPECT_GE(x_after, x_advanced) << "goal index is monotonic; snapping must not rewind it";
+  const auto backward_out = RunControl(lqr, state);
+  EXPECT_NEAR(backward_out.distance_to_goal, 15.0, 0.1)
+      << "中心最近点进度必须保持在 x=20，不能回退到车辆 x=5";
+  EXPECT_GE(backward_out.target_pt.x, 18.8 - 1e-9)
+      << "单拍控制点局部搜索不得跳出中心进度附近的一个轴距窗口";
 }

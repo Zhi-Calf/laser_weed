@@ -229,8 +229,6 @@ TEST(PathTrackerSegmentIntegration, SwitchesSpeedAndSteerModeByPathType) {
     rclcpp::Parameter("wheelbase", 1.2),
     rclcpp::Parameter("work_speed_m_s", 0.6),
     rclcpp::Parameter("turn_speed_m_s", 0.3),
-    rclcpp::Parameter("turn_speed_preview_m", 1.0),
-    rclcpp::Parameter("turn_speed_hold_m", 0.5),
     rclcpp::Parameter("speed_ramp_mps2", 10.0),
     rclcpp::Parameter("turn_mode_enter_m", 0.6),
     rclcpp::Parameter("turn_mode_exit_m", 0.6),
@@ -409,7 +407,6 @@ TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackWhenStale) {
     rclcpp::Parameter("max_steer_rate_deg_s", 180.0),
     rclcpp::Parameter("row_vision_enabled", true),
     rclcpp::Parameter("row_vision_resume_frames", 2),
-    rclcpp::Parameter("row_vision_pre_turn_m", 3.0),
     rclcpp::Parameter("crop_row_timeout_s", 0.2),
   });
 
@@ -476,7 +473,7 @@ TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackWhenStale) {
   executor.remove_node(tester);
 }
 
-TEST(PathTrackerVisionIntegration, UsesGlobalPathBeforeTurnAndDualAckermannInTurn) {
+TEST(PathTrackerVisionIntegration, UsesGlobalPathAndTurnModeInsideWindow) {
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
@@ -484,7 +481,6 @@ TEST(PathTrackerVisionIntegration, UsesGlobalPathBeforeTurnAndDualAckermannInTur
     rclcpp::Parameter("viz", false),
     rclcpp::Parameter("wheelbase", 1.2),
     rclcpp::Parameter("row_vision_enabled", true),
-    rclcpp::Parameter("row_vision_pre_turn_m", 1.5),
     rclcpp::Parameter("turn_mode_enter_m", 0.2),
     rclcpp::Parameter("turn_mode_exit_m", 0.2),
     rclcpp::Parameter("max_steer_rate_deg_s", 180.0),
@@ -506,7 +502,7 @@ TEST(PathTrackerVisionIntegration, UsesGlobalPathBeforeTurnAndDualAckermannInTur
   publishers.crop     = tester->create_publisher<CropRowObservation>("/crop_row/observation", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
 
   auto pose       = MakePose();
-  pose.x          = 1.0;
+  pose.x          = 1.8;
   pose.y          = 0.2;
   const auto path = MakeSegmentPath();
   const auto mode = MakeUnmannedMode();
@@ -518,7 +514,7 @@ TEST(PathTrackerVisionIntegration, UsesGlobalPathBeforeTurnAndDualAckermannInTur
   std::uint64_t crop_sequence      = 0;
   const auto prefilled_observation = MakeCropRowObservation(0.2);
   SpinForWithCropRow(executor, publishers, tester, pose, path, mode, prefilled_observation, crop_sequence, 0.5);
-  EXPECT_EQ(last_command.steer_mode, 0U);
+  EXPECT_EQ(last_command.steer_mode, 1U);
   EXPECT_LT(last_command.steer_angle_rad, 0.0);
 
   pose.x = 1.9;
@@ -537,6 +533,78 @@ TEST(PathTrackerVisionIntegration, UsesGlobalPathBeforeTurnAndDualAckermannInTur
   SpinForWithCropRow(executor, publishers, tester, pose, path, mode, resumed_observation, crop_sequence, 0.5);
   EXPECT_GT(last_command.steer_angle_rad, 0.0);
   EXPECT_EQ(last_command.steer_mode, 0U);
+
+  executor.remove_node(tracker);
+  executor.remove_node(tester);
+}
+
+TEST(PathTrackerPathValidationIntegration, IgnoresMalformedWaypointTypes) {
+  rclcpp::NodeOptions tracker_options;
+  tracker_options.parameter_overrides({
+    rclcpp::Parameter("control_hz", 20.0),
+    rclcpp::Parameter("require_velocity_planner", false),
+    rclcpp::Parameter("viz", false),
+    rclcpp::Parameter("speed_ramp_mps2", 10.0),
+  });
+
+  auto tester =
+      std::make_shared<rclcpp::Node>("path_tracker_path_validation_test");
+  auto tracker =
+      std::make_shared<path_tracker::PathTrackerNode>(tracker_options);
+
+  ChassisCmd last_command;
+  bool has_command = false;
+  auto command_subscription =
+      tester->create_subscription<ChassisCmd>(
+          "/chassis/cmd",
+          10,
+          [&last_command, &has_command](
+              const ChassisCmd::SharedPtr msg) {
+            last_command = *msg;
+            has_command  = true;
+          });
+
+  TestPublishers publishers;
+  publishers.pose = tester->create_publisher<Pose>(
+      "/gnss_driver/pose",
+      rclcpp::SensorDataQoS());
+  publishers.path = tester->create_publisher<Path>(
+      "/global_path_planner/path",
+      rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
+  publishers.mode = tester->create_publisher<WorkMode>(
+      "/work_mode",
+      10);
+  publishers.obstacle = tester->create_publisher<ObstacleStatus>(
+      "/velocity_planner/status",
+      rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+
+  auto pose = MakePose();
+  pose.x    = 1.0;
+  const auto mode = MakeUnmannedMode();
+  const auto path = MakePath();
+  auto malformed_path = path;
+  malformed_path.waypoint_types.pop_back();
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(tester);
+  executor.add_node(tracker);
+
+  SpinFor(
+      executor,
+      publishers,
+      pose,
+      malformed_path,
+      mode,
+      nullptr,
+      0.3);
+  ASSERT_TRUE(has_command);
+  EXPECT_TRUE(last_command.estop);
+  EXPECT_DOUBLE_EQ(last_command.speed_m_s, 0.0);
+
+  SpinFor(executor, publishers, pose, path, mode, nullptr, 0.3);
+  ASSERT_TRUE(has_command);
+  EXPECT_FALSE(last_command.estop);
+  EXPECT_GT(last_command.speed_m_s, 0.0);
 
   executor.remove_node(tracker);
   executor.remove_node(tester);

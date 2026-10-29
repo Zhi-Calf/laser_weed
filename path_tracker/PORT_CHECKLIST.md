@@ -99,10 +99,10 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 |---|---|---|---|
 | `wheelbase` | `1.2` | **除草机真实前后轴距(m)** | 🔴 |
 | `pose_at_vehicle_center` | `true` | GNSS 位姿参考点是否为车体中心；当前驱动应为 `true` | 🔴 |
-| `turn_mode_enter_m` / `turn_mode_exit_m` | `0.6/0.6` | 进入/退出双阿克曼的弧长滞回距离 | 🟡 |
+| `turn_mode_enter_m` / `turn_mode_exit_m` | `0.6/0.6` | `GlobalPathLocatorConfig` 中进入/保持双阿克曼的弧长窗口 | 🟡 |
+| `goal_reached_distance_m` | `1.0` | 当前位姿距路径终点的到达阈值 (m) | 🟡 |
 | `max_steer_rate_deg_s` | `90.0` | 转向执行器允许的等效转角变化率 | 🔴 |
 | `row_vision_enabled` | `false` | 稻行视觉中心线统一 LQR 总开关 | 🟡 |
-| `row_vision_pre_turn_m` | `3.0` | TURN 前后退出并暂停视觉的弧长距离 | 🟡 |
 | `row_vision_resume_frames` | `3` | 视觉恢复所需连续有效帧数 | 🟡 |
 | `work_speed_m_s` / `turn_speed_m_s` | `0.6/0.3` | 按路径段固定基础速度 | 🟡 |
 | `log_dir` | `/opt/agri/logs` | 统一 spdlog 滚动日志目录 | 🟡 |
@@ -110,8 +110,9 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 
 `wheelbase` 填错会直接导致横向跟踪振荡或收敛过慢，是最关键的参数。
 `waypoint_types` 有效时节点自动切换模式，并在 TURN 模式下使用 `L/2`
-作为等效轴距。全局路径和视觉中心线共用同一 LQR；全局最近点采用连续线段投影，
-模式 2/3 不支持。
+作为等效轴距。全局路径用 `turn_mode_enter_m/exit_m` 决定工作模式；
+单阿克曼在中心点前后各 `L` 范围内搜索后轴目标点，双阿克曼直接使用中心最近点。
+全局路径和视觉中心线共用同一 LQR；模式 2/3 不支持。
 
 ---
 

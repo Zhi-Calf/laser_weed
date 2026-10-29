@@ -31,6 +31,7 @@ set(DEPS
 add_library(${PROJECT_NAME}_lib SHARED
   src/discrete_points_math.cpp
   src/global_path_locator.cpp
+  src/lqr_input.cpp
   src/lqr.cpp
 )
 target_link_libraries(${PROJECT_NAME}_lib
@@ -63,6 +64,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_lqr_kinematics test/test_lqr_kinematics.cpp)
   target_link_libraries(test_lqr_kinematics ${PROJECT_NAME}_lib)
+
+  ament_add_gtest(test_lqr_input test/test_lqr_input.cpp)
+  target_link_libraries(test_lqr_input ${PROJECT_NAME}_lib)
 
   ament_add_gtest(
     test_discrete_points_math test/test_discrete_points_math.cpp)

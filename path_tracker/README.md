@@ -121,24 +121,54 @@ LQR 根据分段类型选择速度：WORK 段默认 `0.6 m/s`，TURN 段及前�
 `row_vision_enabled=true` 时，普通行内优先消费视觉中心线；默认关闭时只使用全局路径：
 
 ```text
-普通行内：视觉中心线 -> LQR，单阿克曼
-TURN 前后 row_vision_pre_turn_m：全局路径 -> LQR，单/双阿克曼按段切换
-TURN 段：连续投影后的全局路径 -> LQR，双阿克曼
+普通行内：视觉中心线 -> LQR，PathWorkMode=WORK，单阿克曼，0.6 m/s
+TURN 进入/保持窗口：全局路径 -> LQR，PathWorkMode=TURN，双阿克曼，0.3 m/s
 视觉失效或出弯后：全局路径 LQR，重新取得连续有效帧后恢复视觉
 ```
 
 视觉和全局路径共用同一套 `[e_lateral, e_heading]` 反馈及曲率前馈，不再维护独立 PID。
 视觉中心线的 `lateral_error_m` 表示路径在左为正，与 LQR 的车辆相对路径符号相反；
-`LQR::ComputeLineCommand()` 在单阿克曼后轴控制点处完成符号和参考点转换。
+`LQRInputCalculator` 统一完成路径和视觉输入的后轴换算、符号转换、横向误差和航向误差计算；
+`LQR` 只负责反馈求解、限幅和输出组装。
 
-全局路径由 `GlobalPathLocator` 对相邻点组成的折线做连续垂足投影，返回插值后的目标点、
-航向、曲率、弧长、线段索引及 TURN 距离。搜索从上一命中线段开始且只向前推进，
+全局路径由 `GlobalPathLocator` 在有限前向窗口内搜索欧氏距离最近的离散路径点，
+直接返回该点的航向、曲率、弧长、点索引及速度/转向模式窗口。搜索从上一命中点开始且只向前推进，
 不允许自动回到已完成的作业行。
+
+`turn_mode_enter_m` 和 `turn_mode_exit_m` 直接配置在 `GlobalPathLocator` 中。
+前向窗口出现 TURN 时进入 TURN 模式，后向窗口内仍包含 TURN 时保持 TURN 模式。
+同一个 `PathWorkMode` 同时决定单/双阿克曼和 0.6/0.3 m/s 车速。
+WORK 模式目标取后轴中心对应的最近点；TURN 模式目标取几何中心对应的最近点。
+视觉参考源也跟随该模式切换。
+
+定位器配置统一通过 `GlobalPathLocatorConfig` 传入：
+
+```cpp
+GlobalPathLocatorConfig config;
+config.forward_point_window = 8;
+config.turn_mode_enter_m     = 0.6;
+config.turn_mode_exit_m      = 0.6;
+config.goal_reached_distance_m = 1.0;
+path_locator.Configure(config);
+
+const PathMatchResult result = path_locator.Project(robot_state);
+if (!result.success) {
+  // 失败时返回默认结果
+}
+const TrajectoryPoint& target = result.target_point;
+const RobotState& control_state = result.control_state;
+```
+
+几何中心最近点是模式判定、路径进度和终点判定的唯一锚点。`GlobalPathLocator` 在
+WORK 模式下把位姿参考点换算到后轴中心，只在中心锚点前后各一个 `wheelbase` 的弧长
+范围内搜索后轴目标点，并在 `control_state` 返回后轴位姿；TURN 模式直接使用几何中心
+最近点和原车辆位姿。后轴局部搜索不推进全局
+进度，失败时 `Project()` 返回失败；起点或终点之外的坐标仍由搜索接口夹到路径端点。
 
 只有 `VALID`、非回放、时间未超过 `crop_row_timeout_s`、置信度不低于
 `crop_row_min_confidence`、坐标系匹配且数值有限的观测才参与控制。视觉失效立即降级到
-全局路径 LQR，不保持旧视觉值。TURN 前后 `row_vision_pre_turn_m` 范围内暂停视觉恢复计数，
-离开该范围后必须重新取得 `row_vision_resume_frames` 个连续有效帧。
+全局路径 LQR，不保持旧视觉值。进入可配置的 TURN 前预览或后保持窗口后暂停
+视觉恢复计数，离开该窗口后必须重新取得 `row_vision_resume_frames` 个连续有效帧。
 
 参考源和转向模式切换会保留上一转角指令，由 `max_steer_rate_deg_s` 平滑实际输出。
 纯二维 LQR 没有积分状态；恒定转向零偏必须通过机械标定或后续 LQI 处理。
@@ -219,8 +249,8 @@ LQR 的状态量只有 `[横向误差, 航向误差]`，**没有沿路径方向�
 
 仿真实测就是这样：目标点冻结在起点，车跑出 238 m，`steer_angle_rad = 2.4e-14`，所有误差指标都是 0，车径直冲出田块。`max_track_error_m` 这道门是唯一能发现该情况的手段，因此必须配置为正数。
 
-配套的 `snap_forward_points`（默认 20 段）让连续投影每拍从上一命中线段开始，
-在向前 `snap_forward_points` 个线段的范围内寻找最近垂足，避免纯弧长累积
+配套的 `forward_point_window`（默认 8 个索引步）让最近点搜索每拍从上一命中点开始，
+在向前 `forward_point_window` 个索引步的范围内寻找最近离散点，避免纯弧长累积
 在里程计打滑时与车越走越远。目标进度单调不减，所以永远不会把投影点拉回上一行
 （弓字形作业不会重跑已覆盖的垄）。
 
@@ -278,11 +308,11 @@ YAML 参数被视为可信输入，节点运行时不再对参数范围做自动
 | `pose_at_vehicle_center` | 默认 `true`；单阿克曼自动换算到后轴，双阿克曼使用中心 |
 | `max_steer_rate_deg_s` | 转角指令变化率上限，默认 `90°/s`，需按转向执行器能力标定 |
 | `row_vision_enabled` | 是否启用视觉稻行 LQR，默认 `false` |
-| `row_vision_pre_turn_m` | TURN 前后退出或暂停视觉的弧长距离，默认 `3.0 m` |
 | `row_vision_resume_frames` | 视觉失效或出弯后恢复所需连续有效帧数，默认 `3` |
 | `crop_row_min_confidence` | 视觉观测参与 LQR 的最低置信度 |
 | `work_speed_m_s` / `turn_speed_m_s` | WORK/TURN 基础速度，默认 0.6/0.3 m/s |
-| `turn_speed_preview_m` / `turn_speed_hold_m` | 转弯前预览和转弯后低速保持距离 |
+| `turn_mode_enter_m` / `turn_mode_exit_m` | `GlobalPathLocatorConfig` 的工作模式进入/保持距离，同时决定单/双阿克曼和车速，默认 0.6/0.6 m |
+| `goal_reached_distance_m` | 当前位姿距路径终点不超过此距离时判定到达终点，默认 `1.0 m` |
 | `lqr_Q_*` / `lqr_R_steer` | 见上方"语义差异"，不能照抄履带项目的值 |
 
 建议调参顺序：先仿真（`sim_demo` 那套思路可复用）验证收敛 → 低速直线（0.3 m/s）验证符号与增益 → 弓字形全覆盖路径验证 WORK/TURN 速度切换 → 逐步提速。
@@ -333,13 +363,14 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
 
 | 文件 | 覆盖 |
 |---|---|
+| `test_lqr_input.cpp` | 路径横差/航差、角度归一化、视觉直线换算、位姿参考点差异和非法输入拒绝 |
 | `test_lqr_kinematics.cpp` | 精确阿克曼前馈、运行时等效轴距、WORK/TURN 速度区、跟踪误差和曲率不参与降速、直线与对称阿克曼圆弧闭环、左右偏差符号、转角限幅、小位移弧长累计、沿路径盲区和前向吸附 |
 | `test_discrete_points_math.cpp` | 少于三点拒绝、空指针拒绝、直线零曲率、弧长累加、左/右转弯曲率符号、端点单边差分、相邻重合点与航向退化检查、四分之一圆曲率量级 |
-| `test_global_path_locator.cpp` | 线段内连续投影、终点夹取、单调前进、有限搜索窗口、跨界航向插值、TURN 距离和退化路径拒绝 |
+| `test_global_path_locator.cpp` | 离散最近点、终点夹取、单调前进、可配置 TURN 预览/保持窗口、模式相关目标点和退化路径拒绝 |
 
 闭环测试同时覆盖直线横向误差收敛和 `L_eff=L/2` 的对称阿克曼圆弧跟踪。
 后者能同时检查精确前馈、等效轴距和路径目标推进是否一致。
 
 `LqrAlongTrackBlindSpot.RunningPastGoalReportsZeroError` 是**特意写成"记录盲区存在"**的回归测试：它断言车在目标点前方 200 m 处时横向/航向误差**都是 0**、转向指令为 0、但速度仍大于 0，同时 `distance_to_goal > 199`。这条测试的价值在于——如果将来有人认为 `e_lat`/`e_head` 已经足够而删掉偏离距离门，距离断言会失败，从而暴露那次删除的风险。
 
-`GlobalPathLocator.NeverProjectsBackward` 断言连续投影进度单调不减：车被"传送"回后方时目标点不许跟着倒退，否则弓字形作业会重跑已经除过草的垄。
+`GlobalPathLocator.NeverProjectsBackward` 断言最近点进度单调不减：车被"传送"回后方时目标点不许跟着倒退，否则弓字形作业会重跑已经除过草的垄。
