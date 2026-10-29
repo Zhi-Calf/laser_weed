@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>田间标定台</title>
+    <link rel="stylesheet" href="/static/app.css">
+  </head>
+  <body>
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">RK NAV · FIELD ASSISTANT</p>
+        <h1>田间标定台</h1>
+        <p class="lede">把设备放稳，按页面提示操作。所有结果都会保存成可追溯的测试包。</p>
+      </div>
+      <div class="mode-stamp" aria-live="polite">
+        <span id="mode-dot" class="mode-dot"></span>
+        <span id="mode-label">正在读取状态</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="readiness" aria-labelledby="readiness-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">系统预检</p>
+            <h2 id="readiness-title">先确认设备，再开始采集</h2>
+          </div>
+          <button id="refresh-button" class="button button-quiet" type="button">刷新状态</button>
+        </div>
+        <div id="check-strip" class="check-strip" aria-live="polite"></div>
+      </section>
+
+      <section class="workspace-grid">
+        <article class="preview-panel">
+          <div class="panel-title">
+            <div>
+              <p class="section-index">画面</p>
+              <h2>相机预览</h2>
+            </div>
+            <span id="preview-badge" class="tag">等待画面</span>
+          </div>
+          <div class="preview-frame">
+            <img id="preview-image" alt="相机或文件回放预览">
+            <div id="preview-empty" class="preview-empty">
+              <span class="crop-mark" aria-hidden="true"></span>
+              <p>尚未配置预览图片</p>
+              <small>MyUbuntu 可使用已有照片模拟相机输入</small>
+            </div>
+          </div>
+          <div class="preview-footer">
+            <span id="platform-label">读取运行环境…</span>
+            <span id="disk-label"></span>
+          </div>
+        </article>
+
+        <article class="guide-panel">
+          <div class="panel-title">
+            <div>
+              <p class="section-index">当前步骤</p>
+              <h2>建立现场会话</h2>
+            </div>
+            <span id="session-tag" class="tag tag-muted">尚未开始</span>
+          </div>
+
+          <form id="session-form" novalidate>
+            <label class="field field-wide">
+              <span>操作人员</span>
+              <input name="operator" autocomplete="name" placeholder="填写姓名" required>
+            </label>
+
+            <div class="field-pair">
+              <label class="field">
+                <span>横向方格</span>
+                <div class="unit-input"><input name="square_width_mm" type="number" step="0.01" value="56.5" required><b>mm</b></div>
+              </label>
+              <label class="field">
+                <span>纵向方格</span>
+                <div class="unit-input"><input name="square_height_mm" type="number" step="0.01" value="56.5" required><b>mm</b></div>
+              </label>
+            </div>
+
+            <div class="field-pair">
+              <label class="field">
+                <span>标记边长</span>
+                <div class="unit-input"><input name="marker_mm" type="number" step="0.01" value="42.2" required><b>mm</b></div>
+              </label>
+              <label class="field">
+                <span>校验线</span>
+                <div class="unit-input"><input name="check_line_mm" type="number" step="0.01" value="100" required><b>mm</b></div>
+              </label>
+            </div>
+
+            <label class="confirm-row">
+              <input name="board_flat" type="checkbox">
+              <span><b>标定板已平整固定</b><small>没有翘曲、折痕或局部悬空</small></span>
+            </label>
+
+            <button class="button button-primary" type="submit">开始新会话</button>
+          </form>
+
+          <div id="current-session" class="current-session" hidden>
+            <p class="session-name" id="session-name"></p>
+            <p id="session-path"></p>
+            <div class="session-actions">
+              <button id="export-button" class="button button-primary" type="button">导出测试包</button>
+              <a id="download-link" class="button button-quiet" href="#" hidden>下载 ZIP</a>
+            </div>
+          </div>
+
+          <section id="capture-panel" class="intrinsic-runner" hidden aria-label="逐张拍照">
+            <h3>准备好一张，再拍下一张</h3>
+            <label class="field"><span>采集组</span><select id="capture-group">
+              <option value="intrinsic">拟合照片：近、中、远三轮，共 27 张</option>
+              <option value="validation">独立验证：重新摆放，共 9 张</option>
+            </select></label>
+            <p class="helper">九宫格表示标定板在相机画面中的位置。相机固定，移动标定板；完整入镜，变换倾斜角度，拍照时保持不动。</p>
+            <div id="capture-grid" class="capture-grid" aria-label="画面九宫格"></div>
+            <p id="capture-instruction" aria-live="polite"></p>
+            <p id="capture-counts"></p>
+            <img id="capture-review" class="capture-review" alt="刚拍摄的照片，请检查标定板完整、清晰且无反光" hidden>
+            <p id="capture-feedback" role="status"></p>
+            <div class="session-actions">
+              <button id="capture-button" class="button button-primary" type="button">准备好了，拍照</button>
+              <button id="capture-next" class="button button-secondary" type="button" disabled>照片满意，下一个位置</button>
+            </div>
+            <button id="calibrate-captured" class="button button-secondary" type="button">使用本次照片计算内参</button>
+          </section>
+
+          <div id="intrinsic-runner" class="intrinsic-runner" hidden>
+            <div class="subsection-title">
+              <div>
+                <p class="section-index">离线内参验证</p>
+                <h3>导入两组独立图片</h3>
+              </div>
+              <span id="intrinsic-state" class="tag tag-muted">未运行</span>
+            </div>
+            <p class="helper">路径相对于服务的图片导入目录。拟合图片与验证图片不能重复使用。</p>
+            <label class="field field-wide">
+              <span>拟合图片目录</span>
+              <input id="train-dir" value="synthetic/intrinsic" placeholder="例如 cmd108/intrinsic">
+            </label>
+            <label class="field field-wide">
+              <span>独立验证目录</span>
+              <input id="validation-dir" value="synthetic/validation" placeholder="例如 cmd108/validation">
+            </label>
+            <button id="run-intrinsic-button" class="button button-secondary" type="button">运行拟合与验证</button>
+            <dl id="intrinsic-result" class="metric-list" hidden></dl>
+          </div>
+
+          <p id="message" class="message" aria-live="polite"></p>
+        </article>
+      </section>
+
+      <section id="bev-panel" class="bev-panel" hidden aria-labelledby="bev-title">
+        <div class="section-heading"><div><p class="section-index">装车后 · 外参 / BEV</p>
+          <h2 id="bev-title">把画面中的地面点，对齐后轮轴中心</h2></div>
+          <span id="bev-state" class="tag">未开始</span></div>
+        <div class="bev-reference"><strong>原点 O：后轮轴中心在地面的垂直投影</strong>
+          <p>沿车头方向为 x 正方向；车辆左侧为 y 正方向，右侧填负数。测两个方向的直角距离，不量斜线。</p>
+          <svg viewBox="0 0 360 150" role="img" aria-label="俯视：车头向上，后轴中心为原点，向前 x 正，向左 y 正">
+            <rect x="145" y="30" width="70" height="95" rx="8" fill="#d9e9c5" stroke="#173c30"/>
+            <path d="M130 110H230 M180 110V12 M180 12L175 22 M180 12L185 22 M180 110H45 M45 110L55 105 M45 110L55 115" fill="none" stroke="#173c30" stroke-width="3"/>
+            <circle cx="180" cy="110" r="5" fill="#173c30"/>
+            <text x="230" y="30">前 +x</text><text x="20" y="95">左 +y</text><text x="230" y="116">O 后轴中心</text>
+          </svg>
+        </div>
+        <h3>1 · 固定相机，拍下所有地面标记</h3>
+        <p class="helper">使用平整硬地面，车辆静止。建议放置 8–12 个标定点，另留至少 4 个独立检查点，覆盖近、远、左、右。所有点须同时入镜。</p>
+        <label class="field"><span>使用哪份内参</span><select id="bev-intrinsic"><option value="configured">部署人员预先配置的内参</option><option value="session">本次会话计算的内参</option></select></label>
+        <label class="confirm-row"><input id="bev-reference-confirmed" type="checkbox"><span>已确认后轴原点和坐标方向，地面平整，相机已固定装车</span></label>
+        <label class="confirm-row"><input id="bev-intrinsic-confirmed" type="checkbox"><span>所选内参已人工复核，当前相机分辨率、焦距和裁剪设置与标定时一致</span></label>
+        <button id="bev-prepare" class="button button-primary" type="button">准备好了，拍摄地面照片</button>
+        <p class="helper">重新拍摄会清空已有点位和 BEV 结果，请先导出需要保留的记录。模拟模式使用回放照片。</p>
+        <div id="bev-editor" hidden>
+          <h3>2 · 选一个点，填距离，再点照片对应位置</h3>
+          <p class="helper">照片已去畸变。先选点号，在照片上点击地面标记中心；放大页面可精细点选。绿色为标定点，橙色为独立检查点。检查点不参与拟合。</p>
+          <div class="bev-edit-grid"><div class="bev-canvas-wrap"><canvas id="bev-canvas" aria-label="去畸变地面照片，可点击选择地面点"></canvas>
+            <p id="bev-selected" role="status"></p>
+            <details><summary>无法使用鼠标？填写原图像素坐标</summary><label>水平 u <input id="bev-u" type="number" step="0.1"></label><label>垂直 v <input id="bev-v" type="number" step="0.1"></label><button id="bev-set-pixel" type="button" class="button button-quiet">更新所选点</button></details></div>
+            <div><p class="helper">窄屏可左右滑动表格查看照片坐标和删除按钮。</p><div class="bev-table-scroll"><table class="bev-points"><thead><tr><th>点号</th><th>用途</th><th>前向 x / m</th><th>左向 y / m</th><th>照片位置</th><th>操作</th></tr></thead><tbody id="bev-points"></tbody></table></div>
+              <button id="bev-add" class="button button-quiet" type="button">增加地面点</button>
+              <button id="bev-save" class="button button-secondary" type="button">保存点位</button>
+              <button id="bev-run" class="button button-primary" type="button">计算 BEV 并检查误差</button></div></div>
+        </div>
+        <p id="bev-message" class="message" role="status"></p>
+        <div id="bev-result" hidden><h3>3 · 检查鸟瞰图和独立点误差</h3>
+          <p id="bev-metrics"></p><p class="helper">BEV 左为车辆左侧，上为车头方向；O 为后轴原点。当前显示前方约 8 m、左右各约 3.2 m；范围外的点仍参与误差检查。通过阈值只代表几何检查通过，候选结果仍需现场复核。</p>
+          <details><summary>查看每个点的误差，排查填错或点错的位置</summary><ol id="bev-errors"></ol></details>
+          <div class="bev-results"><figure><img id="bev-overlay" alt="原图点号叠加"><figcaption>去畸变原图与点号</figcaption></figure><figure><img id="bev-output" alt="以后轴地面投影为原点的 BEV"><figcaption>BEV：1 像素对应 1 cm；彩色圈为投影位置，白十字为实测位置</figcaption></figure></div>
+          <p>使用上方“导出测试包”保存照片、内参、地面点、误差和候选 BEV 参数。</p>
+          <label class="confirm-row"><input id="bev-publish-reviewed" type="checkbox"><span>内参和检查图已人工复核，后轴参考点与算法接口一致，同事已有的轴距补偿已核对</span></label>
+          <button id="bev-publish" class="button button-primary" type="button" disabled>复核后设为算法参数</button>
+          <p class="helper">仅真机标定且几何检查通过后可操作。保存后，下次初始化算法时读取；页面不启动或重启车辆程序。</p>
+        </div>
+        <p id="bev-runtime-path" class="helper"></p>
+      </section>
+
+      <section class="workflow" aria-labelledby="workflow-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">执行边界</p>
+            <h2 id="workflow-title">哪些现在能测，哪些必须等真机</h2>
+          </div>
+        </div>
+        <div class="workflow-grid">
+          <article class="workflow-card is-active">
+            <span class="step-code">A</span>
+            <h3>内参与文件回放</h3>
+            <p>在 MyUbuntu 验证页面、输入校验、候选参数读取、图片预览和结果包。</p>
+            <span class="workflow-state">现在可测试</span>
+          </article>
+          <article class="workflow-card">
+            <span class="step-code">B</span>
+            <h3>外参与 BEV</h3>
+            <p>在上方拍照、填写距离和点选地面点。最终地面点必须在相机固定装车后实测。</p>
+            <span class="workflow-state">可做模拟</span>
+          </article>
+          <article class="workflow-card is-locked">
+            <span class="step-code">C</span>
+            <h3>GNSS / IMU / RTK</h3>
+            <p>只展示已保存日志，不伪造定位结果。卫星、组合导航和时延必须回到真机验收。</p>
+            <span class="workflow-state">等待硬件</span>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>RK NAV FIELD ASSISTANT · LOCAL ONLY</span>
+      <span id="generated-at"></span>
+    </footer>
+
+    <script src="/static/app.js" defer></script>
+    <script src="/static/bev.js" defer></script>
+  </body>
+</html>

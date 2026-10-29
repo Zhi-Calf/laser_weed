@@ -462,3 +462,7 @@ colcon test-result --verbose
   （BSD-3）；使用和发布时需保留其版权与许可证声明
 
 项目整体使用 Apache-2.0 许可证。
+
+## 相机标定
+
+完整标定页面、采集程序和 A2 打印资料见 [row_nav_calibration](row_nav_calibration/README.md)。该模块可随 colcon 统一构建，也可独立安装，不启动车辆控制。

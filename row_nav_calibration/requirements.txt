@@ -1,0 +1,4 @@
+# Install into an isolated Python >=3.10 environment, not system Python.
+# contrib provides ChArUco; headless avoids a display requirement.
+numpy>=1.23,<3
+opencv-contrib-python-headless>=4.7,<5

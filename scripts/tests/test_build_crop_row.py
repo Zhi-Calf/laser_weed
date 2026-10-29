@@ -46,9 +46,12 @@ class BuildEntryTest(unittest.TestCase):
         self.assertIn(str(ROOT / 'row_nav_sdk'), calls[0])
         self.assertIn('--packages-up-to', calls[0])
         self.assertIn('crop_row_perception', calls[0])
+        self.assertIn(str(ROOT / 'row_nav_calibration'), calls[0])
+        self.assertIn('row_nav_calibration', calls[0])
         self.assertIn('-DRK_NAV_WITH_RKNN=OFF', calls[0])
         self.assertIn('row_nav_sdk', calls[1])
         self.assertIn('crop_row_perception', calls[1])
+        self.assertIn('row_nav_calibration', calls[1])
         self.assertNotIn('launch', sum(calls, []))
 
     def test_rknn_path_with_spaces_and_build_only(self):
