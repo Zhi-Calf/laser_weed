@@ -7,6 +7,8 @@
 #include <cmath>
 #include <limits>
 
+#include "path_tracker/lqr_input.hpp"
+
 namespace path_tracker {
 namespace {
 
@@ -128,14 +130,18 @@ LQROutput LQR::ComputeFeedbackControl(double lateral_error, double heading_error
   return output;
 }
 
-// 使用统一定位结果确定模式、速度和目标点并计算 LQR。
+// 使用已校验的路径误差输入、统一定位结果和车体状态计算 LQR。
 // 输入:
 //   robot_state         : 车体中心 ENU 位姿
 //   match               : 最近点、工作模式、控制状态、目标点和终点信息
+//   input               : 已计算并完成安全门控的路径误差输入
 // 返回:
 //   控制量；失败时 success 为 false
-LQROutput LQR::ComputeCommand(const RobotState& robot_state, const PathMatchResult& match) {
-  if (!match.success || match.at_path_end) {
+LQROutput LQR::ComputeCommand(
+    const RobotState& robot_state,
+    const PathMatchResult& match,
+    const LQRInputResult& input) {
+  if (!match.success || match.at_path_end || !input.success) {
     return LQROutput{};
   }
   if (!std::isfinite(robot_state.linear_v)) {
@@ -143,42 +149,38 @@ LQROutput LQR::ComputeCommand(const RobotState& robot_state, const PathMatchResu
   }
 
   const bool symmetric_ackermann   = SelectSymmetricAckermann(match);
-  const RobotState& control_state  = match.control_state;
   const double effective_wheelbase = EffectiveWheelbase(config_.wheelbase, symmetric_ackermann);
   const TrajectoryPoint& target    = match.target_point;
-  const LQRInputResult input       = input_calculator_.CalculatePath(control_state, target);
-  if (!input.success) {
-    return LQROutput{};
-  }
   const double speed      = ScaleSpeed(match);
   const double gain_speed = std::max(robot_state.linear_v, 0.0);
   LQROutput output        = ComputeFeedbackControl(input.lateral_error, input.heading_error, input.target_kappa, speed, gain_speed, effective_wheelbase);
   output.target_pt        = target;
   output.steer_mode       = symmetric_ackermann ? 1 : 0;
   output.target_index     = match.point_index;
-  output.distance_to_goal = std::hypot(robot_state.x - match.nearest_point.x, robot_state.y - match.nearest_point.y);
+  output.nearest_path_distance_m = match.nearest_distance_m;
   return output;
 }
 
-// 跟踪视觉中心线的解析直线。
+// 使用已校验的视觉直线误差输入计算单阿克曼 LQR。
 // 输入:
-//   robot_state          : 当前车体位姿，仅用于接口一致性
-//   reference            : 车体参考点处的中心线截距和航向
+//   robot_state          : 当前车体位姿，用于实测车速
+//   input                : 已计算并完成安全门控的视觉误差输入
 //   commanded_speed_m_s  : 沿用全局路径分段的速度 (m/s)
 // 返回:
 //   单阿克曼控制量；失败时 success 为 false
-LQROutput LQR::ComputeLineCommand(const RobotState& robot_state, const LineReference& reference, double commanded_speed_m_s) {
-  if (!std::isfinite(commanded_speed_m_s) || commanded_speed_m_s < 0.0) {
+LQROutput LQR::ComputeLineCommand(
+    const RobotState& robot_state,
+    const LQRInputResult& input,
+    double commanded_speed_m_s) {
+  if (!input.success ||
+      !std::isfinite(commanded_speed_m_s) ||
+      commanded_speed_m_s < 0.0) {
     return LQROutput{};
   }
   if (!std::isfinite(robot_state.linear_v)) {
     return LQROutput{};
   }
 
-  const LQRInputResult input = input_calculator_.CalculateLine(reference);
-  if (!input.success) {
-    return LQROutput{};
-  }
   const double effective_wheelbase = EffectiveWheelbase(config_.wheelbase, false);
   TrajectoryPoint target;
   target.kappa            = input.target_kappa;

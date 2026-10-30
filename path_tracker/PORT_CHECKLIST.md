@@ -103,7 +103,7 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 | `goal_reached_distance_m` | `1.0` | 当前位姿距路径终点的到达阈值 (m) | 🟡 |
 | `max_steer_rate_deg_s` | `90.0` | 转向执行器允许的等效转角变化率 | 🔴 |
 | `row_vision_enabled` | `false` | 稻行视觉中心线统一 LQR 总开关 | 🟡 |
-| `crop_row_timeout_s` | `0.3` | 视觉参考线超时时间 (s) | 🟡 |
+| `crop_row_timeout_s` | `0.3` | 视觉参考线采集时间超时 (s) | 🟡 |
 | `work_speed_m_s` / `turn_speed_m_s` | `0.6/0.3` | 按路径段固定基础速度 | 🟡 |
 | `log_dir` | `/opt/agri/logs` | 统一 spdlog 滚动日志目录 | 🟡 |
 | `lqr_Q_lateral/heading`、`lqr_R_steer` | 50/25/25 | **不能照抄履带调参值**：R 的语义从角速度代价变成了转向角代价，量纲不同，需重标 | 🟡 |

@@ -79,6 +79,7 @@ TEST(GlobalPathLocator, FindsNearestDiscretePoint) {
   EXPECT_EQ(match.point_index, 12);
   EXPECT_NEAR(match.target_point.x, 1.2, 1e-12);
   EXPECT_NEAR(match.target_point.y, 0.0, 1e-12);
+  EXPECT_NEAR(match.nearest_distance_m, std::hypot(0.04, 0.2), 1e-12);
   EXPECT_FALSE(match.at_path_end);
 }
 

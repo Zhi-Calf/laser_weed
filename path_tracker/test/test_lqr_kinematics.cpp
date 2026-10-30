@@ -13,11 +13,14 @@
 
 #include "path_tracker/global_path_locator.hpp"
 #include "path_tracker/lqr.hpp"
+#include "path_tracker/lqr_input.hpp"
 
 using path_tracker::GlobalPathLocator;
 using path_tracker::GlobalPathLocatorConfig;
 using path_tracker::LineReference;
 using path_tracker::LQRConfig;
+using path_tracker::LQRInputCalculator;
+using path_tracker::LQRInputResult;
 using path_tracker::LQROutput;
 using path_tracker::PathMatchResult;
 using path_tracker::PathWorkMode;
@@ -29,6 +32,16 @@ namespace {
 struct LQRInput {
   RobotState robot_state;
 };
+
+LQRInputResult CalculatePathInput(const PathMatchResult& match) {
+  return LQRInputCalculator{}.CalculatePath(
+      match.control_state,
+      match.target_point);
+}
+
+LQRInputResult CalculateLineInput(const LineReference& reference) {
+  return LQRInputCalculator{}.CalculateLine(reference);
+}
 
 // 将最近点搜索与 LQR 组合为路径跟踪测试控制器。
 class TestPathTracker {
@@ -62,9 +75,11 @@ class TestPathTracker {
       return LQROutput{};
     }
     const PathMatchResult& center_match = center_result;
+    const LQRInputResult input_result = CalculatePathInput(center_match);
     return lqr_.ComputeCommand(
         input.robot_state,
-        center_match);
+        center_match,
+        input_result);
   }
 
  private:
@@ -247,6 +262,7 @@ TEST(LqrCommandInputs, SingleModeUsesSelectedTargetAndState) {
   match.success                      = true;
   match.nearest_point.x              = 10.0;
   match.nearest_point.y              = 2.0;
+  match.nearest_distance_m           = 0.2;
   match.target_point.x               = 10.0;
   match.target_point.y               = 2.0;
   match.target_point.heading         = 0.1;
@@ -260,15 +276,16 @@ TEST(LqrCommandInputs, SingleModeUsesSelectedTargetAndState) {
   state.linear_v = 0.5;
   match.control_state = state;
 
+  const LQRInputResult input_result = CalculatePathInput(match);
   const LQROutput output =
-      lqr.ComputeCommand(state, match);
+      lqr.ComputeCommand(state, match, input_result);
   ASSERT_TRUE(output.success);
   EXPECT_NEAR(output.heading_error, -0.1, 1e-12);
   EXPECT_NEAR(output.lateral_error, 0.2 * std::cos(0.1), 1e-12);
   EXPECT_NEAR(output.steer_ff, std::atan(1.2 * 0.05), 1e-12);
   EXPECT_NEAR(output.target_pt.heading, 0.1, 1e-12);
   EXPECT_EQ(output.target_index, 6);
-  EXPECT_NEAR(output.distance_to_goal, 0.2, 1e-12);
+  EXPECT_NEAR(output.nearest_path_distance_m, 0.2, 1e-12);
 }
 
 // 双阿克曼模式必须由统一匹配结果中的工作模式选择。
@@ -282,6 +299,7 @@ TEST(LqrCommandInputs, SymmetricModeUsesTurnWorkMode) {
   match.success                      = true;
   match.nearest_point.x              = 2.6;
   match.nearest_point.waypoint_type = 1;
+  match.nearest_distance_m           = 0.4;
   match.target_point.waypoint_type  = 1;
   match.target_point.kappa          = 0.1;
   match.target_point.x              = 3.0;
@@ -293,12 +311,13 @@ TEST(LqrCommandInputs, SymmetricModeUsesTurnWorkMode) {
   state.linear_v = 0.3;
   match.control_state = state;
 
+  const LQRInputResult input_result = CalculatePathInput(match);
   const LQROutput output =
-      lqr.ComputeCommand(state, match);
+      lqr.ComputeCommand(state, match, input_result);
   ASSERT_TRUE(output.success);
   EXPECT_EQ(output.steer_mode, 1);
   EXPECT_NEAR(output.steer_ff, std::atan(0.6 * 0.1), 1e-12);
-  EXPECT_NEAR(output.distance_to_goal, 0.4, 1e-12);
+  EXPECT_NEAR(output.nearest_path_distance_m, 0.4, 1e-12);
   EXPECT_EQ(output.target_index, 12);
 }
 
@@ -495,10 +514,11 @@ TEST(LqrLineCommand, ConvertsVisualLateralSignAtRearAxle) {
 
   LineReference reference;
   reference.lateral_error_m = 0.2;
+  const LQRInputResult input = CalculateLineInput(reference);
   RobotState state;
   state.linear_v = 0.5;
   const LQROutput output =
-      lqr.ComputeLineCommand(state, reference, 0.6);
+      lqr.ComputeLineCommand(state, input, 0.6);
   ASSERT_TRUE(output.success);
 
   EXPECT_NEAR(output.lateral_error, -0.2, 1e-12);
@@ -516,10 +536,11 @@ TEST(LqrLineCommand, ConvertsVisualHeadingSign) {
 
   LineReference reference;
   reference.heading_error_rad = 0.1;
+  const LQRInputResult input = CalculateLineInput(reference);
   RobotState state;
   state.linear_v = 0.5;
   const LQROutput output =
-      lqr.ComputeLineCommand(state, reference, 0.6);
+      lqr.ComputeLineCommand(state, input, 0.6);
   ASSERT_TRUE(output.success);
 
   EXPECT_NEAR(output.heading_error, -0.1, 1e-12);
@@ -533,6 +554,7 @@ TEST(LqrFeedback, UsesActualSpeedForGainScheduling) {
 
   LineReference reference;
   reference.lateral_error_m = 0.2;
+  const LQRInputResult input = CalculateLineInput(reference);
 
   RobotState slow_state;
   slow_state.linear_v = 0.1;
@@ -540,9 +562,9 @@ TEST(LqrFeedback, UsesActualSpeedForGainScheduling) {
   fast_state.linear_v = 0.6;
 
   const LQROutput slow =
-      lqr.ComputeLineCommand(slow_state, reference, 0.6);
+      lqr.ComputeLineCommand(slow_state, input, 0.6);
   const LQROutput fast =
-      lqr.ComputeLineCommand(fast_state, reference, 0.6);
+      lqr.ComputeLineCommand(fast_state, input, 0.6);
   ASSERT_TRUE(slow.success);
   ASSERT_TRUE(fast.success);
   EXPECT_NEAR(slow.vel_cmd.linear_v, 0.6, 1e-12);
@@ -560,10 +582,11 @@ TEST(LqrFeedback, UsesExactZeroOrderHoldInputMatrix) {
 
   LineReference reference;
   reference.heading_error_rad = -kHeadingError;
+  const LQRInputResult input = CalculateLineInput(reference);
   RobotState state;
   state.linear_v = kActualSpeed;
   const LQROutput output =
-      lqr.ComputeLineCommand(state, reference, 0.6);
+      lqr.ComputeLineCommand(state, input, 0.6);
   ASSERT_TRUE(output.success);
 
   const double speed_period = kActualSpeed * config.dt;
@@ -796,7 +819,7 @@ TEST(LqrAlongTrackBlindSpot, RunningPastGoalReportsZeroError) {
   EXPECT_GT(out.vel_cmd.linear_v, 0.0) << "and it still commands forward speed - the robot keeps leaving the field";
 
   // 能够发现异常的唯一信号是车辆到目标点的原始距离。
-  EXPECT_GT(out.distance_to_goal, 197.0);
+  EXPECT_GT(out.nearest_path_distance_m, 197.0);
 }
 
 // 输出距离必须反映真实的车辆到目标点距离，并在目标推进后继续更新，
@@ -809,15 +832,15 @@ TEST(LqrAlongTrackBlindSpot, OutputDistanceTracksRobotAndGoal) {
   state.x        = 0.0;
   state.y        = 0.0;
   state.linear_v = 0.5;
-  EXPECT_NEAR(RunControl(lqr, state).distance_to_goal, 0.0, 1e-9) << "robot is on the goal";
+  EXPECT_NEAR(RunControl(lqr, state).nearest_path_distance_m, 0.0, 1e-9) << "robot is on the goal";
 
   // 沿路径前进 10 米后，目标点应同步推进。
   state.x = 10.0;
-  EXPECT_NEAR(RunControl(lqr, state).distance_to_goal, 0.0, 1e-9);
+  EXPECT_NEAR(RunControl(lqr, state).nearest_path_distance_m, 0.0, 1e-9);
 
   // 再横向偏移 5 米。
   state.y = 5.0;
-  EXPECT_NEAR(RunControl(lqr, state).distance_to_goal, 5.0, 1e-6);
+  EXPECT_NEAR(RunControl(lqr, state).nearest_path_distance_m, 5.0, 1e-6);
 }
 
 // ---------------------------------------------------------------------------
@@ -836,7 +859,7 @@ TEST(LqrSnap, GoalSnapsForwardToNearestPoint) {
   state.linear_v = 0.5;
   const auto out = RunControl(lqr, state);
   EXPECT_NEAR(out.target_pt.x, 8.0, 0.1) << "snapping must re-anchor the goal to the robot's position";
-  EXPECT_LT(out.distance_to_goal, 0.2);
+  EXPECT_LT(out.nearest_path_distance_m, 0.2);
 }
 
 // 搜索窗口必须从上一目标点开始，并用当前位姿逐步向前更新。
@@ -865,7 +888,7 @@ TEST(LqrSnap, SearchDoesNotExceedForwardWindow) {
   state.x        = 8.0;
   state.linear_v = 0.5;
   const auto out = RunControl(lqr, state);
-  EXPECT_NEAR(out.distance_to_goal, 7.0, 1e-9)
+  EXPECT_NEAR(out.nearest_path_distance_m, 7.0, 1e-9)
       << "10 个 0.1 m 点距的窗口只能把中心目标推进到 x=1";
 }
 
@@ -884,7 +907,7 @@ TEST(LqrSnap, GoalStaysNearMonotonicCenterProgress) {
 
   state.x              = 5.0;
   const auto backward_out = RunControl(lqr, state);
-  EXPECT_NEAR(backward_out.distance_to_goal, 15.0, 0.1)
+  EXPECT_NEAR(backward_out.nearest_path_distance_m, 15.0, 0.1)
       << "中心最近点进度必须保持在 x=20，不能回退到车辆 x=5";
   EXPECT_GE(backward_out.target_pt.x, 18.8 - 1e-9)
       << "单拍控制点局部搜索不得跳出中心进度附近的一个轴距窗口";

@@ -22,14 +22,15 @@ struct RobotState {
 
 // 全局路径在车体附近的最近点搜索结果。
 struct PathMatchResult {
-  bool success = false;                           // 搜索是否成功
-  TrajectoryPoint nearest_point;                  // 距离车辆最近的路径点
-  TrajectoryPoint target_point;                   // 按工作模式选择的目标点
-  int point_index        = -1;                    // 目标路径点索引
-  int nearest_index      = -1;                    // 最近路径点索引
-  bool at_path_end       = false;                 // 是否命中路径终点
-  PathWorkMode work_mode = PathWorkMode::kWork;   // 当前工作模式
-  RobotState control_state;                       // 当前模式的控制参考状态
+  bool success                   = false;                 // 搜索是否成功
+  TrajectoryPoint nearest_point;                          // 距离车辆最近的路径点
+  TrajectoryPoint target_point;                           // 按工作模式选择的目标点
+  int point_index                = -1;                    // 目标路径点索引
+  int nearest_index              = -1;                    // 最近路径点索引
+  double nearest_distance_m      = 0.0;                   // 车辆到最近路径点的距离 (m)
+  bool at_path_end               = false;                 // 是否命中路径终点
+  PathWorkMode work_mode         = PathWorkMode::kWork;   // 当前工作模式
+  RobotState control_state;                               // 当前模式的控制参考状态
 };
 
 struct GlobalPathLocatorConfig {

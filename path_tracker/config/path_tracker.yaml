@@ -80,7 +80,7 @@ path_tracker:
     # TURN 前预览或后保持窗口内切回全局路径。
     row_vision_enabled: false
 
-    # 视觉观测超时 (s)，必须大于 0。
+    # 视觉观测采集时间超时 (s)，从图像 header.stamp 起算，必须大于 0。
     crop_row_timeout_s: 0.3
 
     # ============================================================
@@ -90,8 +90,8 @@ path_tracker:
     max_lateral_error_m: 0.3
 
     # 车辆几何中心到最近路径点的距离超过此值 (m) 时输出停车。
-    # 该门控用于发现 LQR 沿路径方向的跟踪丢失，必须大于合法前向搜索范围。
-    max_track_error_m: 3.0
+    # 该门控用于发现 LQR 沿路径方向的跟踪丢失，必须大于正常跟踪残差。
+    max_track_error_m: 1.0
 
     # 输入数据超时 (s)，超过后立即输出停车。
     pose_timeout_s: 1.0

@@ -173,17 +173,19 @@ WORK 模式下把位姿参考点换算到后轴中心，只在中心锚点前后
 最近点和原车辆位姿。后轴局部搜索不推进全局
 进度，失败时 `Project()` 返回失败；起点或终点之外的坐标仍由搜索接口夹到路径端点。
 
-`CropRowCallback()` 仅在观测为 `VALID`、序号变化且未超过 `crop_row_timeout_s`
-时更新缓存的 `LineReference`。参考线超时、观测无效或视觉 LQR 输入失败时立即
-降级到全局路径。TURN 前后窗口内使用全局路径；离开窗口后，只要缓存参考线仍有效
-且未超时，就恢复视觉跟踪。
+`CropRowCallback()` 仅在观测为 `VALID`、具有有效采集时间和新序号，且
+`now - header.stamp <= crop_row_timeout_s` 时更新缓存的 `LineReference`。
+重复序号只按状态心跳处理，不能刷新采集时间；无效或过期心跳会立即撤销旧参考线。
+参考线采集超时、观测无效或视觉 LQR 输入失败时降级到全局路径。TURN 前后窗口内
+使用全局路径；离开窗口后，只要缓存参考线的采集时间仍未超时，就恢复视觉跟踪。
 
 参考源和转向模式切换会保留上一转角指令，由 `max_steer_rate_deg_s` 平滑实际输出。
 纯二维 LQR 没有积分状态；恒定转向零偏必须通过机械标定或后续 LQI 处理。
 
-规划器会持续重发路径。`path_tracker` 在首次接收有效路径后停止重建轨迹，
-但每条重发消息仍用于刷新路径心跳；只有 `/work_mode` 的模式值发生实际变化后，
-才会重新接收下一条有效路径。模式重复发布不会触发路径重载。
+规划器会持续重发路径。`path_tracker` 会比较坐标、作业段类型和坐标系；
+内容相同时只刷新路径心跳，不重建轨迹或重置跟踪进度。内容变化时立即加载新路径，
+不依赖 `/work_mode` 是否切换。内容变化的新路径若校验或剖面计算失败，当前路径立即
+失效并停车，直到重新收到完整有效路径。模式重复发布不会触发路径重载。
 
 ### spdlog 日志
 
@@ -230,12 +232,12 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: un
 | 定位超时 | `pose_timeout_s` | 1.0 |
 | **RTK 位姿有效** | `Pose.valid` | true |
 | 路径超时 | `path_timeout_s` | 1.0 |
+| **偏离目标距离** | `max_track_error_m` | 1.0 |
 | **横向误差超限** | `max_lateral_error_m` | 0.3 |
-| **偏离目标距离** | `max_track_error_m` | 3.0 |
 | ROI 内检测到障碍 | `min_obstacle_points` | 3 |
 | **避停状态不可用/超时/感知无效** | `require_velocity_planner` / `velocity_planner_status_timeout_s` | true / 1.0 |
 
-门控按顺序判定：工作模式 → RTK 位姿（存在/新鲜/`valid=true`）→ 路径（存在/新鲜）→ **点云避停** → **横向误差超限** → **偏离目标距离**。`gnss_driver` 仅在 RTK 固定解时把 `Pose.valid` 置为 true，浮点/RTD/单点解都会输出停车。
+门控按顺序判定：工作模式 → RTK 位姿（存在/新鲜/`valid=true`）→ 路径（存在/新鲜）→ **点云避停** → **偏离目标距离** → **横向误差超限**。`gnss_driver` 仅在 RTK 固定解时把 `Pose.valid` 置为 true，浮点/RTD/单点解都会输出停车。
 
 ### 点云避停门控
 
@@ -318,7 +320,7 @@ YAML 参数被视为可信输入，节点运行时不再对参数范围做自动
 | `speed_ramp_mps2` | 最终选中速度指令的加速度上限，默认 `0.5 m/s²`，由节点统一限制 |
 | `max_steer_rate_deg_s` | 转角指令变化率上限，默认 `90°/s`，需按转向执行器能力标定 |
 | `row_vision_enabled` | 是否启用视觉稻行 LQR，默认 `false` |
-| `crop_row_timeout_s` | 视觉参考线超时时间，默认 `0.3 s` |
+| `crop_row_timeout_s` | 视觉参考线采集时间超时，默认 `0.3 s` |
 | `work_speed_m_s` / `turn_speed_m_s` | WORK/TURN 基础速度，默认 0.6/0.3 m/s |
 | `turn_mode_enter_m` / `turn_mode_exit_m` | `GlobalPathLocatorConfig` 的工作模式进入/保持距离，同时决定单/双阿克曼和车速，默认 0.6/0.6 m |
 | `goal_reached_distance_m` | 当前位姿距路径终点不超过此距离时判定到达终点，默认 `1.0 m` |
@@ -381,6 +383,6 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
 闭环测试同时覆盖直线横向误差收敛和 `L_eff=L/2` 的对称阿克曼圆弧跟踪。
 后者能同时检查精确前馈、等效轴距和路径目标推进是否一致。
 
-`LqrAlongTrackBlindSpot.RunningPastGoalReportsZeroError` 是**特意写成"记录盲区存在"**的回归测试：它断言车在目标点前方 200 m 处时横向/航向误差**都是 0**、转向指令为 0、但速度仍大于 0，同时 `distance_to_goal > 199`。这条测试的价值在于——如果将来有人认为 `e_lat`/`e_head` 已经足够而删掉偏离距离门，距离断言会失败，从而暴露那次删除的风险。
+`LqrAlongTrackBlindSpot.RunningPastGoalReportsZeroError` 是**特意写成"记录盲区存在"**的回归测试：它断言车在目标点前方 200 m 处时横向/航向误差**都是 0**、转向指令为 0、但速度仍大于 0，同时 `nearest_path_distance_m > 199`。这条测试的价值在于——如果将来有人认为 `e_lat`/`e_head` 已经足够而删掉偏离距离门，距离断言会失败，从而暴露那次删除的风险。
 
 `GlobalPathLocator.NeverProjectsBackward` 断言最近点进度单调不减：车被"传送"回后方时目标点不许跟着倒退，否则弓字形作业会重跑已经除过草的垄。

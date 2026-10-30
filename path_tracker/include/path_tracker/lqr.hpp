@@ -2,9 +2,11 @@
 
 #include <Eigen/Dense>
 
-#include "path_tracker/lqr_input.hpp"
+#include "path_tracker/global_path_locator.hpp"
 
 namespace path_tracker {
+
+struct LQRInputResult;
 
 // 控制器输出的运动指令。
 struct VelocityCommand {
@@ -14,17 +16,17 @@ struct VelocityCommand {
 
 // LQR 输出的目标状态、误差、前馈和控制量。
 struct LQROutput {
-  bool success = false;               // 控制量计算是否成功
-  TrajectoryPoint target_pt;          // 当前目标点或默认目标
-  VelocityCommand vel_cmd;            // 目标速度和等效转角
-  double lateral_error       = 0.0;   // 车辆相对路径，左正 (m)
-  double heading_error       = 0.0;   // 车辆航向减路径航向 (rad)
-  double steer_ff            = 0.0;   // 曲率前馈转角 (rad)
-  double steer_fb            = 0.0;   // LQR 反馈转角 (rad)
-  double distance_to_goal    = 0.0;   // 车辆到最近路径点的距离 (m)
-  double effective_wheelbase = 0.0;   // 当前模式等效轴距 (m)
-  int target_index           = -1;    // 当前目标路径点索引
-  int steer_mode             = 0;     // 0=单阿克曼，1=双阿克曼
+  bool success                       = false;   // 控制量计算是否成功
+  TrajectoryPoint target_pt;                    // 当前目标点或默认目标
+  VelocityCommand vel_cmd;                      // 目标速度和等效转角
+  double lateral_error               = 0.0;     // 车辆相对路径，左正 (m)
+  double heading_error               = 0.0;     // 车辆航向减路径航向 (rad)
+  double steer_ff                    = 0.0;     // 曲率前馈转角 (rad)
+  double steer_fb                    = 0.0;     // LQR 反馈转角 (rad)
+  double nearest_path_distance_m     = 0.0;     // 车辆到最近路径点的距离 (m)
+  double effective_wheelbase         = 0.0;     // 当前模式等效轴距 (m)
+  int target_index                   = -1;      // 当前目标路径点索引
+  int steer_mode                     = 0;       // 0=单阿克曼，1=双阿克曼
 };
 
 // LQR 的全部静态配置。
@@ -50,8 +52,14 @@ public:
   void Configure(const LQRConfig& config);
   void Reset();
   bool SelectSymmetricAckermann(const PathMatchResult& center_match);
-  LQROutput ComputeCommand(const RobotState& robot_state, const PathMatchResult& match);
-  LQROutput ComputeLineCommand(const RobotState& robot_state, const LineReference& reference, double commanded_speed_m_s);
+  LQROutput ComputeCommand(
+      const RobotState& robot_state,
+      const PathMatchResult& match,
+      const LQRInputResult& input);
+  LQROutput ComputeLineCommand(
+      const RobotState& robot_state,
+      const LQRInputResult& input,
+      double commanded_speed_m_s);
 
 private:
   LQROutput ComputeFeedbackControl(double lateral_error, double heading_error, double target_kappa, double commanded_speed_m_s, double gain_speed_m_s, double effective_wheelbase) const;
@@ -60,7 +68,6 @@ private:
 
 private:
   LQRConfig config_;                                      // 控制器配置
-  LQRInputCalculator input_calculator_;                   // LQR 输入计算器
   Eigen::Matrix2d q_ = Eigen::Matrix2d::Identity();       // 误差权重
   Eigen::MatrixXd r_ = Eigen::MatrixXd::Identity(1, 1);   // 控制权重
 };

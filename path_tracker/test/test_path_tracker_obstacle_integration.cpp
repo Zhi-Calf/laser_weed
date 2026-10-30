@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
 #include <thread>
@@ -285,7 +286,7 @@ TEST(PathTrackerSegmentIntegration, SwitchesSpeedAndSteerModeByPathType) {
   executor.remove_node(tester);
 }
 
-TEST(PathTrackerSegmentIntegration, IgnoresPathUntilWorkModeChanges) {
+TEST(PathTrackerSegmentIntegration, LoadsChangedPathAndSkipsIdenticalRepublish) {
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
@@ -326,8 +327,45 @@ TEST(PathTrackerSegmentIntegration, IgnoresPathUntilWorkModeChanges) {
   EXPECT_EQ(last_command.steer_mode, 0U);
 
   SpinFor(executor, publishers, pose, second_path, mode, nullptr, 0.3);
+  EXPECT_EQ(last_command.steer_mode, 1U);
+  EXPECT_NEAR(last_command.speed_m_s, 0.3, 1e-6);
+
+  // 相同路径重复发布只刷新心跳，不得把定位进度重置到路径起点。
+  pose.x = 4.5;
+  SpinFor(executor, publishers, pose, second_path, mode, nullptr, 0.4);
   EXPECT_EQ(last_command.steer_mode, 0U);
   EXPECT_NEAR(last_command.speed_m_s, 0.6, 1e-6);
+  SpinFor(executor, publishers, pose, second_path, mode, nullptr, 0.3);
+  EXPECT_FALSE(last_command.estop);
+  EXPECT_EQ(last_command.steer_mode, 0U);
+  EXPECT_NEAR(last_command.speed_m_s, 0.6, 1e-6);
+
+  // 新路径内容变化但剖面计算失败时，旧路径必须立即失效并停车。
+  auto invalid_profile = second_path;
+  invalid_profile.x[1] = invalid_profile.x[0];
+  invalid_profile.y[1] = invalid_profile.y[0];
+  SpinFor(
+      executor,
+      publishers,
+      pose,
+      invalid_profile,
+      mode,
+      nullptr,
+      0.3);
+  EXPECT_TRUE(last_command.estop);
+  EXPECT_DOUBLE_EQ(last_command.speed_m_s, 0.0);
+
+  // 规划器恢复有效路径后可以重新初始化并恢复控制。
+  pose.x = 1.5;
+  SpinFor(
+      executor,
+      publishers,
+      pose,
+      second_path,
+      mode,
+      nullptr,
+      0.5);
+  EXPECT_FALSE(last_command.estop);
 
   mode.mode      = WorkMode::MODE_MANUAL;
   mode.mode_name = "manual";
@@ -337,6 +375,7 @@ TEST(PathTrackerSegmentIntegration, IgnoresPathUntilWorkModeChanges) {
 
   mode = MakeUnmannedMode();
   SpinFor(executor, publishers, pose, second_path, mode, nullptr, 0.3);
+  EXPECT_FALSE(last_command.estop);
   EXPECT_EQ(last_command.steer_mode, 1U);
   EXPECT_NEAR(last_command.speed_m_s, 0.3, 1e-6);
 
@@ -407,7 +446,7 @@ TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackOnInvalidStatus)
     rclcpp::Parameter("max_lateral_error_m", 0.3),
     rclcpp::Parameter("max_steer_rate_deg_s", 180.0),
     rclcpp::Parameter("row_vision_enabled", true),
-    rclcpp::Parameter("crop_row_timeout_s", 0.2),
+    rclcpp::Parameter("crop_row_timeout_s", 0.5),
   });
 
   auto tester  = std::make_shared<rclcpp::Node>("path_tracker_vision_test");
@@ -460,7 +499,37 @@ TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackOnInvalidStatus)
       stale_observation,
       sequence,
       0.3,
-      0.5);
+      0.7);
+  EXPECT_NEAR(last_command.steer_angle_rad, 0.0, 1e-9);
+
+  auto nonfinite_lateral = MakeCropRowObservation();
+  nonfinite_lateral.lateral_error_m =
+      std::numeric_limits<double>::quiet_NaN();
+  SpinForWithCropRow(
+      executor,
+      publishers,
+      tester,
+      pose,
+      path,
+      mode,
+      nonfinite_lateral,
+      sequence,
+      0.2);
+  EXPECT_NEAR(last_command.steer_angle_rad, 0.0, 1e-9);
+
+  auto nonfinite_heading = MakeCropRowObservation();
+  nonfinite_heading.heading_error_rad =
+      std::numeric_limits<double>::infinity();
+  SpinForWithCropRow(
+      executor,
+      publishers,
+      tester,
+      pose,
+      path,
+      mode,
+      nonfinite_heading,
+      sequence,
+      0.2);
   EXPECT_NEAR(last_command.steer_angle_rad, 0.0, 1e-9);
 
   const auto valid_observation = MakeCropRowObservation();
@@ -469,7 +538,60 @@ TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackOnInvalidStatus)
   EXPECT_EQ(last_command.steer_mode, 0U);
 
   const double vision_steer = last_command.steer_angle_rad;
-  SpinFor(executor, publishers, pose, path, mode, nullptr, 0.4);
+
+  // 同一帧的状态心跳必须能撤销参考线，不能因序号不变而被忽略。
+  auto stale_heartbeat = valid_observation;
+  stale_heartbeat.status = CropRowObservation::STALE;
+  stale_heartbeat.header.stamp = tester->now();
+  stale_heartbeat.sequence = sequence;
+  publishers.crop->publish(stale_heartbeat);
+  executor.spin_some();
+  SpinFor(executor, publishers, pose, path, mode, nullptr, 0.12);
+  EXPECT_NEAR(last_command.steer_angle_rad, 0.0, 1e-9);
+
+  SpinForWithCropRow(
+      executor,
+      publishers,
+      tester,
+      pose,
+      path,
+      mode,
+      valid_observation,
+      sequence,
+      0.15);
+  EXPECT_GT(last_command.steer_angle_rad, 0.0);
+
+  // 接收时接近采集超时，控制周期仍须按原始采集时间让参考线失效。
+  auto delayed_observation = valid_observation;
+  delayed_observation.session_id = "row-vision-delayed";
+  SpinForWithCropRow(
+      executor,
+      publishers,
+      tester,
+      pose,
+      path,
+      mode,
+      delayed_observation,
+      sequence,
+      0.2,
+      0.35);
+  EXPECT_GT(last_command.steer_angle_rad, 0.0);
+  SpinFor(executor, publishers, pose, path, mode, nullptr, 0.3);
+  EXPECT_LT(
+      std::abs(last_command.steer_angle_rad),
+      0.25 * std::abs(vision_steer));
+
+  // 新会话的序号可以重新开始，即使与上一会话最后序号相同也应受理。
+  auto restarted_observation = valid_observation;
+  restarted_observation.session_id = "row-vision-restarted";
+  restarted_observation.header.stamp = tester->now();
+  restarted_observation.sequence = sequence;
+  publishers.crop->publish(restarted_observation);
+  executor.spin_some();
+  SpinFor(executor, publishers, pose, path, mode, nullptr, 0.15);
+  EXPECT_GT(last_command.steer_angle_rad, 0.0);
+
+  SpinFor(executor, publishers, pose, path, mode, nullptr, 0.6);
   EXPECT_LT(std::abs(last_command.steer_angle_rad), std::abs(vision_steer));
 
   SpinForWithCropRow(
@@ -498,6 +620,111 @@ TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackOnInvalidStatus)
       0.4);
   EXPECT_LT(std::abs(last_command.steer_angle_rad), std::abs(vision_steer));
   EXPECT_EQ(last_command.steer_mode, 0U);
+
+  executor.remove_node(tracker);
+  executor.remove_node(tester);
+}
+
+// 新路径生效后必须先使用全局路径，不能立即复用上一路径周期内的视觉参考线。
+// 视觉会话和序号属于数据流状态，不随路径重载清零；只清除参考线缓存有效性。
+TEST(PathTrackerVisionIntegration, ReloadedPathStartsFromGlobalReference) {
+  rclcpp::NodeOptions tracker_options;
+  tracker_options.parameter_overrides({
+    rclcpp::Parameter("control_hz", 20.0),
+    rclcpp::Parameter("require_velocity_planner", false),
+    rclcpp::Parameter("viz", false),
+    rclcpp::Parameter("wheelbase", 1.2),
+    rclcpp::Parameter("max_steer_rate_deg_s", 180.0),
+    rclcpp::Parameter("row_vision_enabled", true),
+    rclcpp::Parameter("crop_row_timeout_s", 1.0),
+  });
+
+  auto tester =
+      std::make_shared<rclcpp::Node>("path_tracker_vision_reload_test");
+  auto tracker =
+      std::make_shared<path_tracker::PathTrackerNode>(tracker_options);
+
+  ChassisCmd last_command;
+  bool has_command = false;
+  auto command_subscription =
+      tester->create_subscription<ChassisCmd>(
+          "/chassis/cmd",
+          10,
+          [&last_command, &has_command](
+              const ChassisCmd::SharedPtr msg) {
+            last_command = *msg;
+            has_command  = true;
+          });
+
+  TestPublishers publishers;
+  publishers.pose = tester->create_publisher<Pose>(
+      "/gnss_driver/pose",
+      rclcpp::SensorDataQoS());
+  publishers.path = tester->create_publisher<Path>(
+      "/global_path_planner/path",
+      rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
+  publishers.mode = tester->create_publisher<WorkMode>("/work_mode", 10);
+  publishers.obstacle = tester->create_publisher<ObstacleStatus>(
+      "/velocity_planner/status",
+      rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  publishers.crop = tester->create_publisher<CropRowObservation>(
+      "/crop_row/observation",
+      rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+
+  auto pose                = MakePose();
+  pose.x                   = 1.0;
+  const auto path          = MakePath();
+  const auto reloaded_path = MakeSegmentPath();
+  auto mode                = MakeUnmannedMode();
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(tester);
+  executor.add_node(tracker);
+
+  std::uint64_t sequence = 0;
+  const auto observation = MakeCropRowObservation(0.2);
+  SpinForWithCropRow(
+      executor,
+      publishers,
+      tester,
+      pose,
+      path,
+      mode,
+      observation,
+      sequence,
+      0.4);
+  ASSERT_TRUE(has_command);
+  EXPECT_GT(last_command.steer_angle_rad, 0.0);
+
+  mode.mode      = WorkMode::MODE_MANUAL;
+  mode.mode_name = "manual";
+  SpinFor(executor, publishers, pose, path, mode, nullptr, 0.12);
+  EXPECT_TRUE(last_command.estop);
+
+  mode = MakeUnmannedMode();
+  SpinFor(
+      executor,
+      publishers,
+      pose,
+      reloaded_path,
+      mode,
+      nullptr,
+      0.2);
+  ASSERT_TRUE(has_command);
+  EXPECT_FALSE(last_command.estop);
+  EXPECT_NEAR(last_command.steer_angle_rad, 0.0, 1e-9);
+
+  SpinForWithCropRow(
+      executor,
+      publishers,
+      tester,
+      pose,
+      reloaded_path,
+      mode,
+      observation,
+      sequence,
+      0.2);
+  EXPECT_GT(last_command.steer_angle_rad, 0.0);
 
   executor.remove_node(tracker);
   executor.remove_node(tester);

@@ -4,6 +4,7 @@
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
 #include <string>
+#include <vector>
 #include <visualization_msgs/msg/marker.hpp>
 #include <weeder_msgs/msg/chassis_cmd.hpp>
 #include <weeder_msgs/msg/crop_row_observation.hpp>
@@ -14,6 +15,7 @@
 
 #include "path_tracker/global_path_locator.hpp"
 #include "path_tracker/lqr.hpp"
+#include "path_tracker/lqr_input.hpp"
 
 namespace path_tracker {
 
@@ -31,12 +33,9 @@ private:
   void InitializeLogging();
   void LoadParameters();
   void LoadNodeParameters();
-  LQRConfig LoadLQRConfig(
-      double wheelbase,
-      bool pose_at_vehicle_center);
-  GlobalPathLocatorConfig LoadGlobalPathLocatorConfig(
-      double wheelbase,
-      bool pose_at_vehicle_center);
+  void InitializePathTracking(const std::vector<TrajectoryPoint>& path);
+  LQRConfig LoadLQRConfig(double wheelbase, bool pose_at_vehicle_center);
+  GlobalPathLocatorConfig LoadGlobalPathLocatorConfig(double wheelbase, bool pose_at_vehicle_center);
   void SetupInterfaces();
   void ControlTick();
 
@@ -46,13 +45,12 @@ private:
   void ObstacleStatusCallback(const weeder_msgs::msg::ObstacleStatus::SharedPtr msg);
   void CropRowCallback(const weeder_msgs::msg::CropRowObservation::SharedPtr msg);
 
-  ReferenceSource SelectReferenceSource(
-      const PathMatchResult& match,
-      const rclcpp::Time& now) const;
+  ReferenceSource SelectReferenceSource(const PathMatchResult& match, const rclcpp::Time& now) const;
   static const char* ReferenceSourceName(ReferenceSource source);
 
   void PublishViz(const TrajectoryPoint& target);
   void PublishStop();
+  bool CheckLateralError(double lateral_error);
 
 private:
   double control_hz_           = 10.0;         // 控制频率 (Hz)
@@ -61,7 +59,7 @@ private:
 
 private:
   double max_lateral_error_m_               = 0.3;   // 超限后停车
-  double max_track_error_m_                 = 3.0;   // 超限后停车
+  double max_track_error_m_                 = 1.0;   // 超限后停车
   double pose_timeout_s_                    = 1.0;
   double path_timeout_s_                    = 1.0;
   double work_mode_timeout_s_               = 1.0;
@@ -77,6 +75,7 @@ private:
   double crop_row_timeout_s_ = 0.3;
 
 private:
+  LQRInputCalculator lqr_input_calculator_;   // LQR 输入计算器
   LQR lqr_;
   GlobalPathLocator path_locator_;
 
@@ -88,7 +87,7 @@ private:
   rclcpp::Time last_path_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
   bool has_path_               = false;
   int path_point_count_        = 0;
-  bool accept_path_message_    = true;   // 每次使能后仅接收首条有效路径
+  weeder_msgs::msg::Path::SharedPtr last_loaded_path_;  // 最后成功加载的路径
 
 private:
   rclcpp::Time last_work_mode_time_    = rclcpp::Time(0, 0, RCL_ROS_TIME);
@@ -105,10 +104,11 @@ private:
 
 private:
   LineReference line_reference_;
-  std::uint64_t crop_row_sequence_ = 0;
-  rclcpp::Time last_crop_row_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
-  bool line_reference_valid_ = false;
-  ReferenceSource reference_source_ = ReferenceSource::kGlobalPath;
+  std::string last_crop_row_session_id_;          // 最后受理的视觉会话标识
+  std::uint64_t last_crop_row_sequence_    = 0;   // 最后受理的有效帧序号
+  rclcpp::Time last_crop_row_capture_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+  bool line_reference_valid_               = false;
+  ReferenceSource reference_source_        = ReferenceSource::kGlobalPath;
 
 private:
   double last_speed_cmd_m_s_ = 0.0;   // 上一拍速度指令 (m/s)

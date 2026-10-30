@@ -143,15 +143,17 @@ PathMatchResult GlobalPathLocator::Project(const RobotState& robot_state) {
   }
 
   PathMatchResult result;
-  result.success       = true;
-  result.nearest_point = path_[nearest_point_index];
-  result.target_point  = path_[nearest_point_index];
-  result.point_index   = nearest_point_index;
-  result.nearest_index = nearest_point_index;
-  result.at_path_end   = nearest_point_index + 1 == path_size || goal_distance_squared <= config_.goal_reached_distance_m * config_.goal_reached_distance_m;
-  result.work_mode     = UpdateWorkMode(result.nearest_index) ? PathWorkMode::kTurn : PathWorkMode::kWork;
-  point_index_         = result.nearest_index;
-  result.control_state = robot_state;
+  result.success            = true;
+  result.nearest_point      = path_[nearest_point_index];
+  result.target_point       = path_[nearest_point_index];
+  result.point_index        = nearest_point_index;
+  result.nearest_index      = nearest_point_index;
+  result.nearest_distance_m = std::sqrt(
+      SquaredDistance(result.nearest_point, robot_state.x, robot_state.y));
+  result.at_path_end        = nearest_point_index + 1 == path_size || goal_distance_squared <= config_.goal_reached_distance_m * config_.goal_reached_distance_m;
+  result.work_mode          = UpdateWorkMode(result.nearest_index) ? PathWorkMode::kTurn : PathWorkMode::kWork;
+  point_index_              = result.nearest_index;
+  result.control_state      = robot_state;
 
   if (result.work_mode == PathWorkMode::kWork) {
     const double rear_axle_offset_m = config_.pose_at_vehicle_center ? config_.wheelbase_m * 0.5 : 0.0;
