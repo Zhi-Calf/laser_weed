@@ -7,6 +7,9 @@
 已核对 row_nav_sdk、row_nav_calibration、crop_row_perception、weeder_msgs 和 scripts
 与本次测试快照没有差异。路径跟踪和完整 ROS 工程不在本次编译结果内。
 
+ROS 桥接停止时发现重复 shutdown 报错，已在 `9d49e6a` 修复，并新增真实本机 ROS 消息传输与正常退出测试。
+C++ 源码没有因该修复变化，最终交付包包含修复后的 Python 桥接脚本。
+
 独立验证目录：
 `/home/zhouboyang/workspace/laser-weed-ed8be85-20261103.uWB4nh`。
 未覆盖已有训练源码、模型或环境。
@@ -20,6 +23,7 @@
 - 独立 Python 环境：Python 3.10.12、OpenCV 4.14.0、NumPy 2.2.6。
   系统缺少 ensurepip，使用仅放在验证目录中的 virtualenv 引导创建环境，没有更换系统 Python。
 - JavaScript 测试使用已有 Node v20.20.1；系统默认 Node v12 不支持此测试入口。
+- 主机本身未安装 ROS；复用已有 Docker 镜像 `laser-weed-main-sync-check:20261026-a1jxdy`，在 x86_64 ROS 2 Humble 环境中构建感知相关包。
 
 ## 已通过
 
@@ -38,6 +42,9 @@
 | 可选 C++ 标定工具 | 原生与 ARM64 均编译通过；旧版 ChArUco CLI 的布局限制不变，网页使用 Python 求解器 |
 | 安装包 C 消费者 | 原生编译运行 `--version` 返回 0.2.0；ARM64 编译通过 |
 | 动态依赖 | 原生 ldd 没有缺失；ARM64 ELF、SONAME、RPATH 与版本需求检查通过 |
+| ROS 感知相关构建 | weeder_msgs、row_nav_sdk、row_nav_calibration、crop_row_perception 共 4 包构建通过 |
+| ROS 原生测试 | colcon 汇总 27 tests、0 errors、0 failures、0 skipped；统计包含 SDK/标定测试封装，不与上面各项相加 |
+| ROS 姿态桥接集成测试 | 模拟 Pose 经真实本机 ROS 传输、历史记录、标定读取、停止后过期拒绝及 SIGTERM 正常退出均通过 |
 
 Python → C++ 检查仅替换神经网络后端为 test-only，实际加载的是 SDK 的标定和动态几何实现。
 合成输入保存在验证证据包中，带 TEST_ONLY 标记；没有作为实车标定参数交付。
@@ -54,8 +61,8 @@ Python → C++ 检查仅替换神经网络后端为 test-only，实际加载的�
 
 ## ARM64 包
 
-压缩包：`artifacts/validation-20261103/laser-weed-arm64-ed8be85-20261103.tar.gz`。
-日志与合成验证输入：`artifacts/validation-20261103/validation-evidence-ed8be85-20261103.tar.gz`。
+压缩包：`artifacts/validation-20261103/laser-weed-arm64-9d49e6a-20261103.tar.gz`。
+日志与合成验证输入：`artifacts/validation-20261103/validation-evidence-9d49e6a-20261103.tar.gz`。
 校验和：同目录 `SHA256SUMS`。二进制包保留在本地及 MyUbuntu，不纳入 Git。
 
 MyUbuntu 上对应文件位于上述验证目录的 `artifacts/`。
@@ -103,5 +110,17 @@ cmake --install build/calibration-arm64
 
 板子已寄走，ARM64 程序未在板端执行。本次没有核验真实相机 V4L2 的 SOE 时间戳、
 GNSS/RTK 消息时钟、NPU 驱动与模型加载、真机推理性能、真实标定精度或车辆姿态补偿。
-MyUbuntu 没有 ROS 2 Humble 环境，未构建和运行 crop_row_perception 及全 ROS 工作区。
-这些不能由交叉编译或本机测试替代。
+MyUbuntu 上已在容器中构建并测试感知相关的 4 个 ROS 包；未做完整仓库所有业务包编译，也未交叉编译 ARM64 ROS 适配层。
+本机 ROS 消息测试使用模拟输入，没有真实 RTK 设备；这些不能替代板端和现场验证。
+
+## ROS 桥接复测
+
+新增回归脚本为 `row_nav_calibration/tests/ros/test_attitude_bridge.py`。
+在已加载 ROS 2 Humble 和编译后的 weeder_msgs 环境中执行：
+
+```sh
+ROS_DOMAIN_ID=88 python3 row_nav_calibration/tests/ros/test_attitude_bridge.py
+```
+
+脚本在专用测试话题发布模拟 Pose，不要求硬件。ROS 编译、colcon test 及汇总日志、
+桥接测试日志保存在验证目录的 validation-logs 中。

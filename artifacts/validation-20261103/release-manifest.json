@@ -1,5 +1,5 @@
 {
-  "source_commit": "ed8be85e3ee8f45f9d7770da66f5d1260733f42a",
+  "source_commit": "9d49e6a0659a12a95d62cd75e4fdf5464eabe9ae",
   "build_host": "zhouboyang-ASUS-TUF-Gaming-A15-FA507UV-FA507UV",
   "architecture": "aarch64",
   "toolchain": "Buildroot 2020.08 GCC/G++ 9.3.0 glibc 2.31",
@@ -26,17 +26,20 @@
         "observation": "NO_ROW"
       },
       "input": "indoor replay resized to 1920x1080, synthetic geometric fixture, no accuracy evaluation"
-    }
+    },
+    "ros_native_packages": 4,
+    "ros_colcon_reported_tests": 27,
+    "ros_pose_bridge_transport_and_clean_shutdown": "passed; synthetic Pose, no hardware"
   },
   "board_tested": false,
   "ros_workspace_built": false,
   "model_bundled": false,
   "third_party_shared_libraries_bundled": false,
   "files_sha256": {
-    "TESTING-STATUS.txt": "6a03f5f246a5a5ca6699195c6861894e22530a474a41e5a47c6ca85bf6f7a73e",
+    "TESTING-STATUS.txt": "4ef7b6411f05e95cf232492fb35701cdf5c0050db839e7caf10627448cdde8cb",
     "bin/bev_calibrate": "c995751ca068fe3a5483c4d09b9ac0e6d2c578beeca78a72b5e81a54baa9fe0f",
     "bin/bev_calibration_visualize": "760fb4e6eb5f86dd14ecad94d105d2e3a724fb9020d9ce18e771e276593f1a91",
-    "bin/row-nav-attitude-bridge": "ceb541072333577016930cf71c8bd7242b6a69c698ef904c23d08cb104b3b2a7",
+    "bin/row-nav-attitude-bridge": "1b57d3b513e04570673b43754530e048643c5a37f058691fded9a2e6ac6f6140",
     "bin/row-nav-calibration": "6b0d42a7a119eff3b0bfce368718dd7627882318996a93f9f2b9c926975f431e",
     "config/bev.example.yaml": "57184eeaf12ea0d9e6ba838e3894903c02e6b430d72904eed8d3fe19c6e1dbdd",
     "config/camera-calibration.example.yaml": "e02d4d52735a7f93e22f50f4b0f6074a19e2d8f191a8e5860ee977c2ae05b91c",
@@ -59,13 +62,14 @@
     "lib/librk_row_nav.so.1": "32b002e48b460e0f4165569898665c841a262e3839dc07d18921d19e2011891e",
     "lib/row_nav_calibration/charuco_capture": "e91d4e3d7b3ddf3203813b35c0899a473e75ea48e38727c7744adea408e66085",
     "sdk-build-info.txt": "c415700960372eaad0100fdbc77bde61451a9b1774bb3bca5f5ca020206b5fff",
-    "share/row_nav_calibration/README.md": "4d8fdc92ed9f8f8b3f479fea7a93c8b6ba65de5612f3dd3f0423c3fa6742c52a",
+    "share/row_nav_calibration/README.md": "73878c880f85f8d1402db088feb758dde9653d8e39ef8dabcd5d6cc8ac947598",
     "share/row_nav_calibration/docs/attitude-direction-review.md": "11a30b903ca738d3edd8f426f0e92eba119ec8a7e49c41222b5c16af8d454d3d",
     "share/row_nav_calibration/docs/attitude-direction-review.png": "afa664882adbdeb28c4897da70fe9224683dcc0c9b86e8629816ec1383e1337d",
-    "share/row_nav_calibration/docs/dynamic-bev-calibration.md": "94c082bde4728215179f2c4011fa763e0623ba4d4e1e54c90b08ad9cc992dc66",
+    "share/row_nav_calibration/docs/dynamic-bev-calibration.md": "557d01703f7901c1208cccc48db053ca0838743af95d6286a3094202851365ad",
     "share/row_nav_calibration/docs/dynamic-bev-options.png": "3c6f10622dec7a950092f65a2bfa5db7d78928693e9f92844302a6fd9f7203ec",
     "share/row_nav_calibration/docs/integration.md": "1a1e68318a1acea73b407b5c7c6e371a2d6a30acd16b607a22f20373736746c3",
     "share/row_nav_calibration/docs/migration-validation.md": "301201bfa7ee7a06a63f206390041057f37c69e35341f66d214cd2c5ea675a34",
+    "share/row_nav_calibration/docs/validation-mybuntu-20261103.md": "15eea446728cf7fb73663cd5908f955213085c0bb0c1d0cbd4f0fde4a484c0a9",
     "share/row_nav_calibration/output/calibration-guide-v4/BEV\u5730\u9762\u68cb\u76d8\u6807\u8bb0_A4_01\u81f312.pdf": "23f2922baf1a27a20e50f30a1a0dc99d08dcc0407bec5806f83c435ccceb0f6a",
     "share/row_nav_calibration/output/calibration-guide-v4/assets/bev-points.png": "8c372dcc27feb3ccf1673f4b4122fbd4b6e03cc731c4729e1efc9b25cda49fe5",
     "share/row_nav_calibration/output/calibration-guide-v4/assets/bev-prepare.png": "bcee93c606389a79229c0ef1208eda934cf9a7fa2f1eb6b32f129bfa62e49049",
@@ -104,5 +108,8 @@
     "share/row_nav_calibration/tools/field_assistant/static/index.html": "27f756b0408ca62d524471a96f4084b4274f6c25410be623b268dfa65b888b43",
     "share/row_nav_calibration/tools/field_assistant/status.py": "078ae4134d69d4fe4bd89ee3f5aae782ee82a66b9644c3c2df0f69a3dd758081"
   },
-  "same_tested_module_sources_at": "f892dc4706d3622c1ec39cf120b427a867cca715"
+  "compiled_cpp_sources_unchanged_from": "ed8be85e3ee8f45f9d7770da66f5d1260733f42a",
+  "calibration_script_source_commit": "9d49e6a0659a12a95d62cd75e4fdf5464eabe9ae",
+  "ros_perception_packages_built": true,
+  "ros_native_environment": "laser-weed-main-sync-check:20261026-a1jxdy; ROS 2 Humble; x86_64"
 }

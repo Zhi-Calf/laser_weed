@@ -72,7 +72,7 @@ ros2 launch crop_row_perception observer.launch.py \
 Python 合成测试覆盖已知外参恢复、非零参考姿态、倾斜后的独立三维投影对照、
 错误检查点、曝光时间匹配、过期/无效/运动/改变安装等拒绝条件，以及完整准备、计算、发布和篡改拦截。
 本地软件测试不代表整车精度验收。
-2026-11-03 已在 MyUbuntu 完成新采集程序的原生及 ARM64 编译、SDK 测试和 Python 动态参数到 C++ SDK 的合成加载检查，详见 [验证记录](validation-mybuntu-20261103.md)。
+2026-11-03 已在 MyUbuntu 完成新采集程序的原生及 ARM64 编译、SDK 测试、Python 动态参数到 C++ SDK 的合成加载检查，以及容器中的 ROS 感知相关构建、测试与姿态桥接传输检查，详见 [验证记录](validation-mybuntu-20261103.md)。
 V4L2 SOE 支持、ROS 实际时间源、板端 SDK/NPU 加载和实车动态补偿仍需在目标环境验证。尤其不能默认当前相机驱动提供 SOE。
 
 本次回归：67 项 Python 测试、2 项页面重试测试和 6 项构建入口测试通过。
