@@ -251,6 +251,8 @@ bool ctrl_mode
 
 ## 构建
 
+2026-11-03 已在 MyUbuntu 的 x86_64 ROS 2 Humble 环境完成全仓库 12 包构建、自动测试与短时无显示器仿真，范围和待验项见 [全仓库验证记录](docs/full-system-validation-20261103.md)。
+
 系统依赖（Ubuntu 22.04 / ROS 2 Humble）：
 
 ```bash
