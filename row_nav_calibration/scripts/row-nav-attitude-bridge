@@ -19,6 +19,7 @@ def main():
     args = parser.parse_args()
     import rclpy
     from rclpy.qos import qos_profile_sensor_data
+    from rclpy.executors import ExternalShutdownException
     from weeder_msgs.msg import Pose
     rclpy.init()
     node = rclpy.create_node('row_nav_calibration_attitude_bridge')
@@ -55,12 +56,12 @@ def main():
     sub = node.create_subscription(Pose, args.topic, receive, qos_profile_sensor_data)
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_subscription(sub)
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 if __name__ == '__main__':
     main()
