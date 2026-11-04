@@ -61,6 +61,7 @@ function renderStatus(status) {
     empty.style.display = "block";
     $("#preview-badge").textContent = "无画面";
   }
+  document.dispatchEvent(new CustomEvent("field-status", {detail: status}));
 }
 
 function renderSession(session) {
@@ -116,11 +117,7 @@ function restoreCapture() {
   const slots = state.session?.capture_slots?.[group] || [];
   captureSlot = Number.isInteger(saved?.slot) && saved.slot >= 0 && saved.slot < limit
     ? saved.slot : Array.from({length: limit}, (_, i) => i).find(i => !slots.includes(i)) ?? limit - 1;
-  reviewedSlot = slots.includes(captureSlot) ? captureSlot : null;
-  if (reviewedSlot !== null) {
-    $("#capture-review").src = `/api/capture-image?session=${encodeURIComponent(state.session.id)}&group=${group}&slot=${captureSlot}&t=${Date.now()}`;
-    $("#capture-review").hidden = false;
-  }
+  showSavedCapture();
 }
 function renderIntrinsicAttempt(attempt) {
   const panel = $("#intrinsic-issues");
@@ -138,7 +135,8 @@ function renderIntrinsicAttempt(attempt) {
       button.addEventListener("click", () => {
         $("#capture-group").value = issue.group; captureSlot = issue.slot;
         reviewedSlot = null; $("#capture-review").hidden = true;
-        saveCaptureProgress(); renderCapture(); $("#capture-panel").scrollIntoView({behavior:"smooth"});
+        document.dispatchEvent(new CustomEvent("field-navigate", {detail: "intrinsic"}));
+        showSavedCapture(); saveCaptureProgress(); renderCapture();
       });
       row.append(button);
     }
@@ -151,34 +149,68 @@ function resetCapture() {
   $("#capture-review").hidden = true;
   $("#capture-feedback").textContent = "";
 }
+function captureImageUrl(group, slot) {
+  return `/api/capture-image?session=${encodeURIComponent(state.session.id)}&group=${group}&slot=${slot}`;
+}
+function showSavedCapture() {
+  const group = $("#capture-group").value;
+  const saved = (state.session?.capture_slots?.[group] || []).includes(captureSlot);
+  reviewedSlot = saved ? captureSlot : null;
+  $("#capture-review").hidden = !saved;
+  if (saved) $("#capture-review").src = `${captureImageUrl(group, captureSlot)}&t=${Date.now()}`;
+  $("#capture-feedback").textContent = saved ? "这是已保存的照片。可检查后继续，或重拍当前这一张。" : "";
+}
 function renderCapture() {
   const group = $("#capture-group").value;
   saveCaptureProgress();
   const round = Math.floor(captureSlot / 9);
   $("#capture-round").value = String(round);
   const limit = group === "intrinsic" ? 27 : 9;
-  $("#capture-round").disabled = captureBusy || group !== "intrinsic";
+  const slots = state.session?.capture_slots?.[group] || [];
   const counts = state.session?.capture_counts || {};
+  const completed = !!state.session?.metadata?.intrinsic_run;
+  const locked = captureBusy || completed;
+  $("#capture-round").disabled = locked || group !== "intrinsic";
+  $("#capture-position-count").textContent = `第 ${captureSlot + 1} / ${limit} 张`;
+  $("#capture-saved-count").textContent = `已保存 ${counts[group] || 0} 张`;
+  $("#capture-progress").max = limit;
+  $("#capture-progress").value = counts[group] || 0;
   $("#capture-counts").textContent = `已保存：拟合 ${counts.intrinsic || 0}/27 张；独立验证 ${counts.validation || 0}/9 张`;
   const pose = group === "intrinsic" ? ["近距离，板子较大，轻微左右倾斜", "中距离，改变上下倾斜", "远距离，确保方格仍清晰可辨"][round] : "独立验证，重新摆放并改变距离和角度";
   $("#capture-instruction").textContent = `第 ${captureSlot + 1}/${limit} 张：${pose}；放在画面${positions[captureSlot % 9]}，完整入镜。`;
-  $("#capture-grid").innerHTML = positions.map((label, i) => `<button type="button" data-position="${i}" aria-current="${i === captureSlot % 9}" ${captureBusy ? "disabled" : ""}>${label}${(state.session?.capture_slots?.[group] || []).includes(round * 9 + i) ? " ✓" : ""}</button>`).join("");
-  $("#capture-button").disabled = captureBusy;
+  $("#capture-grid").innerHTML = positions.map((label, i) => {
+    const saved = slots.includes(round * 9 + i);
+    const current = i === captureSlot % 9;
+    return `<button type="button" data-position="${i}" data-saved="${saved}" aria-current="${current}" ${captureBusy ? "disabled" : ""}>${label}${saved ? " ✓" : ""}<small>${current ? "当前选择" : saved ? "已拍摄" : "待拍摄"}</small></button>`;
+  }).join("");
+  $("#capture-round-buttons").hidden = group !== "intrinsic";
+  $("#capture-round-buttons").innerHTML = ["近距离", "中距离", "远距离"].map((label, i) =>
+    `<button type="button" data-round="${i}" aria-pressed="${round === i}" ${captureBusy ? "disabled" : ""}>${label}<small>${slots.filter(slot => Math.floor(slot / 9) === i).length} / 9 张</small></button>`
+  ).join("");
+  $("#capture-button").disabled = locked;
   $("#capture-group").disabled = captureBusy;
-  $("#capture-button").textContent = captureBusy ? "正在拍照，请保持不动…" : reviewedSlot === captureSlot ? "不满意，重拍这张" : "准备好了，拍照";
-  $("#capture-next").disabled = captureBusy || reviewedSlot !== captureSlot || captureSlot === limit - 1;
+  $("#capture-button").textContent = completed ? "本次内参已计算" : captureBusy ? "正在拍照，请保持不动…" : reviewedSlot === captureSlot ? "不满意，重拍这张" : "准备好了，拍照";
+  $("#capture-next").disabled = locked || reviewedSlot !== captureSlot || captureSlot === limit - 1;
+  $("#capture-next-help").textContent = completed ? "已有候选内参，重新标定请先建立新会话。" : captureSlot === limit - 1 ? "本组最后一张；拍好后切换采集组或计算内参。" : reviewedSlot !== captureSlot ? "拍好当前照片后，可前往下一个位置。" : "检查清晰度和完整性，满意后再去下一个位置。";
+  $("#capture-save-state").textContent = captureBusy ? "正在采集…" : (counts.intrinsic || counts.validation) ? "✓ 已拍照片保存在设备上" : "等待第一张照片";
+  $(".preview-frame").dataset.captured = String(reviewedSlot === captureSlot);
+  $("#capture-target-label").textContent = `当前选择：${positions[captureSlot % 9]}`;
+  $("#photo-source").textContent = reviewedSlot === captureSlot ? `已拍照片 · 第 ${captureSlot + 1} 张${state.status?.mode === "mock" ? "（模拟）" : ""}` : state.status?.camera.preview_available ? "参考图片（非实时），点击拍照获取当前画面" : "尚无预览，点击拍照获取当前画面";
+  $("#capture-thumbnails").innerHTML = slots.filter(slot => Math.floor(slot / 9) === round).map(slot =>
+    `<button type="button" data-capture-slot="${slot}" aria-current="${slot === captureSlot}" aria-label="查看第 ${slot + 1} 张已拍照片"><img src="${captureImageUrl(group, slot)}" alt="第 ${slot + 1} 张已拍照片">第 ${slot + 1} 张 ✓</button>`
+  ).join("");
+  document.dispatchEvent(new CustomEvent("field-capture", {detail: {group, slot: captureSlot, busy: captureBusy}}));
 }
 $("#capture-grid").addEventListener("click", (event) => {
   const button = event.target.closest("[data-position]");
   if (!button || captureBusy) return;
   captureSlot = Math.floor(captureSlot / 9) * 9 + Number(button.dataset.position);
-  reviewedSlot = null;
-  $("#capture-review").hidden = true;
+  showSavedCapture();
   renderCapture();
 });
 $("#capture-round").addEventListener("change", () => {
-  captureSlot = Number($("#capture-round").value) * 9; reviewedSlot = null;
-  $("#capture-review").hidden = true; renderCapture();
+  captureSlot = Number($("#capture-round").value) * 9;
+  showSavedCapture(); renderCapture();
 });
 $("#capture-group").addEventListener("change", () => {
   resetCapture();
@@ -187,7 +219,19 @@ $("#capture-group").addEventListener("change", () => {
     const slot = saved?.slots?.[$("#capture-group").value];
     if (Number.isInteger(slot)) captureSlot = slot;
   } catch (_) {}
-  renderCapture();
+  showSavedCapture(); renderCapture();
+});
+$("#capture-round-buttons").addEventListener("click", event => {
+  const button = event.target.closest("[data-round]");
+  if (!button || captureBusy) return;
+  captureSlot = Number(button.dataset.round) * 9;
+  showSavedCapture(); renderCapture();
+});
+$("#capture-thumbnails").addEventListener("click", event => {
+  const button = event.target.closest("[data-capture-slot]");
+  if (!button || captureBusy) return;
+  captureSlot = Number(button.dataset.captureSlot);
+  showSavedCapture(); renderCapture();
 });
 $("#capture-next").addEventListener("click", () => {
   captureSlot += 1;

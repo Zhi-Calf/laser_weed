@@ -27,6 +27,8 @@ def test_launcher_paths_and_session_restart(tmp_path):
                     return response.read()
             assert json.loads(get('/healthz'))['ok']
             assert b'<html' in get('/')
+            assert b'data-step-target' in get('/')
+            assert get('/static/workbench.js')
             assert get('/static/bev.js')
             if attempt == 0:
                 payload = dict(operator='migration test', square_width_mm=56.5,

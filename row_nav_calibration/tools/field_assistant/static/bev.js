@@ -105,7 +105,7 @@ function bevDraw() {
 }
 bevPhoto.onload = bevDraw;
 bevPhoto.onerror = () => bevMessage("照片加载失败，请刷新页面后重试。");
-function bevEdited() { bevDirty = true; storeBevDraft(); $("#bev-publish-reviewed").checked = false; bevPublishState(); bevResult(); bevMessage("点位已修改，请保存点位或重新计算。"); }
+function bevEdited() { bevDirty = true; storeBevDraft(); $("#bev-publish-reviewed").checked = false; bevPublishState(); bevResult(); bevMessage("点位已修改，请保存点位草稿或重新计算。"); document.dispatchEvent(new CustomEvent("field-bev-edit")); }
 $("#bev-points").addEventListener("input", event => {
   const el = event.target;
   if (!el.dataset.key) return;
@@ -154,6 +154,7 @@ async function bevAction(action, payload) {
     bevDirty = false;
     renderSession(result.session);
     if (action === "run") $("#bev-publish-reviewed").checked = false;
+    document.dispatchEvent(new CustomEvent("field-bev-operation", {detail: action}));
     bevMessage(action === "publish" ? "已保存为算法参数并保留旧版本。正在运行的算法仍使用原参数，下次初始化时加载新版本。" : action === "prepare" ? "照片已冻结并去畸变。请填写距离并点选地面标记。" : action === "run" ? "BEV 已计算，请检查误差和鸟瞰图，再导出记录。" : "点位草稿已保存到设备，刷新页面后可继续；计算时会检查所有点是否完整。");
   } catch (error) {
     // A failed request may already have invalidated the server's old result.

@@ -1,5 +1,7 @@
 # 标定工具与现场资料
 
+新版四步标定页面已实现：[页面操作说明与实际截图](docs/calibration-workbench.md)、[布局与交互验证](docs/workbench-validation-20261104.md)。
+
 2026-11-03 已在 MyUbuntu 完成 SDK 原生测试、ROS 感知相关包构建与测试，以及 ARM64/RKNN、相机采集程序交叉编译，详见 [验证记录](docs/validation-mybuntu-20261103.md)。真实相机、NPU 和整车验证仍待完成。
 
 完整的内参、BEV 标定页面与采集程序，与算法库统一安装；不启动车辆控制。

@@ -19,7 +19,8 @@ function setup(refreshFails = false) {
   const storage = new Map();
   const handlers = {};
   const ctx = vm.createContext({$, state:{session}, Image:class {}, escapeHtml:String,
-    document:{addEventListener(){}, createElement(){return {};}}, window:{confirm(){return true;}, addEventListener(name, callback){handlers[name]=callback;}},
+    document:{addEventListener(){}, dispatchEvent(){}, createElement(){return {};}},
+    CustomEvent: class { constructor(type, options) { this.type=type; this.detail=options?.detail; } }, window:{confirm(){return true;}, addEventListener(name, callback){handlers[name]=callback;}},
     localStorage:{getItem(key){return storage.get(key) || null;}, setItem(key,value){storage.set(key,value);}, removeItem(key){storage.delete(key);}},
     api:async (url) => {
       calls.push(url);
