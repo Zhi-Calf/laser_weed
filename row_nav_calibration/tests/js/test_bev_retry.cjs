@@ -16,8 +16,11 @@ function setup(refreshFails = false) {
     snapshot: {image_id: 'photo', mode: 'hardware'}, points: {points: [{role:'fit', x:1, y:0, u:10, v:20}]},
     summary: {checks_passed:true, fit_inliers:8, fit:{count:8}, check:{count:4, rmse_m:0, max_m:0}, point_errors_m:[]}}};
   const calls = [];
+  const storage = new Map();
+  const handlers = {};
   const ctx = vm.createContext({$, state:{session}, Image:class {}, escapeHtml:String,
-    document:{addEventListener(){}, createElement(){return {};}}, window:{confirm(){return true;}},
+    document:{addEventListener(){}, createElement(){return {};}}, window:{confirm(){return true;}, addEventListener(name, callback){handlers[name]=callback;}},
+    localStorage:{getItem(key){return storage.get(key) || null;}, setItem(key,value){storage.set(key,value);}, removeItem(key){storage.delete(key);}},
     api:async (url) => {
       calls.push(url);
       if (url !== '/api/sessions/current') throw Error('calculation failed');
@@ -28,7 +31,7 @@ function setup(refreshFails = false) {
   vm.runInContext(source, ctx);
   $('#bev-publish-reviewed').checked = true;
   vm.runInContext('bevPoints[0].x=2; bevPublishState()', ctx);
-  return {ctx, $, calls};
+  return {ctx, $, calls, storage, handlers};
 }
 for (const refreshFails of [false, true]) {
   test(`failed calculation hides old result and preserves edits, refreshFails=${refreshFails}`, async () => {
@@ -53,3 +56,24 @@ for (const refreshFails of [false, true]) {
     assert.equal($('#bev-publish').disabled,false);
   });
 }
+
+test('local draft survives editor reload and blocks publication', () => {
+  const {ctx, $, storage, handlers} = setup();
+  vm.runInContext('bevEdited()', ctx);
+  assert.equal(storage.size, 1);
+  let prevented = false;
+  handlers.beforeunload({preventDefault(){prevented=true;}});
+  assert.equal(prevented, true);
+  vm.runInContext('bevKey=""; renderBev(state.session)', ctx);
+  assert.equal(vm.runInContext('bevPoints[0].x', ctx), 2);
+  assert.equal(vm.runInContext('bevDirty', ctx), true);
+  assert.equal($('#bev-result').hidden, true);
+  assert.equal($('#bev-publish').disabled, true);
+});
+test('device draft restores partial points and never exposes old result', () => {
+  const {ctx, $} = setup();
+  vm.runInContext('state.session.bev.draft={points:[{role:"fit",x:"",y:"",u:null,v:null}]}; bevKey=""; renderBev(state.session)', ctx);
+  assert.equal(vm.runInContext('bevPoints[0].x', ctx), '');
+  assert.equal($('#bev-result').hidden, true);
+  assert.equal($('#bev-publish').disabled, true);
+});

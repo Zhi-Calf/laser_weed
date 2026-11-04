@@ -97,6 +97,34 @@ class BevService:
         self.mark_candidate("not_started")
         return self.sessions.describe()
 
+    def save_draft(self, payload):
+        root = self.root() / "bev"
+        snapshot = read_json(root / "snapshot.json")
+        if not snapshot or snapshot["image_id"] != payload.get("image_id"):
+            raise SessionError("照片已变化，请刷新页面并重新点选")
+        values = payload.get("points")
+        if not isinstance(values, list) or not 1 <= len(values) <= 64:
+            raise SessionError("请填写 1–64 个地面点")
+        for p in values:
+            if not isinstance(p, dict) or p.get("role") not in ("fit", "check"):
+                raise SessionError("点用途无效")
+            for key in ("x", "y", "u", "v"):
+                v = p.get(key)
+                if v in (None, ""):
+                    continue
+                try:
+                    number = float(v)
+                except (TypeError, ValueError):
+                    raise SessionError("坐标须为数字或留空")
+                if isinstance(v, bool) or not math.isfinite(number):
+                    raise SessionError("坐标须为有限数字")
+        write_json(root / "draft.json", {"image_id": snapshot["image_id"], "points": values})
+        for name in ("summary.json", "candidate-bev.yaml", "bev.jpg", "overlay.jpg"):
+            (root / name).unlink(missing_ok=True)
+        self.invalidate_export()
+        self.mark_candidate("draft")
+        return self.sessions.describe()
+
     def save_points(self, payload):
         root = self.root() / "bev"
         snapshot = read_json(root / "snapshot.json")
@@ -127,6 +155,7 @@ class BevService:
                 if math.hypot(p["u"]-previous["u"], p["v"]-previous["v"]) < 2 or math.hypot(p["x"]-previous["x"], p["y"]-previous["y"]) < .001:
                     raise SessionError("点不能重复，独立检查点也不能复用标定点")
             points.append(p)
+        (root / "draft.json").unlink(missing_ok=True)
         write_json(root / "points.json", {"image_id": snapshot["image_id"], "points": points})
         with (root / "points.csv").open("w", newline="", encoding="utf-8") as stream:
             writer = csv.writer(stream)
@@ -155,6 +184,8 @@ class BevService:
         write_json(path, metadata)
 
     def publish(self, payload):
+        if (self.root() / "bev/draft.json").exists():
+            raise SessionError("点位仍为草稿，请重新计算并复核后发布")
         root = self.root()
         snapshot = read_json(root / "bev/snapshot.json") or {}
         summary = read_json(root / "bev/summary.json") or {}

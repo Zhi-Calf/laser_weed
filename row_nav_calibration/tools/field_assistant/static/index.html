@@ -143,6 +143,7 @@
             <div id="capture-grid" class="capture-grid" aria-label="画面九宫格"></div>
             <p id="capture-instruction" aria-live="polite"></p>
             <p id="capture-counts"></p>
+            <label>拍摄轮次 <select id="capture-round"><option value="0">近距离 · 第 1–9 张</option><option value="1">中距离 · 第 10–18 张</option><option value="2">远距离 · 第 19–27 张</option></select></label>
             <img id="capture-review" class="capture-review" alt="刚拍摄的照片，请检查标定板完整、清晰且无反光" hidden>
             <p id="capture-feedback" role="status"></p>
             <div class="session-actions">
@@ -170,6 +171,7 @@
               <input id="validation-dir" value="synthetic/validation" placeholder="例如 cmd108/validation">
             </label>
             <button id="run-intrinsic-button" class="button button-secondary" type="button">运行拟合与验证</button>
+            <div id="intrinsic-issues" aria-live="polite"></div>
             <dl id="intrinsic-result" class="metric-list" hidden></dl>
           </div>
 
@@ -209,7 +211,7 @@
             <details><summary>无法使用鼠标？填写原图像素坐标</summary><label>水平 u <input id="bev-u" type="number" step="0.1"></label><label>垂直 v <input id="bev-v" type="number" step="0.1"></label><button id="bev-set-pixel" type="button" class="button button-quiet">更新所选点</button></details></div>
             <div><p class="helper">窄屏可左右滑动表格查看照片坐标和删除按钮。</p><div class="bev-table-scroll"><table class="bev-points"><thead><tr><th>点号</th><th>用途</th><th>前向 x / m</th><th>左向 y / m</th><th>照片位置</th><th>操作</th></tr></thead><tbody id="bev-points"></tbody></table></div>
               <button id="bev-add" class="button button-quiet" type="button">增加地面点</button>
-              <button id="bev-save" class="button button-secondary" type="button">保存点位</button>
+              <button id="bev-save" class="button button-secondary" type="button">保存点位草稿</button>
               <button id="bev-run" class="button button-primary" type="button">计算 BEV 并检查误差</button></div></div>
         </div>
         <p id="bev-message" class="message" role="status"></p>

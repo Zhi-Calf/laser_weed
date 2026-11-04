@@ -117,7 +117,7 @@ class FieldAssistantHandler(BaseHTTPRequestHandler):
             elif route == "/api/sessions/current/bev/prepare":
                 self._json({"session": self.server.bev.prepare(payload)})
             elif route == "/api/sessions/current/bev/points":
-                self._json({"session": self.server.bev.save_points(payload)})
+                self._json({"session": self.server.bev.save_draft(payload)})
             elif route == "/api/sessions/current/bev/run":
                 self._json({"session": self.server.bev.calculate(payload)})
             elif route == "/api/sessions/current/bev/publish":

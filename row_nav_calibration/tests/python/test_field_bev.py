@@ -223,3 +223,32 @@ def test_worker_failure_updates_log_and_allows_retry(bev, monkeypatch, failure):
     assert current.resolve() == previous
     assert service.calculate(payload)["bev"]["summary"]["checks_passed"]
     assert current.resolve() == previous
+
+
+def test_partial_draft_survives_reload_and_cannot_publish(bev):
+    service, payload = bev
+    service.calculate(payload)
+    payload["points"][0]["x"] = ""
+    result = service.save_draft(payload)
+    assert result["bev"]["draft"]["points"][0]["x"] == ""
+    assert service.sessions.describe()["bev"]["summary"] is None
+    with pytest.raises(SessionError, match="草稿"):
+        service.publish({"image_id": payload["image_id"], "review_confirmed": True})
+    with pytest.raises(SessionError, match="未完成"):
+        service.calculate(payload)
+    assert service.sessions.describe()["bev"]["draft"] is not None
+    payload["points"][0]["x"] = 1
+    result = service.calculate(payload)
+    assert result["bev"]["draft"] is None
+    assert result["bev"]["summary"]["checks_passed"]
+
+
+def test_draft_rejects_previous_photo_and_invalid_numbers(bev):
+    service, payload = bev
+    payload["image_id"] = "previous"
+    with pytest.raises(SessionError, match="照片已变化"):
+        service.save_draft(payload)
+    payload["image_id"] = service.sessions.describe()["bev"]["snapshot"]["image_id"]
+    payload["points"][0]["x"] = float("nan")
+    with pytest.raises(SessionError, match="有限"):
+        service.save_draft(payload)

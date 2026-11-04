@@ -148,11 +148,16 @@ class SessionStore:
             "id": session_id,
             "path": str(path),
             "metadata": metadata,
+            "capture_slots": {group: [i for i in range(27 if group == "intrinsic" else 9)
+                                if (path / "captures" / group / f"position-{i:02d}.jpg").is_file()]
+                              for group in ("intrinsic", "validation")},
+            "intrinsic_attempt": self._read_json(path / "intrinsic-last-attempt.json"),
             "capture_counts": {group: len(self._images_in(path / "captures" / group))
                                if (path / "captures" / group).is_dir() else 0
                                for group in ("intrinsic", "validation")},
             "intrinsic_summary": intrinsic_summary,
             "bev": {"snapshot": snapshot, "points": self._read_json(path / "bev" / "points.json"),
+                    "draft": self._read_json(path / "bev" / "draft.json"),
                     "reference": self._read_json(path / "bev" / "reference.json"),
                     "summary": self._read_json(path / "bev" / "summary.json")} if snapshot else None,
             "download_ready": (path / "field-session-result.zip").is_file(),
@@ -176,9 +181,14 @@ class SessionStore:
         # Recover unfinished attempts from earlier versions or interrupted runs.
         self._archive_failed_intrinsic(root)
         (root / "field-session-result.zip").unlink(missing_ok=True)
+        (root / "intrinsic-last-attempt.json").unlink(missing_ok=True)
         try:
             return self._run_intrinsic(payload)
         except (SessionError, OSError) as exc:
+            attempt_path = root / "intrinsic-last-attempt.json"
+            attempt = self._read_json(attempt_path) or {"issues": [], "message": str(exc)}
+            attempt["failed"] = True
+            attempt_path.write_text(json.dumps(attempt, ensure_ascii=False), encoding="utf-8")
             self._archive_failed_intrinsic(root)
             raise SessionError(
                 f"{exc}。可在本会话补拍或重拍后再次计算；失败记录保留在测试包的 intrinsic-attempts 目录。"
@@ -188,7 +198,7 @@ class SessionStore:
         """Keep diagnostics, but never expose partial output as a candidate."""
         relatives = (
             "raw/intrinsic", "raw/validation", "cmd108-intrinsics.yaml",
-            "validation/intrinsic-summary.json", "validation/intrinsic",
+            "validation/intrinsic-summary.json", "validation/intrinsic-diagnostics.json", "validation/intrinsic",
             "logs/intrinsic-calibration.log",
         )
         paths = [name for name in relatives if (root / name).exists()
@@ -296,6 +306,23 @@ class SessionStore:
             f"exit_code={result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
             encoding="utf-8",
         )
+        diagnostics = self._read_json(summary.with_name("intrinsic-diagnostics.json")) or {}
+        issues = []
+        for group, images, key in (("intrinsic", train_images, "training_rejected"),
+                                   ("validation", validation_images, "validation_rejected")):
+            for rejected in diagnostics.get(key, []):
+                match = re.search(r"(?:train|validation)-(\d+)", rejected)
+                source = images[int(match[1])-1] if match and 0 < int(match[1]) <= len(images) else None
+                slot = re.search(r"position-(\d+)", source.name) if source else None
+                reason = ("照片无法读取，请重新拍摄" if "unreadable" in rejected else
+                          "照片分辨率不一致，请检查相机设置" if "resolution" in rejected else
+                          "标定板角点不足，请靠近、避免反光并确保完整清晰入镜")
+                issues.append({"group": group, "slot": int(slot[1]) if slot else None,
+                               "image": source.name if source else rejected.split(": ")[0], "reason": reason})
+        attempt = {"failed": result.returncode != 0, "issues": issues,
+                   "message": "请按下方问题照片重拍后再次计算。" if issues else
+                   "计算未完成，请检查照片数量、板子尺寸和图片清晰度；详细原因保留在测试包。"}
+        (session_dir / "intrinsic-last-attempt.json").write_text(json.dumps(attempt, ensure_ascii=False))
         if result.returncode != 0 or not output.is_file() or not summary.is_file():
             raise SessionError("标定失败，请查看测试包中的 intrinsic-calibration.log")
 

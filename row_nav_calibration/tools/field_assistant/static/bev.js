@@ -6,6 +6,16 @@ let bevKey = "";
 let bevBusy = false;
 let bevDirty = false;
 const bevPhoto = new Image();
+const bevDraftBase = () => JSON.stringify({points: bevData?.points || null, draft: bevData?.draft || null});
+const bevDraftKey = () => `row-nav-bev-draft:${bevKey}`;
+function storeBevDraft() {
+  try { localStorage.setItem(bevDraftKey(), JSON.stringify({base: bevDraftBase(), points: bevPoints})); }
+  catch (_) { bevMessage("浏览器无法保存草稿，请点击保存点位草稿，离开前确认已保存。"); }
+}
+function clearBevDraft() { try { localStorage.removeItem(bevDraftKey()); } catch (_) {} }
+window.addEventListener("beforeunload", event => {
+  if (bevDirty) { event.preventDefault(); event.returnValue = ""; }
+});
 const blankPoint = (role = "fit") => ({role, x: "", y: "", u: null, v: null});
 const bevMessage = (text) => { $("#bev-message").textContent = text; };
 const bevUrl = (name) => `/api/bev-image?session=${encodeURIComponent(state.session.id)}&name=${name}&t=${Date.now()}`;
@@ -27,8 +37,14 @@ function renderBev(session) {
     $("#bev-dynamic").checked = !!bevData?.reference?.dynamic_enabled;
     $("#bev-origin-height").value = bevData?.reference?.origin_height_m || "";
     $("#bev-dynamic-reference").checked = !!bevData?.reference?.dynamic_enabled;
-    bevPoints = bevData?.points?.points || Array.from({length: 12}, (_, i) => blankPoint(i < 8 ? "fit" : "check"));
+    bevPoints = bevData?.draft?.points || bevData?.points?.points || Array.from({length: 12}, (_, i) => blankPoint(i < 8 ? "fit" : "check"));
     if (bevData) {
+      let local;
+      try { local = JSON.parse(localStorage.getItem(bevDraftKey())); } catch (_) {}
+      if (local?.base === bevDraftBase() && Array.isArray(local.points)) {
+        bevPoints = local.points; bevDirty = true;
+        bevMessage("已恢复本浏览器未提交的点位草稿，请保存或重新计算。");
+      }
       bevPhoto.src = bevUrl("snapshot.jpg");
       bevRows();
     }
@@ -39,10 +55,10 @@ function renderBev(session) {
   bevPublishState();
 }
 function bevPublishState() {
-  $("#bev-publish").disabled = bevBusy || bevDirty || !bevData?.summary?.checks_passed || state.session?.metadata?.mode !== "hardware" || !$("#bev-publish-reviewed").checked;
+  $("#bev-publish").disabled = bevBusy || bevDirty || (!!bevData?.draft || !bevData?.summary?.checks_passed) || state.session?.metadata?.mode !== "hardware" || !$("#bev-publish-reviewed").checked;
 }
 function bevResult() {
-  const summary = bevDirty ? null : bevData?.summary;
+  const summary = bevDirty || bevData?.draft ? null : bevData?.summary;
   $("#bev-state").textContent = summary ? (summary.checks_passed ? "几何检查通过 · 待复核" : "检查未通过") : bevData ? "填写与点选中" : "未开始";
   $("#bev-result").hidden = !summary;
   if (!summary) return;
@@ -89,7 +105,7 @@ function bevDraw() {
 }
 bevPhoto.onload = bevDraw;
 bevPhoto.onerror = () => bevMessage("照片加载失败，请刷新页面后重试。");
-function bevEdited() { bevDirty = true; $("#bev-publish-reviewed").checked = false; bevPublishState(); bevResult(); bevMessage("点位已修改，请保存点位或重新计算。"); }
+function bevEdited() { bevDirty = true; storeBevDraft(); $("#bev-publish-reviewed").checked = false; bevPublishState(); bevResult(); bevMessage("点位已修改，请保存点位或重新计算。"); }
 $("#bev-points").addEventListener("input", event => {
   const el = event.target;
   if (!el.dataset.key) return;
@@ -134,10 +150,11 @@ async function bevAction(action, payload) {
     const result = await api(`/api/sessions/current/bev/${action}`, {method: "POST", body: JSON.stringify(payload)});
     // A newly prepared frame clears the local editor even when replay bytes match.
     if (action === "prepare") bevKey = "";
+    clearBevDraft();
     bevDirty = false;
     renderSession(result.session);
     if (action === "run") $("#bev-publish-reviewed").checked = false;
-    bevMessage(action === "publish" ? "已保存为算法参数并保留旧版本。正在运行的算法仍使用原参数，下次初始化时加载新版本。" : action === "prepare" ? "照片已冻结并去畸变。请填写距离并点选地面标记。" : action === "run" ? "BEV 已计算，请检查误差和鸟瞰图，再导出记录。" : "地面点已保存，刷新页面后可继续。");
+    bevMessage(action === "publish" ? "已保存为算法参数并保留旧版本。正在运行的算法仍使用原参数，下次初始化时加载新版本。" : action === "prepare" ? "照片已冻结并去畸变。请填写距离并点选地面标记。" : action === "run" ? "BEV 已计算，请检查误差和鸟瞰图，再导出记录。" : "点位草稿已保存到设备，刷新页面后可继续；计算时会检查所有点是否完整。");
   } catch (error) {
     // A failed request may already have invalidated the server's old result.
     // Keep local edits, hide stale results, and require a new review.

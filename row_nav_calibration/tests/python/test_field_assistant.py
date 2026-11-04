@@ -304,3 +304,31 @@ def test_legacy_failed_import_does_not_lock_capture(tmp_path):
     assert result["session"]["intrinsic_summary"] is None
     assert not (root / "cmd108-intrinsics.yaml").exists()
     assert list((root / "intrinsic-attempts").rglob("train-001.jpg"))[0].read_bytes() == b"old import"
+
+
+def test_capture_slots_and_failure_photo_mapping(tmp_path, monkeypatch):
+    import subprocess
+    script = tmp_path / "calibrate.py"
+    script.touch()
+    (tmp_path / "preview.jpg").write_bytes(b"photo")
+    store = SessionStore(make_config(tmp_path, calibration_python=Path(sys.executable), calibration_script=script))
+    session = store.start(valid_payload(), {})
+    for slot in [0, 2, 8, 10, 26]:
+        store.capture({"group": "intrinsic", "slot": slot})
+    store.capture({"group": "validation", "slot": 5})
+    assert store.describe()["capture_slots"]["intrinsic"] == [0, 2, 8, 10, 26]
+    def fail(command, **kwargs):
+        summary = Path(command[command.index("--summary") + 1])
+        summary.with_name("intrinsic-diagnostics.json").write_text(json.dumps({
+            "training_rejected": ["train-003.jpg: only 2 ChArUco corners"],
+            "validation_rejected": ["validation-001.jpg: unreadable"]}))
+        return subprocess.CompletedProcess(command, 1, "", "not enough usable views")
+    monkeypatch.setattr(subprocess, "run", fail)
+    with pytest.raises(SessionError):
+        store.run_intrinsic({"source": "captured"})
+    attempt = store.describe()["intrinsic_attempt"]
+    assert attempt["failed"]
+    assert attempt["issues"][0]["slot"] == 8
+    assert attempt["issues"][1]["slot"] == 5
+    assert "角点不足" in attempt["issues"][0]["reason"]
+    assert store.describe()["intrinsic_summary"] is None

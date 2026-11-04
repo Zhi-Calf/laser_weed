@@ -70,7 +70,7 @@ def create_board(
 
 def detect_views(
     paths: Iterable[Path], board, dictionary
-) -> tuple[list[DetectedView], list[str], tuple[int, int]]:
+) -> tuple[list[DetectedView], list[str], tuple[int, int] | None]:
     detector = cv2.aruco.CharucoDetector(board)
     accepted: list[DetectedView] = []
     rejected: list[str] = []
@@ -102,8 +102,6 @@ def detect_views(
             )
         )
 
-    if image_size is None:
-        raise RuntimeError("no readable images matched the input pattern")
     return accepted, rejected, image_size
 
 
@@ -240,6 +238,10 @@ def main() -> None:
     validation_views, validation_rejected, validation_size = detect_views(
         validation_paths, board, dictionary
     )
+    args.summary.parent.mkdir(parents=True, exist_ok=True)
+    args.summary.with_name("intrinsic-diagnostics.json").write_text(json.dumps({
+        "training_rejected": train_rejected, "validation_rejected": validation_rejected,
+    }, ensure_ascii=False), encoding="utf-8")
     if len(train_views) < 5:
         raise RuntimeError("fewer than five usable training views")
     if not validation_views:

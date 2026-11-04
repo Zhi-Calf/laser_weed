@@ -64,7 +64,8 @@ function renderStatus(status) {
 }
 
 function renderSession(session) {
-  if (state.session?.id !== session?.id) resetCapture();
+  const changedSession = state.session?.id !== session?.id;
+  if (changedSession) resetCapture();
   state.session = session;
   document.dispatchEvent(new CustomEvent("field-session", { detail: session }));
   const panel = $("#current-session");
@@ -87,7 +88,9 @@ function renderSession(session) {
   } else {
     download.hidden = true;
   }
+  if (changedSession) restoreCapture();
   renderIntrinsicSummary(session.intrinsic_summary);
+  renderIntrinsicAttempt(session.intrinsic_attempt);
   renderCapture();
 }
 
@@ -95,6 +98,53 @@ const positions = ["左上", "上方", "右上", "左侧", "中央", "右侧", "
 let captureSlot = 0;
 let captureBusy = false;
 let reviewedSlot = null;
+function captureKey() { return `row-nav-capture:${state.session?.id}`; }
+function saveCaptureProgress() {
+  try {
+    const group = $("#capture-group").value;
+    const previous = JSON.parse(localStorage.getItem(captureKey())) || {};
+    localStorage.setItem(captureKey(), JSON.stringify({group, slot: captureSlot,
+      slots: {...previous.slots, [group]: captureSlot}}));
+  } catch (_) {}
+}
+function restoreCapture() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(captureKey())); } catch (_) {}
+  const group = saved?.group === "validation" ? "validation" : "intrinsic";
+  $("#capture-group").value = group;
+  const limit = group === "intrinsic" ? 27 : 9;
+  const slots = state.session?.capture_slots?.[group] || [];
+  captureSlot = Number.isInteger(saved?.slot) && saved.slot >= 0 && saved.slot < limit
+    ? saved.slot : Array.from({length: limit}, (_, i) => i).find(i => !slots.includes(i)) ?? limit - 1;
+  reviewedSlot = slots.includes(captureSlot) ? captureSlot : null;
+  if (reviewedSlot !== null) {
+    $("#capture-review").src = `/api/capture-image?session=${encodeURIComponent(state.session.id)}&group=${group}&slot=${captureSlot}&t=${Date.now()}`;
+    $("#capture-review").hidden = false;
+  }
+}
+function renderIntrinsicAttempt(attempt) {
+  const panel = $("#intrinsic-issues");
+  panel.replaceChildren();
+  if (!attempt || (!attempt.failed && !attempt.issues?.length)) return;
+  const text = document.createElement("p");
+  text.textContent = attempt.failed ? attempt.message : "照片检测结果（未采用的照片）：";
+  panel.append(text);
+  for (const issue of attempt.issues || []) {
+    const row = document.createElement("p");
+    row.textContent = `${issue.group === "intrinsic" ? "拟合" : "验证"} · ${issue.slot === null ? issue.image : `第 ${issue.slot + 1} 张`}：${issue.reason} `;
+    if (issue.slot !== null && !state.session.metadata.intrinsic_run) {
+      const button = document.createElement("button");
+      button.type = "button"; button.textContent = "去重拍";
+      button.addEventListener("click", () => {
+        $("#capture-group").value = issue.group; captureSlot = issue.slot;
+        reviewedSlot = null; $("#capture-review").hidden = true;
+        saveCaptureProgress(); renderCapture(); $("#capture-panel").scrollIntoView({behavior:"smooth"});
+      });
+      row.append(button);
+    }
+    panel.append(row);
+  }
+}
 function resetCapture() {
   captureSlot = 0;
   reviewedSlot = null;
@@ -103,13 +153,16 @@ function resetCapture() {
 }
 function renderCapture() {
   const group = $("#capture-group").value;
+  saveCaptureProgress();
   const round = Math.floor(captureSlot / 9);
+  $("#capture-round").value = String(round);
   const limit = group === "intrinsic" ? 27 : 9;
+  $("#capture-round").disabled = captureBusy || group !== "intrinsic";
   const counts = state.session?.capture_counts || {};
   $("#capture-counts").textContent = `已保存：拟合 ${counts.intrinsic || 0}/27 张；独立验证 ${counts.validation || 0}/9 张`;
   const pose = group === "intrinsic" ? ["近距离，板子较大，轻微左右倾斜", "中距离，改变上下倾斜", "远距离，确保方格仍清晰可辨"][round] : "独立验证，重新摆放并改变距离和角度";
   $("#capture-instruction").textContent = `第 ${captureSlot + 1}/${limit} 张：${pose}；放在画面${positions[captureSlot % 9]}，完整入镜。`;
-  $("#capture-grid").innerHTML = positions.map((label, i) => `<button type="button" data-position="${i}" aria-current="${i === captureSlot % 9}" ${captureBusy ? "disabled" : ""}>${label}</button>`).join("");
+  $("#capture-grid").innerHTML = positions.map((label, i) => `<button type="button" data-position="${i}" aria-current="${i === captureSlot % 9}" ${captureBusy ? "disabled" : ""}>${label}${(state.session?.capture_slots?.[group] || []).includes(round * 9 + i) ? " ✓" : ""}</button>`).join("");
   $("#capture-button").disabled = captureBusy;
   $("#capture-group").disabled = captureBusy;
   $("#capture-button").textContent = captureBusy ? "正在拍照，请保持不动…" : reviewedSlot === captureSlot ? "不满意，重拍这张" : "准备好了，拍照";
@@ -123,7 +176,19 @@ $("#capture-grid").addEventListener("click", (event) => {
   $("#capture-review").hidden = true;
   renderCapture();
 });
-$("#capture-group").addEventListener("change", () => { resetCapture(); renderCapture(); });
+$("#capture-round").addEventListener("change", () => {
+  captureSlot = Number($("#capture-round").value) * 9; reviewedSlot = null;
+  $("#capture-review").hidden = true; renderCapture();
+});
+$("#capture-group").addEventListener("change", () => {
+  resetCapture();
+  try {
+    const saved = JSON.parse(localStorage.getItem(captureKey()));
+    const slot = saved?.slots?.[$("#capture-group").value];
+    if (Number.isInteger(slot)) captureSlot = slot;
+  } catch (_) {}
+  renderCapture();
+});
 $("#capture-next").addEventListener("click", () => {
   captureSlot += 1;
   reviewedSlot = null;
@@ -162,7 +227,7 @@ $("#calibrate-captured").addEventListener("click", async () => {
     });
     renderSession(result.session);
     setMessage("候选内参已生成，等待人工复核。", "success");
-  } catch (error) { setMessage(error.message, "error"); }
+  } catch (error) { setMessage(error.message, "error"); await refresh(); }
   finally { button.disabled = false; }
 });
 
@@ -207,6 +272,7 @@ async function refresh() {
 
 $("#session-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (typeof bevDirty !== "undefined" && bevDirty && !window.confirm("当前点位尚未提交到设备，确定开始新会话吗？建议先保存点位草稿。")) return;
   const form = event.currentTarget;
   const submit = form.querySelector('button[type="submit"]');
   const data = new FormData(form);
@@ -271,6 +337,7 @@ $("#run-intrinsic-button").addEventListener("click", async () => {
     setMessage("候选内参已经生成。检查对比图后才能标记为有效。", "success");
   } catch (error) {
     setMessage(error.message, "error");
+    await refresh();
   } finally {
     button.disabled = false;
   }
