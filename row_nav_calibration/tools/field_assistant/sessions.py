@@ -152,6 +152,10 @@ class SessionStore:
                                 if (path / "captures" / group / f"position-{i:02d}.jpg").is_file()]
                               for group in ("intrinsic", "validation")},
             "intrinsic_attempt": self._read_json(path / "intrinsic-last-attempt.json"),
+            "capture_quality": {group: {str(i): self._read_json(path / "captures" / group / f"position-{i:02d}.quality.json")
+                                         for i in range(27 if group == "intrinsic" else 9)
+                                         if (path / "captures" / group / f"position-{i:02d}.quality.json").is_file()}
+                                for group in ("intrinsic", "validation")},
             "capture_counts": {group: len(self._images_in(path / "captures" / group))
                                if (path / "captures" / group).is_dir() else 0
                                for group in ("intrinsic", "validation")},
@@ -396,17 +400,43 @@ class SessionStore:
                 evidence["raw_sha256"] = hashlib.sha256(images[0].read_bytes()).hexdigest()
                 target_metadata.write_text(json.dumps(evidence))
             images[0].replace(target)
+        if group != "bev":
+            self._assess_capture(target, metadata["board"])
         # Re-taking a position replaces only that position; old exports are stale.
         (root / "field-session-result.zip").unlink(missing_ok=True)
         return {"session": self.describe(session_id), "image_url":
                 f"/api/capture-image?session={session_id}&group={group}&slot={slot}",
                 "simulated": self.config.mode == "mock"}
 
-    def capture_image(self, session_id: str, group: str, slot: int) -> Path:
+    def _assess_capture(self, target: Path, board: dict) -> None:
+        """Quality guidance must never discard a successfully saved frame."""
+        report = target.with_suffix(".quality.json")
+        overlay = target.with_suffix(".corners.jpg")
+        report.unlink(missing_ok=True)
+        overlay.unlink(missing_ok=True)
+        try:
+            result = subprocess.run([
+                str(self.config.calibration_python), str(Path(__file__).with_name("capture_quality.py")),
+                str(target), str(report), str(overlay),
+                str(float(board["square_width_mm"]) / 1000), str(float(board["marker_mm"]) / 1000),
+            ], capture_output=True, text=True, timeout=15, check=False)
+            if result.returncode or self._read_json(report) is None:
+                raise RuntimeError(result.stderr[-2000:])
+        except Exception as exc:
+            # Diagnostic worker failures are isolated from capture and calibration.
+            overlay.unlink(missing_ok=True)
+            report.write_text(json.dumps({"state": "unavailable", "warnings": [
+                "即时质量检查不可用，照片已保存；请人工检查并联系部署人员查看日志"],
+                "overlay_available": False, "advisory_only": True}, ensure_ascii=False), encoding="utf-8")
+            (target.parent.parent.parent / "logs" / "last-quality.log").write_text(
+                f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+
+    def capture_image(self, session_id: str, group: str, slot: int, kind: str = "raw") -> Path:
         maximum = 27 if group == "intrinsic" else 9
-        if group not in {"intrinsic", "validation"} or not 0 <= slot < maximum:
+        if group not in {"intrinsic", "validation"} or not 0 <= slot < maximum or kind not in {"raw", "corners"}:
             raise SessionError("无效的拍照位置")
-        return self._session_dir(session_id) / "captures" / group / f"position-{slot:02d}.jpg"
+        suffix = ".corners.jpg" if kind == "corners" else ".jpg"
+        return self._session_dir(session_id) / "captures" / group / f"position-{slot:02d}{suffix}"
 
     def export_current(self, status: dict[str, Any]) -> dict[str, Any]:
         session_id = self.current_id()
@@ -473,7 +503,7 @@ class SessionStore:
         suffixes = {".jpg", ".jpeg", ".png"}
         return sorted(
             item for item in path.iterdir()
-            if item.is_file() and item.suffix.lower() in suffixes
+            if item.is_file() and item.suffix.lower() in suffixes and not item.name.endswith(".corners.jpg")
         )
 
     @staticmethod

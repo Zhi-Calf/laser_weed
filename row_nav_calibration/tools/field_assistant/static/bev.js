@@ -5,7 +5,14 @@ let bevSelected = 0;
 let bevKey = "";
 let bevBusy = false;
 let bevDirty = false;
-const bevPhoto = new Image();
+let bevPhoto = new Image();
+let bevImageReady = false;
+let bevImageRequest = 0;
+let bevZoom = 1;
+let bevPan = false;
+let bevDrag = null;
+let bevSuppressClick = false;
+let bevUndo = [];
 const bevDraftBase = () => JSON.stringify({points: bevData?.points || null, draft: bevData?.draft || null});
 const bevDraftKey = () => `row-nav-bev-draft:${bevKey}`;
 function storeBevDraft() {
@@ -22,13 +29,16 @@ const bevUrl = (name) => `/api/bev-image?session=${encodeURIComponent(state.sess
 
 function renderBev(session) {
   $("#bev-panel").hidden = !session;
-  if (!session) { bevKey = ""; return; }
+  if (!session) { bevKey = ""; bevData = null; bevImageRequest++; bevImageReady = false; return; }
   bevData = session.bev;
   $("#bev-editor").hidden = !bevData;
   const key = `${session.id}:${bevData?.snapshot?.image_id || ""}`;
   if (key !== bevKey) {
     bevKey = key;
+    bevImageRequest++;
     bevSelected = 0;
+    bevUndo = [];
+    bevImageReady = false;
     bevDirty = false;
     $("#bev-publish-reviewed").checked = false;
     $("#bev-reference-confirmed").checked = !!bevData?.reference?.reference_confirmed;
@@ -45,7 +55,7 @@ function renderBev(session) {
         bevPoints = local.points; bevDirty = true;
         bevMessage("已恢复本浏览器未提交的点位草稿，请保存或重新计算。");
       }
-      bevPhoto.src = bevUrl("snapshot.jpg");
+      loadBevPhoto();
       bevRows();
     }
   }
@@ -85,9 +95,10 @@ function bevRows() {
   $("#bev-u").value = p?.u ?? "";
   $("#bev-v").value = p?.v ?? "";
   bevDraw();
+  updateBevImageTools();
 }
 function bevDraw() {
-  if (!bevPhoto.complete || !bevPhoto.naturalWidth) return;
+  if (!bevImageReady || !bevPhoto.complete || !bevPhoto.naturalWidth) return;
   const canvas = $("#bev-canvas");
   canvas.width = bevPhoto.naturalWidth;
   canvas.height = bevPhoto.naturalHeight;
@@ -102,13 +113,149 @@ function bevDraw() {
     ctx.fillStyle = ctx.strokeStyle; ctx.font = `bold ${18 * scale}px sans-serif`;
     ctx.fillText(String(i + 1), p.u + 9 * scale, p.v - 9 * scale);
   });
+  drawBevLoupe();
 }
-bevPhoto.onload = bevDraw;
-bevPhoto.onerror = () => bevMessage("照片加载失败，请刷新页面后重试。");
+
+function updateBevImageTools() {
+  const disabled = !bevImageReady || bevBusy;
+  $("#bev-image-controls").querySelectorAll("button,input").forEach(el => { el.disabled = disabled; });
+  $("#bev-set-pixel").disabled = disabled;
+  $("#bev-run").disabled = disabled;
+  $("#bev-undo").disabled = disabled || !bevUndo.length;
+  $("#bev-zoom-out").disabled = disabled || bevZoom <= 1;
+  $("#bev-zoom-in").disabled = disabled || bevZoom >= 8;
+  $("#bev-canvas").setAttribute("aria-disabled", String(disabled));
+  $("#bev-image-scroll").dataset.ready = String(bevImageReady);
+}
+function loadBevPhoto() {
+  if (!bevData) return;
+  const request = ++bevImageRequest;
+  bevImageReady = false;
+  $("#bev-image-retry").hidden = true;
+  $("#bev-image-status").textContent = "正在加载地面照片，加载完成后才能选点。";
+  $("#bev-canvas").style.visibility = "hidden";
+  $("#bev-loupe").hidden = true;
+  updateBevImageTools();
+  const image = new Image();
+  const failed = message => {
+    if (request !== bevImageRequest) return;
+    bevImageReady = false;
+    $("#bev-image-status").textContent = message;
+    $("#bev-image-retry").hidden = false;
+    updateBevImageTools();
+  };
+  image.onload = () => {
+    if (request !== bevImageRequest) return;
+    if (image.naturalWidth !== bevData.snapshot.width || image.naturalHeight !== bevData.snapshot.height) {
+      failed("照片尺寸与本次冻结记录不一致，不能选点。请重试或重新拍摄地面照片。"); return;
+    }
+    bevPhoto = image;
+    bevImageReady = true;
+    bevZoom = 1;
+    bevPan = false;
+    $("#bev-pan").setAttribute("aria-pressed", "false");
+    $("#bev-canvas").style.width = "100%";
+    $("#bev-canvas").style.visibility = "visible";
+    $("#bev-image-scroll").dataset.pan = "false";
+    $("#bev-image-scroll").scrollLeft = $("#bev-image-scroll").scrollTop = 0;
+    $("#bev-zoom-label").textContent = "1×";
+    $("#bev-image-status").textContent = `${image.naturalWidth} × ${image.naturalHeight} · 点位按原图像素保存`;
+    updateBevImageTools(); bevDraw();
+  };
+  image.onerror = () => failed("照片加载失败，已有点位已保留；点击重试加载照片。");
+  image.src = bevUrl("snapshot.jpg");
+}
+function rememberBevEdit() {
+  bevUndo.push({points: JSON.parse(JSON.stringify(bevPoints)), selected: bevSelected});
+  if (bevUndo.length > 50) bevUndo.shift();
+}
+function undoBevEdit() {
+  if (bevBusy || !bevImageReady || !bevUndo.length) return;
+  const previous = bevUndo.pop();
+  bevPoints = previous.points; bevSelected = previous.selected;
+  bevEdited(); bevRows();
+}
+function zoomBev(factor) {
+  if (!bevImageReady || bevBusy) return;
+  const pane = $("#bev-image-scroll"), canvas = $("#bev-canvas");
+  const x = (pane.scrollLeft + pane.clientWidth / 2) / canvas.clientWidth;
+  const y = (pane.scrollTop + pane.clientHeight / 2) / canvas.clientHeight;
+  bevZoom = Math.max(1, Math.min(8, factor));
+  canvas.style.width = `${bevZoom * 100}%`;
+  pane.scrollLeft = x * canvas.clientWidth - pane.clientWidth / 2;
+  pane.scrollTop = y * canvas.clientHeight - pane.clientHeight / 2;
+  $("#bev-zoom-label").textContent = `${Number(bevZoom.toFixed(2))}×`;
+  updateBevImageTools();
+}
+function drawBevLoupe(u, v) {
+  const visible = bevImageReady && $("#bev-show-loupe").checked;
+  $("#bev-loupe").hidden = !visible;
+  if (!visible) return;
+  const p = bevPoints[bevSelected];
+  u = Number(u ?? p?.u ?? bevPhoto.naturalWidth / 2);
+  v = Number(v ?? p?.v ?? bevPhoto.naturalHeight / 2);
+  const canvas = $("#bev-loupe-canvas"), ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#e1e8e5"; ctx.fillRect(0, 0, 160, 160);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(bevPhoto, u - 20, v - 20, 40, 40, 0, 0, 160, 160);
+  ctx.strokeStyle = "#b74912"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(65, 80); ctx.lineTo(95, 80); ctx.moveTo(80, 65); ctx.lineTo(80, 95); ctx.stroke();
+  $("#bev-loupe-label").textContent = `${u.toFixed(1)}, ${v.toFixed(1)} · 原图 40 × 40 px`;
+}
+$("#bev-image-retry").addEventListener("click", loadBevPhoto);
+$("#bev-zoom-in").addEventListener("click", () => zoomBev(bevZoom * 1.5));
+$("#bev-zoom-out").addEventListener("click", () => zoomBev(bevZoom / 1.5));
+$("#bev-fit").addEventListener("click", () => {
+  zoomBev(1); $("#bev-image-scroll").scrollLeft = $("#bev-image-scroll").scrollTop = 0;
+});
+$("#bev-pan").addEventListener("click", () => {
+  bevPan = !bevPan;
+  $("#bev-pan").setAttribute("aria-pressed", String(bevPan));
+  $("#bev-image-scroll").dataset.pan = String(bevPan);
+});
+$("#bev-undo").addEventListener("click", undoBevEdit);
+$("#bev-show-loupe").addEventListener("change", () => drawBevLoupe());
+const bevCanvas = $("#bev-canvas");
+bevCanvas.addEventListener("keydown", event => {
+  if (!bevImageReady || bevBusy) return;
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+    event.preventDefault(); undoBevEdit(); return;
+  }
+  const deltas = {ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1]};
+  const delta = deltas[event.key], p = bevPoints[bevSelected];
+  if (!delta) return;
+  event.preventDefault();
+  if (p?.u === null || p?.v === null) { bevMessage("请先在照片上选择当前点。"); return; }
+  const step = event.shiftKey ? .1 : 1;
+  bevSetPixel(Number(p.u) + delta[0] * step, Number(p.v) + delta[1] * step);
+});
+bevCanvas.addEventListener("pointerdown", event => {
+  if (!bevImageReady || bevBusy || (!bevPan && event.button !== 1)) return;
+  const pane = $("#bev-image-scroll");
+  bevDrag = {x: event.clientX, y: event.clientY, left: pane.scrollLeft, top: pane.scrollTop};
+  bevCanvas.setPointerCapture(event.pointerId); event.preventDefault();
+});
+bevCanvas.addEventListener("pointermove", event => {
+  if (!bevImageReady || bevBusy) return;
+  if (bevDrag) {
+    $("#bev-image-scroll").scrollLeft = bevDrag.left - (event.clientX - bevDrag.x);
+    $("#bev-image-scroll").scrollTop = bevDrag.top - (event.clientY - bevDrag.y);
+    bevSuppressClick = true; return;
+  }
+  const box = bevCanvas.getBoundingClientRect();
+  drawBevLoupe((event.clientX - box.left) * bevPhoto.naturalWidth / box.width,
+    (event.clientY - box.top) * bevPhoto.naturalHeight / box.height);
+});
+for (const event of ["pointerup", "pointercancel"]) bevCanvas.addEventListener(event, () => {
+  bevDrag = null; setTimeout(() => { bevSuppressClick = false; }, 0);
+});
+
 function bevEdited() { bevDirty = true; storeBevDraft(); $("#bev-publish-reviewed").checked = false; bevPublishState(); bevResult(); bevMessage("点位已修改，请保存点位草稿或重新计算。"); document.dispatchEvent(new CustomEvent("field-bev-edit")); }
 $("#bev-points").addEventListener("input", event => {
   const el = event.target;
   if (!el.dataset.key) return;
+  if (bevBusy) return;
+  rememberBevEdit();
   bevPoints[Number(el.dataset.index)][el.dataset.key] = el.value;
   bevEdited(); bevDraw();
 });
@@ -117,18 +264,22 @@ $("#bev-points").addEventListener("click", event => {
   const el = event.target;
   if (el.dataset.select !== undefined) bevSelected = Number(el.dataset.select);
   else if (el.dataset.remove !== undefined && bevPoints.length > 1) {
+    rememberBevEdit();
     bevPoints.splice(Number(el.dataset.remove), 1);
     bevSelected = Math.min(bevSelected, bevPoints.length - 1); bevEdited();
   } else return;
   bevRows();
 });
 function bevSetPixel(u, v) {
+  if (!bevImageReady) { bevMessage("请等待地面照片加载完成后再选点。"); return; }
   if (bevBusy || !bevData || !Number.isFinite(u) || !Number.isFinite(v) || u < 0 || v < 0 || u >= bevData.snapshot.width || v >= bevData.snapshot.height) {
     bevMessage("点选位置必须在原始照片范围内。"); return;
   }
+  rememberBevEdit();
   Object.assign(bevPoints[bevSelected], {u, v}); bevEdited(); bevRows();
 }
 $("#bev-canvas").addEventListener("click", event => {
+  if (!bevImageReady || bevPan || bevSuppressClick || bevDrag) return;
   const box = event.currentTarget.getBoundingClientRect();
   bevSetPixel((event.clientX - box.left) * bevPhoto.naturalWidth / box.width,
     (event.clientY - box.top) * bevPhoto.naturalHeight / box.height);
@@ -139,10 +290,13 @@ $("#bev-set-pixel").addEventListener("click", () => {
 });
 $("#bev-add").addEventListener("click", () => {
   if (bevPoints.length >= 64) return;
+  if (bevBusy) return;
+  rememberBevEdit();
   bevPoints.push(blankPoint()); bevSelected = bevPoints.length - 1; bevEdited(); bevRows();
 });
 async function bevAction(action, payload) {
   if (bevBusy) return;
+  if (action === "run" && !bevImageReady) { bevMessage("请先加载地面照片，再计算 BEV。"); return; }
   bevBusy = true;
   $("#bev-panel").querySelectorAll("button,input,select").forEach(el => { el.disabled = true; });
   bevMessage(action === "prepare" ? "正在拍照和去畸变，请保持相机与地面标记不动…" : "正在保存并处理地面点…");
@@ -178,6 +332,7 @@ async function bevAction(action, payload) {
     bevBusy = false;
     $("#bev-panel").querySelectorAll("button,input,select").forEach(el => { el.disabled = false; });
     bevPublishState();
+    updateBevImageTools();
   }
 }
 $("#bev-prepare").addEventListener("click", () => {

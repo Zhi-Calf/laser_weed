@@ -3,10 +3,12 @@
   const steps = ['setup', 'intrinsic', 'bev', 'review'];
   let sessionId = null;
   let preparedImage;
+  let pendingTarget = null;
   const key = () => `row-nav-view:${state.session?.id || 'new'}`;
 
   function navigate(target, focus = false) {
     if (!steps.includes(target) || (target !== 'setup' && !state.session)) return;
+    if (focus && state.loaded === false) pendingTarget = target;
     for (const name of steps) {
       $(`#${name}-view`).hidden = name !== target;
       const button = $(`#nav-${name}`);
@@ -51,11 +53,12 @@
       $('#bev-preparation').open = !session?.bev;
     }
     $('#bev-preparation-label').textContent = session?.bev ? '地面照片已冻结 · 展开查看设置或重新拍摄' : '地面拍照与参考设置';
-    if (sessionId !== session?.id) {
+    if (sessionId !== session?.id || (pendingTarget && state.loaded)) {
       sessionId = session?.id;
       let saved;
       try { saved = localStorage.getItem(key()); } catch (_) {}
-      navigate(session ? (steps.includes(saved) ? saved : 'intrinsic') : 'setup');
+      navigate(pendingTarget || (session ? (steps.includes(saved) ? saved : 'intrinsic') : 'setup'));
+      pendingTarget = null;
     }
   }
 

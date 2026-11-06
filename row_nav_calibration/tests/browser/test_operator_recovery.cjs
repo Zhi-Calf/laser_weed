@@ -17,6 +17,7 @@ if (!base) throw Error('Set CALIBRATION_TEST_URL to an isolated mock server. Thi
     const status = await (await page.request.get(base + '/api/status')).json();
     assert.equal(status.mode, 'mock');
     await page.goto(base);
+    await page.waitForFunction(() => state.loaded);
     await page.click("#nav-setup");
     await page.locator('input[name=operator]').fill('流程回归测试');
     await page.locator('input[name=board_flat]').check();

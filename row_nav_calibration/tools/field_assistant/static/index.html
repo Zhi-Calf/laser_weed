@@ -237,7 +237,7 @@
 <span id="preview-badge" class="tag">等待画面</span>
 </div>
 <div class="preview-frame">
-<img id="preview-image" alt="相机或文件回放预览">
+<img id="preview-image" hidden alt="相机或文件回放预览">
 <div id="preview-empty" class="preview-empty">
 <span class="crop-mark" aria-hidden="true">
 </span>
@@ -253,6 +253,12 @@
 <p id="capture-feedback" role="status">
 </p>
 </div>
+<section id="capture-quality" class="capture-quality" aria-label="照片即时检查" hidden>
+<p id="capture-quality-summary" role="status"></p><ul id="capture-quality-warnings"></ul>
+<label><input id="capture-show-corners" type="checkbox">叠加检测到的角点</label>
+<p class="helper">仅为辅助提示，阈值需结合实拍检查；保存照片或检测到角点不代表标定通过。</p>
+</section>
+<button id="capture-image-retry" class="button button-quiet" type="button" hidden>重试显示照片</button>
 <div id="capture-thumbnails" class="capture-thumbnails" aria-label="当前轮已拍照片">
 </div>
 </article>
@@ -394,11 +400,27 @@
 </details>
 <div id="bev-editor" hidden="">
 <h3>2 · 选一个点，填距离，再点照片对应位置</h3>
-<p class="helper">照片已去畸变。先选点号，在照片上点击地面标记中心；放大页面可精细点选。绿色为标定点，橙色为独立检查点。检查点不参与拟合。</p>
+<p class="helper">照片已去畸变。先选点号，在照片上点击地面标记中心；使用照片工具放大或微调，点位始终按原图像素保存。绿色为标定点，橙色为独立检查点。检查点不参与拟合。</p>
 <div class="bev-edit-grid">
 <div class="bev-canvas-wrap">
-<canvas id="bev-canvas" aria-label="去畸变地面照片，可点击选择地面点">
-</canvas>
+<div id="bev-image-status" class="image-status" role="status">等待加载地面照片</div>
+<button id="bev-image-retry" class="button button-quiet" type="button" hidden>重试加载照片</button>
+<div id="bev-image-controls" class="image-tools" aria-label="照片选点工具">
+<button id="bev-zoom-out" type="button" class="button button-quiet" aria-label="缩小照片">缩小</button>
+<span id="bev-zoom-label">1×</span>
+<button id="bev-zoom-in" type="button" class="button button-quiet" aria-label="放大照片">放大</button>
+<button id="bev-fit" type="button" class="button button-quiet">适应宽度</button>
+<button id="bev-pan" type="button" class="button button-quiet" aria-pressed="false">拖动画面</button>
+<button id="bev-undo" type="button" class="button button-quiet">撤销修改</button>
+<label><input id="bev-show-loupe" type="checkbox" checked>放大镜</label>
+</div>
+<div class="bev-image-frame">
+<div id="bev-image-scroll" class="bev-image-scroll">
+<canvas id="bev-canvas" tabindex="0" aria-disabled="true" aria-label="去畸变地面照片。点击选点；方向键移动所选点 1 像素，按住 Shift 微调 0.1 像素，Ctrl 或 Command 加 Z 撤销。"></canvas>
+</div>
+<div id="bev-loupe" class="bev-loupe" hidden><canvas id="bev-loupe-canvas" width="160" height="160" aria-label="原图局部放大"></canvas><span id="bev-loupe-label"></span></div>
+</div>
+<p class="helper">放大后可切换“拖动画面”。选点后聚焦照片，用方向键移动 1 像素，Shift + 方向键微调 0.1 像素；Ctrl / Command + Z 撤销。</p>
 <p id="bev-selected" role="status">
 </p>
 <details>

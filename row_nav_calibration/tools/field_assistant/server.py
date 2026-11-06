@@ -47,7 +47,7 @@ class FieldAssistantHandler(BaseHTTPRequestHandler):
             try:
                 query = parse_qs(urlparse(self.path).query)
                 self._file(self.server.sessions.capture_image(
-                    query["session"][0], query["group"][0], int(query["slot"][0])))
+                    query["session"][0], query["group"][0], int(query["slot"][0]), query.get("kind", ["raw"])[0]))
             except (KeyError, ValueError):
                 self._json({"error": "无效的照片路径"}, HTTPStatus.BAD_REQUEST)
         elif route == "/api/bev-image":

@@ -3,6 +3,7 @@ const $ = (selector) => document.querySelector(selector);
 const state = {
   status: null,
   session: null,
+  loaded: false,
 };
 
 function escapeHtml(value) {
@@ -53,10 +54,12 @@ function renderStatus(status) {
   const empty = $("#preview-empty");
   if (status.camera.preview_available) {
     image.src = `/api/preview?t=${Date.now()}`;
+    image.hidden = false;
     image.style.display = "block";
     empty.style.display = "none";
     $("#preview-badge").textContent = "文件预览（非实时）";
   } else {
+    image.hidden = true;
     image.style.display = "none";
     empty.style.display = "block";
     $("#preview-badge").textContent = "无画面";
@@ -99,6 +102,7 @@ const positions = ["左上", "上方", "右上", "左侧", "中央", "右侧", "
 let captureSlot = 0;
 let captureBusy = false;
 let reviewedSlot = null;
+let captureImageReady = false;
 function captureKey() { return `row-nav-capture:${state.session?.id}`; }
 function saveCaptureProgress() {
   try {
@@ -146,6 +150,7 @@ function renderIntrinsicAttempt(attempt) {
 function resetCapture() {
   captureSlot = 0;
   reviewedSlot = null;
+  captureImageReady = false;
   $("#capture-review").hidden = true;
   $("#capture-feedback").textContent = "";
 }
@@ -157,7 +162,9 @@ function showSavedCapture() {
   const saved = (state.session?.capture_slots?.[group] || []).includes(captureSlot);
   reviewedSlot = saved ? captureSlot : null;
   $("#capture-review").hidden = !saved;
-  if (saved) $("#capture-review").src = `${captureImageUrl(group, captureSlot)}&t=${Date.now()}`;
+  captureImageReady = false;
+  $("#capture-show-corners").checked = false;
+  if (saved) loadCapturePhoto();
   $("#capture-feedback").textContent = saved ? "这是已保存的照片。可检查后继续，或重拍当前这一张。" : "";
 }
 function renderCapture() {
@@ -189,18 +196,59 @@ function renderCapture() {
   ).join("");
   $("#capture-button").disabled = locked;
   $("#capture-group").disabled = captureBusy;
-  $("#capture-button").textContent = completed ? "本次内参已计算" : captureBusy ? "正在拍照，请保持不动…" : reviewedSlot === captureSlot ? "不满意，重拍这张" : "准备好了，拍照";
-  $("#capture-next").disabled = locked || reviewedSlot !== captureSlot || captureSlot === limit - 1;
+  $("#capture-button").textContent = completed ? "本次内参已计算" : captureBusy ? "正在拍照并检查照片…" : reviewedSlot === captureSlot ? "不满意，重拍这张" : "准备好了，拍照";
+  $("#capture-next").disabled = locked || reviewedSlot !== captureSlot || !captureImageReady || captureSlot === limit - 1;
   $("#capture-next-help").textContent = completed ? "已有候选内参，重新标定请先建立新会话。" : captureSlot === limit - 1 ? "本组最后一张；拍好后切换采集组或计算内参。" : reviewedSlot !== captureSlot ? "拍好当前照片后，可前往下一个位置。" : "检查清晰度和完整性，满意后再去下一个位置。";
   $("#capture-save-state").textContent = captureBusy ? "正在采集…" : (counts.intrinsic || counts.validation) ? "✓ 已拍照片保存在设备上" : "等待第一张照片";
   $(".preview-frame").dataset.captured = String(reviewedSlot === captureSlot);
+  $("#preview-badge").textContent = reviewedSlot === captureSlot ? "已拍照片（非实时）" : state.status?.camera.preview_available ? "参考图片（非实时）" : "等待拍照";
   $("#capture-target-label").textContent = `当前选择：${positions[captureSlot % 9]}`;
   $("#photo-source").textContent = reviewedSlot === captureSlot ? `已拍照片 · 第 ${captureSlot + 1} 张${state.status?.mode === "mock" ? "（模拟）" : ""}` : state.status?.camera.preview_available ? "参考图片（非实时），点击拍照获取当前画面" : "尚无预览，点击拍照获取当前画面";
   $("#capture-thumbnails").innerHTML = slots.filter(slot => Math.floor(slot / 9) === round).map(slot =>
     `<button type="button" data-capture-slot="${slot}" aria-current="${slot === captureSlot}" aria-label="查看第 ${slot + 1} 张已拍照片"><img src="${captureImageUrl(group, slot)}" alt="第 ${slot + 1} 张已拍照片">第 ${slot + 1} 张 ✓</button>`
   ).join("");
+  renderCaptureQuality();
   document.dispatchEvent(new CustomEvent("field-capture", {detail: {group, slot: captureSlot, busy: captureBusy}}));
 }
+function loadCapturePhoto() {
+  if (reviewedSlot !== captureSlot || !state.session) return;
+  const group = $("#capture-group").value;
+  const key = `${state.session.id}:${group}:${captureSlot}`;
+  const image = $("#capture-review");
+  captureImageReady = false;
+  $("#capture-next").disabled = true;
+  $("#capture-image-retry").hidden = true;
+  image.hidden = true;
+  image.onload = () => {
+    if (`${state.session?.id}:${$("#capture-group").value}:${captureSlot}` !== key) return;
+    captureImageReady = image.naturalWidth > 0;
+    image.hidden = !captureImageReady;
+    renderCapture();
+  };
+  image.onerror = () => {
+    if (`${state.session?.id}:${$("#capture-group").value}:${captureSlot}` !== key) return;
+    captureImageReady = false;
+    $("#capture-next").disabled = true;
+    $("#capture-image-retry").hidden = false;
+    $("#capture-feedback").textContent = "照片已保存，但画面加载失败。请重试显示照片，确认后再继续。";
+  };
+  image.src = `${captureImageUrl(group, captureSlot)}&kind=${$("#capture-show-corners").checked ? "corners" : "raw"}&t=${Date.now()}`;
+}
+function renderCaptureQuality() {
+  const visible = reviewedSlot === captureSlot;
+  $("#capture-quality").hidden = !visible;
+  if (!visible) { $("#capture-image-retry").hidden = true; return; }
+  const quality = state.session?.capture_quality?.[$("#capture-group").value]?.[String(captureSlot)];
+  $("#capture-show-corners").disabled = captureBusy || !quality?.overlay_available;
+  $("#capture-quality-summary").textContent = quality && Number.isFinite(quality.corners)
+    ? `检测到 ${quality.corners}/${quality.expected_corners || 54} 个角点${quality.corner_coverage !== undefined ? ` · 角点覆盖 ${(quality.corner_coverage*100).toFixed(1)}%` : ""} · ${quality.width || "—"} × ${quality.height || "—"}${quality.sharpness !== undefined ? ` · 清晰度指标 ${quality.sharpness.toFixed(1)}` : ""}`
+    : "此照片暂无可用的即时检查结果，请人工检查或重拍。";
+  $("#capture-quality-warnings").replaceChildren(...(quality?.warnings || []).map(message => {
+    const item = document.createElement("li"); item.textContent = message; return item;
+  }));
+}
+$("#capture-show-corners").addEventListener("change", loadCapturePhoto);
+$("#capture-image-retry").addEventListener("click", loadCapturePhoto);
 $("#capture-grid").addEventListener("click", (event) => {
   const button = event.target.closest("[data-position]");
   if (!button || captureBusy) return;
@@ -235,9 +283,8 @@ $("#capture-thumbnails").addEventListener("click", event => {
 });
 $("#capture-next").addEventListener("click", () => {
   captureSlot += 1;
-  reviewedSlot = null;
-  $("#capture-review").hidden = true;
-  $("#capture-feedback").textContent = "请移动标定板，准备好后再点击拍照。";
+  showSavedCapture();
+  if (reviewedSlot === null) $("#capture-feedback").textContent = "请移动标定板，准备好后再点击拍照。";
   renderCapture();
 });
 $("#capture-button").addEventListener("click", async () => {
@@ -249,10 +296,10 @@ $("#capture-button").addEventListener("click", async () => {
       method: "POST", body: JSON.stringify({ group: $("#capture-group").value, slot: captureSlot }),
     });
     renderSession(result.session);
-    const image = $("#capture-review");
-    image.src = `${result.image_url}&t=${Date.now()}`;
-    image.hidden = false;
     reviewedSlot = captureSlot;
+    $("#capture-show-corners").checked = false;
+    $("#capture-review").hidden = false;
+    loadCapturePhoto();
     $("#capture-feedback").textContent = result.simulated ? "模拟回放图片，仅测试流程，不能用于真实标定。" : "请检查照片：完整、清晰、无明显反光。满意后点下一个位置；最后一张拍好后可切换采集组或计算。";
   } catch (error) {
     $("#capture-feedback").textContent = error.message;
@@ -305,6 +352,7 @@ async function refresh() {
       api("/api/status"),
       api("/api/sessions/current"),
     ]);
+    state.loaded = true;
     renderStatus(status);
     renderSession(session.session);
   } catch (error) {
