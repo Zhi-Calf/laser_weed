@@ -299,6 +299,8 @@ def main() -> None:
             "rejected": train_rejected,
             "calibration_rms_px": float(rms),
             "per_view_rms_px": train_errors,
+            "per_view": [{"image": str(view.path), "reprojection_rms_px": error}
+                         for view, error in zip(train_views, train_errors)],
         },
         "validation": {
             "matched": len(validation_paths),

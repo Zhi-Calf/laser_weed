@@ -14,13 +14,18 @@ import cv2
 import numpy as np
 
 
-def assess(image_path: Path, overlay_path: Path, square_m: float, marker_m: float) -> dict:
+def assess(image_path: Path, overlay_path: Path, square_m: float, marker_m: float, thumbnail_path: Path | None = None) -> dict:
     raw_hash = hashlib.sha256(image_path.read_bytes()).hexdigest()
     image = cv2.imread(str(image_path))
     if image is None:
         return {"state": "review", "raw_sha256": raw_hash, "corners": 0,
                 "warnings": ["照片无法解码，请重新拍摄"], "overlay_available": False}
     height, width = image.shape[:2]
+    if thumbnail_path is not None:
+        scale = min(1., 192/max(width, height))
+        small = cv2.resize(image, (max(1, round(width*scale)), max(1, round(height*scale))), interpolation=cv2.INTER_AREA)
+        if not cv2.imwrite(str(thumbnail_path), small, [cv2.IMWRITE_JPEG_QUALITY, 75]):
+            raise OSError("cannot write capture thumbnail")
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     board = cv2.aruco.CharucoBoard((7, 10), square_m, marker_m,
                                  cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_1000))
@@ -75,8 +80,9 @@ def main() -> None:
     parser.add_argument("overlay", type=Path)
     parser.add_argument("square_m", type=float)
     parser.add_argument("marker_m", type=float)
+    parser.add_argument("--thumbnail", type=Path)
     args = parser.parse_args()
-    report = assess(args.image, args.overlay, args.square_m, args.marker_m)
+    report = assess(args.image, args.overlay, args.square_m, args.marker_m, args.thumbnail)
     args.report.write_text(json.dumps(report, ensure_ascii=False, allow_nan=False), encoding="utf-8")
 
 

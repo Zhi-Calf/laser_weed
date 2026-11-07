@@ -103,6 +103,7 @@ let captureSlot = 0;
 let captureBusy = false;
 let reviewedSlot = null;
 let captureImageReady = false;
+let captureImageVersion = null;
 function captureKey() { return `row-nav-capture:${state.session?.id}`; }
 function saveCaptureProgress() {
   try {
@@ -152,6 +153,7 @@ function resetCapture() {
   reviewedSlot = null;
   captureImageReady = false;
   $("#capture-review").hidden = true;
+  captureImageVersion = null;
   $("#capture-feedback").textContent = "";
 }
 function captureImageUrl(group, slot) {
@@ -167,6 +169,10 @@ function showSavedCapture() {
   if (saved) loadCapturePhoto();
   $("#capture-feedback").textContent = saved ? "这是已保存的照片。可检查后继续，或重拍当前这一张。" : "";
 }
+function captureViewRevision() {
+  const group = $("#capture-group").value;
+  return `${state.session?.id}:${group}:${captureSlot}:${state.session?.capture_versions?.[group]?.[String(captureSlot)] || "legacy"}:${$("#capture-show-corners").checked}`;
+}
 function renderCapture() {
   const group = $("#capture-group").value;
   saveCaptureProgress();
@@ -175,6 +181,7 @@ function renderCapture() {
   const limit = group === "intrinsic" ? 27 : 9;
   const slots = state.session?.capture_slots?.[group] || [];
   const counts = state.session?.capture_counts || {};
+  if (reviewedSlot === captureSlot && captureImageVersion !== null && captureImageVersion !== captureViewRevision()) loadCapturePhoto();
   const completed = !!state.session?.metadata?.intrinsic_run;
   const locked = captureBusy || completed;
   $("#capture-round").disabled = locked || group !== "intrinsic";
@@ -204,17 +211,42 @@ function renderCapture() {
   $("#preview-badge").textContent = reviewedSlot === captureSlot ? "已拍照片（非实时）" : state.status?.camera.preview_available ? "参考图片（非实时）" : "等待拍照";
   $("#capture-target-label").textContent = `当前选择：${positions[captureSlot % 9]}`;
   $("#photo-source").textContent = reviewedSlot === captureSlot ? `已拍照片 · 第 ${captureSlot + 1} 张${state.status?.mode === "mock" ? "（模拟）" : ""}` : state.status?.camera.preview_available ? "参考图片（非实时），点击拍照获取当前画面" : "尚无预览，点击拍照获取当前画面";
-  $("#capture-thumbnails").innerHTML = slots.filter(slot => Math.floor(slot / 9) === round).map(slot =>
-    `<button type="button" data-capture-slot="${slot}" aria-current="${slot === captureSlot}" aria-label="查看第 ${slot + 1} 张已拍照片"><img src="${captureImageUrl(group, slot)}" alt="第 ${slot + 1} 张已拍照片">第 ${slot + 1} 张 ✓</button>`
-  ).join("");
+  renderCaptureThumbnails(group, round, slots);
   renderCaptureQuality();
   document.dispatchEvent(new CustomEvent("field-capture", {detail: {group, slot: captureSlot, busy: captureBusy}}));
+}
+function renderCaptureThumbnails(group, round, slots) {
+  const panel = $("#capture-thumbnails");
+  const key = `${state.session?.id}:${group}:${round}`;
+  if (panel.dataset.key !== key) { panel.replaceChildren(); panel.dataset.key = key; }
+  const visible = slots.filter(slot => Math.floor(slot / 9) === round);
+  for (const button of panel.querySelectorAll("button")) {
+    if (!visible.includes(Number(button.dataset.captureSlot))) button.remove();
+  }
+  for (const slot of visible) {
+    let button = panel.querySelector(`[data-capture-slot="${slot}"]`);
+    if (!button) {
+      button = document.createElement("button"); button.type = "button";
+      button.dataset.captureSlot = String(slot);
+      button.setAttribute("aria-label", `查看第 ${slot+1} 张已拍照片`);
+      const image = document.createElement("img"); image.alt = `第 ${slot+1} 张已拍照片`;
+      const label = document.createElement("span"); label.textContent = `第 ${slot+1} 张 ✓`;
+      button.append(image, label); panel.append(button);
+    }
+    const version = state.session?.capture_versions?.[group]?.[String(slot)] || "legacy";
+    if (button.dataset.version !== version) {
+      button.querySelector("img").src = `${captureImageUrl(group,slot)}&kind=thumbnail&v=${encodeURIComponent(version)}`;
+      button.dataset.version = version;
+    }
+    button.setAttribute("aria-current", String(slot === captureSlot));
+  }
 }
 function loadCapturePhoto() {
   if (reviewedSlot !== captureSlot || !state.session) return;
   const group = $("#capture-group").value;
   const key = `${state.session.id}:${group}:${captureSlot}`;
   const image = $("#capture-review");
+  captureImageVersion = captureViewRevision();
   captureImageReady = false;
   $("#capture-next").disabled = true;
   $("#capture-image-retry").hidden = true;
@@ -318,6 +350,7 @@ $("#calibrate-captured").addEventListener("click", async () => {
     });
     renderSession(result.session);
     setMessage("候选内参已生成，等待人工复核。", "success");
+    document.dispatchEvent(new CustomEvent("field-intrinsics-complete"));
   } catch (error) { setMessage(error.message, "error"); await refresh(); }
   finally { button.disabled = false; }
 });
@@ -427,6 +460,7 @@ $("#run-intrinsic-button").addEventListener("click", async () => {
     });
     renderSession(result.session);
     setMessage("候选内参已经生成。检查对比图后才能标记为有效。", "success");
+    document.dispatchEvent(new CustomEvent("field-intrinsics-complete"));
   } catch (error) {
     setMessage(error.message, "error");
     await refresh();

@@ -252,3 +252,32 @@ def test_draft_rejects_previous_photo_and_invalid_numbers(bev):
     payload["points"][0]["x"] = float("nan")
     with pytest.raises(SessionError, match="有限"):
         service.save_draft(payload)
+
+
+def test_publication_state_matches_candidate_and_never_claims_runtime_load(bev):
+    service,payload=bev
+    assert service.sessions.describe()['runtime_calibration']['state']['candidate']=='not_started'
+    service.calculate(payload)
+    hardware_contract_fixture(service)
+    result=service.publish(dict(image_id=payload['image_id'],review_confirmed=True))
+    state=result['runtime_calibration']['state']
+    assert state['candidate']=='published_default'
+    assert state['default_release']==result['runtime_calibration']['published']['release_id']
+    assert state['runtime_load']=='unknown'
+    points_file=service.root()/'bev/points.json'
+    original_points=points_file.read_bytes()
+    points_file.write_bytes(original_points+b'\n')
+    changed=service.sessions.describe()['runtime_calibration']['state']
+    assert changed['candidate']=='pending_review' and changed['default_release']==state['default_release']
+    points_file.write_bytes(original_points)
+    # A legacy publication cannot prove that a newly calculated candidate was published.
+    publication=service.root()/'runtime-publication.json'
+    manifest=json.loads(publication.read_text());fingerprint=manifest.pop('candidate_fingerprint')
+    publication.write_text(json.dumps(manifest))
+    assert service.sessions.describe()['runtime_calibration']['state']['candidate']=='pending_review'
+    manifest['candidate_fingerprint']=fingerprint;manifest['loaded']=True
+    publication.write_text(json.dumps(manifest))
+    assert service.sessions.describe()['runtime_calibration']['state']['runtime_load']=='unknown'
+    service.save_draft(payload)
+    state=service.sessions.describe()['runtime_calibration']['state']
+    assert state['candidate']=='draft' and state['default_release']==manifest['release_id']

@@ -73,8 +73,11 @@ function bevResult() {
   $("#bev-result").hidden = !summary;
   if (!summary) return;
   $("#bev-metrics").textContent = `${bevData.snapshot.mode === "mock" ? "模拟流程；" : ""}标定内点 ${summary.fit_inliers}/${summary.fit.count}；独立检查 ${summary.check.count} 点，RMSE ${(summary.check.rmse_m * 100).toFixed(2)} cm，最大误差 ${(summary.check.max_m * 100).toFixed(2)} cm。阈值：RMSE ≤ 5 cm，最大 ≤ 10 cm。候选参数尚未启用。`;
+  const published = state.session?.runtime_calibration?.state?.candidate === "published_default";
+  if (published) $("#bev-metrics").textContent = $("#bev-metrics").textContent.replace("候选参数尚未启用。", "本次候选已发布为默认参数；运行加载状态未知。");
   const d = summary.dynamic;
   $("#bev-dynamic-result").textContent = d ? `动态外参已计算（姿态时间差 ${d.sync_age_ms.toFixed(1)} ms）：相机离地 ${d.camera_height_ground_m.toFixed(3)} m；相对后轴中心位置 [${d.camera_position_vehicle_m.map(v=>v.toFixed(3)).join(", ")}] m；光轴下俯 ${d.camera_down_angle_deg.toFixed(2)}°、向左偏 ${d.camera_left_angle_deg.toFixed(2)}°；重投影 RMSE ${d.reprojection_rmse_px.toFixed(2)} px；动态独立检查 ${(d.check_rmse_m*100).toFixed(2)} cm。输出原点：实体后轴中心。候选结果仍需复核。` : "本次为静态 BEV，不会启用姿态补偿。";
+  if (published && d) $("#bev-dynamic-result").textContent = $("#bev-dynamic-result").textContent.replace("候选结果仍需复核。", "本次候选已发布；运行加载状态未知。");
   $("#bev-errors").replaceChildren(...summary.point_errors_m.map((error, i) => {
     const item = document.createElement("li");
     item.textContent = `${bevPoints[i]?.role === "check" ? "独立检查" : "标定"}点 ${(error * 100).toFixed(2)} cm`;

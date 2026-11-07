@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import sys
@@ -46,10 +47,25 @@ class FieldAssistantHandler(BaseHTTPRequestHandler):
         elif route == "/api/capture-image":
             try:
                 query = parse_qs(urlparse(self.path).query)
-                self._file(self.server.sessions.capture_image(
-                    query["session"][0], query["group"][0], int(query["slot"][0]), query.get("kind", ["raw"])[0]))
+                sid, group, slot = query["session"][0], query["group"][0], int(query["slot"][0])
+                kind = query.get("kind", ["raw"])[0]
+                raw = self.server.sessions.capture_image(sid, group, slot)
+                if not raw.is_file():
+                    self._file(raw)
+                    return
+                revision = self.server.sessions.capture_revision(sid, group, slot)
+                path = self.server.sessions.capture_image(sid, group, slot, kind, revision)
+                cache_tag = f"{sid}:{group}:{slot}:{revision}:{kind}" if kind == "thumbnail" and query.get("v", [None])[0] == revision else None
+                self._file(path, cache_tag=cache_tag)
             except (KeyError, ValueError):
                 self._json({"error": "无效的照片路径"}, HTTPStatus.BAD_REQUEST)
+        elif route == "/api/intrinsic-image":
+            try:
+                query = parse_qs(urlparse(self.path).query)
+                self._file(self.server.sessions.intrinsic_image(query["session"][0], query["group"][0],
+                           int(query["index"][0]), query["kind"][0]))
+            except (KeyError, ValueError):
+                self._json({"error": "无效的内参检查图片"}, HTTPStatus.BAD_REQUEST)
         elif route == "/api/bev-image":
             try:
                 query = parse_qs(urlparse(self.path).query)
@@ -150,16 +166,24 @@ class FieldAssistantHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _file(self, path: Path, download: bool = False) -> None:
+    def _file(self, path: Path, download: bool = False, cache_tag: str | None = None) -> None:
         if not path.is_file():
             self._json({"error": "资源不存在"}, HTTPStatus.NOT_FOUND)
+            return
+        etag = '"' + hashlib.sha256(cache_tag.encode()).hexdigest() + '"' if cache_tag else None
+        if etag and self.headers.get("If-None-Match") == etag:
+            self.send_response(HTTPStatus.NOT_MODIFIED.value)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "private, max-age=86400, immutable")
+            self.end_headers()
             return
         content = path.read_bytes()
         mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         self.send_response(HTTPStatus.OK.value)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(content)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", "private, max-age=86400, immutable" if etag else "no-store")
+        if etag: self.send_header("ETag", etag)
         if download:
             self.send_header(
                 "Content-Disposition", f'attachment; filename="{path.name}"'

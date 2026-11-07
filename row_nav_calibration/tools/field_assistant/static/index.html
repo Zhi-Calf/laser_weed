@@ -319,6 +319,15 @@
 </div>
 <dl id="intrinsic-result" class="metric-list" hidden="">
 </dl>
+<section id="intrinsic-photo-report" class="photo-report" hidden>
+<h3>逐张检查照片与误差</h3>
+<p class="helper">按误差从大到小排列，优先检查较大的照片。误差不是唯一判断依据，独立验证照片不参与拟合。需要重新标定时，先导出记录再新建会话。</p>
+<label class="field"><span>检查哪组照片</span><select id="intrinsic-review-group"><option value="all">全部照片</option><option value="intrinsic">拟合照片</option><option value="validation">独立验证照片</option></select></label>
+<div class="report-table-scroll"><table class="photo-report-table"><thead><tr><th>用途</th><th>照片</th><th>重投影 RMS / px</th><th>查看</th></tr></thead><tbody id="intrinsic-review-rows"></tbody></table></div>
+<div id="intrinsic-review-status" role="status"></div>
+<div id="intrinsic-review-viewer"></div>
+<a id="intrinsic-review-open" target="_blank" rel="noopener noreferrer" hidden>新窗口查看大图</a>
+</section>
 <details class="import-settings">
 <summary>已有照片？从部署目录导入</summary>
 <div id="intrinsic-runner" class="intrinsic-runner" hidden="">
@@ -472,6 +481,11 @@
 </div>
 <div id="review-summary" class="review-summary" role="status">
 </div>
+<section class="runtime-status" aria-label="参数版本与运行状态">
+<div><h3>本次 BEV 候选</h3><p id="candidate-state-label"></p></div>
+<div><h3>默认参数（文件）</h3><p id="default-release-label"></p></div>
+<div><h3>运行程序已加载</h3><p id="runtime-load-label">未知：未接入加载回执</p></div>
+</section>
 <article class="panel">
 <div id="bev-result" hidden="">
 <h3>3 · 检查鸟瞰图和独立点误差</h3>
@@ -548,5 +562,6 @@
 </script>
 <script src="/static/workbench.js" defer="">
 </script>
+<script src="/static/review.js" defer></script>
 </body>
 </html>

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from .sessions import SessionError, SessionStore
 from .bev_worker_io import read_json, write_json
+from .runtime_status import candidate_fingerprint
 from .dynamic_sync import checked_installation, capture_sync
 
 
@@ -234,7 +235,7 @@ class BevService:
                     write_json(stage / "dynamic-sync.json", sync)
                     write_json(stage / "dynamic-extrinsics.json", dynamic)
                 self.worker("accept", stage)
-                manifest = {"release_id": release, "session_id": root.name,
+                manifest = {"release_id": release, "candidate_fingerprint": candidate_fingerprint(root), "session_id": root.name,
                     "created_at": datetime.now(timezone.utc).isoformat(), "reviewer": metadata.get("operator"),
                     "reference": snapshot.get("reference", "rear_axle_ground"), "axes": "x_forward_y_left", "image_id": snapshot["image_id"],
                     "dynamic_enabled": bool(sync),

@@ -17,7 +17,7 @@ const closeTo = (a,b,tolerance=.02) => assert.ok(Math.abs(a-b)<tolerance, `${a} 
     assert.equal(response.status(),201);
     let failCapture=true;
     await page.route('**/api/capture-image?**',route=>{
-      if(failCapture && new URL(route.request().url()).searchParams.has('kind')) {
+      if(failCapture && new URL(route.request().url()).searchParams.get('kind')==='raw') {
         failCapture=false; return route.abort();
       }
       return route.continue();

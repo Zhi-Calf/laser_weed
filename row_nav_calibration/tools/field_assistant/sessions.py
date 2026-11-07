@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import AssistantConfig
+from .runtime_status import publication_state
 
 
 class SessionError(ValueError):
@@ -144,6 +146,9 @@ class SessionStore:
             return None
         intrinsic_summary = self._read_json(path / "validation" / "intrinsic-summary.json")
         snapshot = self._read_json(path / "bev" / "snapshot.json")
+        active = self._read_json(self.config.effective_runtime_calibration_root / "current" / "manifest.json")
+        published = self._read_json(path / "runtime-publication.json")
+        bev_summary = self._read_json(path / "bev/summary.json")
         return {
             "id": session_id,
             "path": str(path),
@@ -152,6 +157,10 @@ class SessionStore:
                                 if (path / "captures" / group / f"position-{i:02d}.jpg").is_file()]
                               for group in ("intrinsic", "validation")},
             "intrinsic_attempt": self._read_json(path / "intrinsic-last-attempt.json"),
+            "capture_versions": {group: {str(i): self.capture_revision(session_id, group, i)
+                                         for i in range(27 if group == "intrinsic" else 9)
+                                         if (path/"captures"/group/f"position-{i:02d}.jpg").is_file()}
+                                 for group in ("intrinsic", "validation")},
             "capture_quality": {group: {str(i): self._read_json(path / "captures" / group / f"position-{i:02d}.quality.json")
                                          for i in range(27 if group == "intrinsic" else 9)
                                          if (path / "captures" / group / f"position-{i:02d}.quality.json").is_file()}
@@ -160,6 +169,7 @@ class SessionStore:
                                if (path / "captures" / group).is_dir() else 0
                                for group in ("intrinsic", "validation")},
             "intrinsic_summary": intrinsic_summary,
+            "intrinsic_review": self.intrinsic_review(session_id, intrinsic_summary),
             "bev": {"snapshot": snapshot, "points": self._read_json(path / "bev" / "points.json"),
                     "draft": self._read_json(path / "bev" / "draft.json"),
                     "reference": self._read_json(path / "bev" / "reference.json"),
@@ -167,8 +177,9 @@ class SessionStore:
             "download_ready": (path / "field-session-result.zip").is_file(),
             "runtime_calibration": {
                 "current_path": str(self.config.effective_runtime_calibration_root / "current"),
-                "active": self._read_json(self.config.effective_runtime_calibration_root / "current" / "manifest.json"),
-                "published": self._read_json(path / "runtime-publication.json"),
+                "active": active,
+                "published": published,
+                "state": publication_state(path, bev_summary, active, published),
             },
         }
 
@@ -201,7 +212,7 @@ class SessionStore:
     def _archive_failed_intrinsic(self, root: Path) -> None:
         """Keep diagnostics, but never expose partial output as a candidate."""
         relatives = (
-            "raw/intrinsic", "raw/validation", "cmd108-intrinsics.yaml",
+            "raw/intrinsic", "raw/validation", "intrinsic-sources.json", "cmd108-intrinsics.yaml",
             "validation/intrinsic-summary.json", "validation/intrinsic-diagnostics.json", "validation/intrinsic",
             "logs/intrinsic-calibration.log",
         )
@@ -250,6 +261,13 @@ class SessionStore:
         raw_validation = session_dir / "raw" / "validation"
         if any(raw_train.iterdir()) or any(raw_validation.iterdir()):
             raise SessionError("当前会话已经导入过标定图片，请建立新会话后重试")
+        source_map = {}
+        for group, images, prefix in (("intrinsic", train_images, "train"), ("validation", validation_images, "validation")):
+            for index, source in enumerate(images, start=1):
+                slot = re.fullmatch(r"position-(\d+)\.jpg", source.name) if payload.get("source") == "captured" else None
+                source_map[f"{group}/{prefix}-{index:03d}{source.suffix.lower()}"] = {
+                    "image": source.name, "slot": int(slot[1]) if slot else None}
+        (session_dir/"intrinsic-sources.json").write_text(json.dumps(source_map, ensure_ascii=False), encoding="utf-8")
         for index, source in enumerate(train_images, start=1):
             shutil.copy2(source, raw_train / f"train-{index:03d}{source.suffix.lower()}")
         for index, source in enumerate(validation_images, start=1):
@@ -400,8 +418,16 @@ class SessionStore:
                 evidence["raw_sha256"] = hashlib.sha256(images[0].read_bytes()).hexdigest()
                 target_metadata.write_text(json.dumps(evidence))
             images[0].replace(target)
+        revision = uuid.uuid4().hex
         if group != "bev":
             self._assess_capture(target, metadata["board"])
+            thumbnail = target.with_suffix(".thumb.jpg")
+            if thumbnail.is_file():
+                thumbnail.replace(target.with_name(f"{target.stem}.{revision}.thumb.jpg"))
+        # Publish the revision only after its derived image is ready; old URLs remain immutable.
+        pending_revision = target.with_suffix(".rev.tmp")
+        pending_revision.write_text(revision, encoding="ascii")
+        pending_revision.replace(target.with_suffix(".rev"))
         # Re-taking a position replaces only that position; old exports are stale.
         (root / "field-session-result.zip").unlink(missing_ok=True)
         return {"session": self.describe(session_id), "image_url":
@@ -412,6 +438,8 @@ class SessionStore:
         """Quality guidance must never discard a successfully saved frame."""
         report = target.with_suffix(".quality.json")
         overlay = target.with_suffix(".corners.jpg")
+        thumbnail = target.with_suffix(".thumb.jpg")
+        thumbnail.unlink(missing_ok=True)
         report.unlink(missing_ok=True)
         overlay.unlink(missing_ok=True)
         try:
@@ -419,6 +447,7 @@ class SessionStore:
                 str(self.config.calibration_python), str(Path(__file__).with_name("capture_quality.py")),
                 str(target), str(report), str(overlay),
                 str(float(board["square_width_mm"]) / 1000), str(float(board["marker_mm"]) / 1000),
+                "--thumbnail", str(thumbnail),
             ], capture_output=True, text=True, timeout=15, check=False)
             if result.returncode or self._read_json(report) is None:
                 raise RuntimeError(result.stderr[-2000:])
@@ -431,12 +460,74 @@ class SessionStore:
             (target.parent.parent.parent / "logs" / "last-quality.log").write_text(
                 f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
 
-    def capture_image(self, session_id: str, group: str, slot: int, kind: str = "raw") -> Path:
+    def capture_image(self, session_id: str, group: str, slot: int, kind: str = "raw", revision: str | None = None) -> Path:
         maximum = 27 if group == "intrinsic" else 9
-        if group not in {"intrinsic", "validation"} or not 0 <= slot < maximum or kind not in {"raw", "corners"}:
+        if group not in {"intrinsic", "validation"} or not 0 <= slot < maximum or kind not in {"raw", "corners", "thumbnail"}:
             raise SessionError("无效的拍照位置")
-        suffix = ".corners.jpg" if kind == "corners" else ".jpg"
-        return self._session_dir(session_id) / "captures" / group / f"position-{slot:02d}{suffix}"
+        suffix = {"raw": ".jpg", "corners": ".corners.jpg", "thumbnail": ".thumb.jpg"}[kind]
+        path = self._session_dir(session_id) / "captures" / group / f"position-{slot:02d}{suffix}"
+        if kind == "thumbnail":
+            revision = revision or self.capture_revision(session_id, group, slot)
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", revision):
+                raise SessionError("无效的照片版本")
+            versioned = path.with_name(f"position-{slot:02d}.{revision}.thumb.jpg")
+            if versioned.is_file(): return versioned
+            return path if path.is_file() else path.with_name(f"position-{slot:02d}.jpg")
+        return path
+
+    def capture_revision(self, session_id, group, slot):
+        raw = self.capture_image(session_id, group, slot)
+        try:
+            return raw.with_suffix(".rev").read_text(encoding="ascii").strip()
+        except OSError:
+            stat = raw.stat()
+            return f"{stat.st_mtime_ns}-{stat.st_size}"
+
+    def intrinsic_review(self, session_id, summary=None):
+        root = self._session_dir(session_id)
+        summary = summary or self._read_json(root/"validation/intrinsic-summary.json")
+        if not summary:
+            return []
+        sources = self._read_json(root/"intrinsic-sources.json") or {}
+        rows = []
+        for group, section in (("intrinsic", "training"), ("validation", "validation")):
+            data = summary.get(section, {})
+            views = data.get("per_view", [])
+            # Older training reports have errors without image identity. Only align if none were rejected.
+            if group == "intrinsic" and not views and data.get("usable") == data.get("matched"):
+                raw = self._images_in(root/"raw/intrinsic")
+                views = [{"image": str(path), "reprojection_rms_px": error}
+                         for path, error in zip(raw, data.get("per_view_rms_px", []))]
+            for index, view in enumerate(views):
+                name = Path(str(view.get("image", ""))).name
+                if not re.fullmatch(r"(?:train|validation)-\d+\.(?:jpg|jpeg|png)", name):
+                    continue
+                source = sources.get(f"{group}/{name}", {})
+                try:
+                    error = float(view.get("reprojection_rms_px"))
+                    if not math.isfinite(error): error = None
+                except (TypeError, ValueError):
+                    error = None
+                comparison = f"validation-{index+1:03d}-compare.jpg" if group == "validation" else None
+                rows.append({"group": group, "index": index, "raw_name": name,
+                    "image": source.get("image", name), "slot": source.get("slot"), "rms_px": error,
+                    "original_available": (root/"raw"/group/name).is_file(),
+                    "comparison_available": bool(comparison and (root/"validation/intrinsic"/comparison).is_file())})
+        return rows
+
+    def intrinsic_image(self, session_id, group, index, kind):
+        if group not in {"intrinsic", "validation"} or kind not in {"original", "comparison"}:
+            raise SessionError("无效的内参检查图片")
+        row = next((row for row in self.intrinsic_review(session_id)
+                    if row["group"] == group and row["index"] == index), None)
+        if not row:
+            raise SessionError("内参检查图片不存在")
+        root = self._session_dir(session_id)
+        if kind == "original":
+            return root/"raw"/group/row["raw_name"]
+        if not row["comparison_available"]:
+            raise SessionError("此照片没有校正前后对比图")
+        return root/"validation/intrinsic"/f"validation-{index+1:03d}-compare.jpg"
 
     def export_current(self, status: dict[str, Any]) -> dict[str, Any]:
         session_id = self.current_id()
@@ -503,7 +594,7 @@ class SessionStore:
         suffixes = {".jpg", ".jpeg", ".png"}
         return sorted(
             item for item in path.iterdir()
-            if item.is_file() and item.suffix.lower() in suffixes and not item.name.endswith(".corners.jpg")
+            if item.is_file() and item.suffix.lower() in suffixes and not item.name.endswith((".corners.jpg", ".thumb.jpg"))
         )
 
     @staticmethod

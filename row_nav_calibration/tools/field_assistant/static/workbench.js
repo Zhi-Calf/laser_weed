@@ -46,6 +46,16 @@
       ? bev.summary.checks_passed ? '几何检查通过，仍需人工复核图像和参考坐标；尚未因此自动启用新参数。' : '几何检查未通过。查看下方误差，返回外参标定修改点位后重新计算。'
       : session?.intrinsic_summary ? '已生成候选内参。可返回内参采集查看拟合与独立验证误差；完成外参计算后再复核整套参数。'
       : '尚未生成外参候选结果。可以先采集内参，或使用已复核内参进行外参标定。';
+    const publication = session?.runtime_calibration?.state || {};
+    const candidateLabels = {not_started:'尚未计算',draft:'点位草稿',checks_failed:'几何检查未通过',
+      pending_review:'候选结果 · 待人工复核',published_default:'本次候选已发布为默认参数',published_replaced:'本次候选已发布过，当前默认版本已改变'};
+    $('#candidate-state-label').textContent = draft ? '点位草稿 · 需重新计算' : candidateLabels[publication.candidate] || '候选状态未知';
+    $('#default-release-label').textContent = publication.default_release || '尚无可确认的默认版本';
+    $('#runtime-load-label').textContent = '未知：未接入算法进程加载回执';
+    if (!draft && publication.candidate === 'published_default') {
+      $('#review-summary').textContent = '本次候选已发布为默认参数。运行程序是否加载仍未知；需重新初始化并确认。';
+      $('#step-state-review').textContent = '已发布 · 加载未知';
+    }
     dynamicFields();
     const imageKey = session?.bev ? `${session.id}:${session.bev.snapshot.image_id}` : '';
     if (preparedImage !== imageKey) {
