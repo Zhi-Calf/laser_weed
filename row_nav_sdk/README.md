@@ -72,3 +72,5 @@ source install/crop-row-source/setup.bash
 SDK 独立构建和 4 组 CTest 已在 MyUbuntu 通过，含动态 SDK 契约。
 完整迁移测试记录、统一 ROS 构建和安装验证结果见 `docs/migration-20261026.md`。
 这些测试不等于田间精度、板端 NPU 性能或实车控制验收。
+
+推理诊断、模型范围与验证边界见 [推理库 0.2.1 更新记录](docs/inference-hardening-20261110.md)。

@@ -82,15 +82,51 @@ LetterboxResult letterboxImage(const cv::Mat& source, int width, int height) {
     return result;
 }
 
+Status validateRockchipYoloV8SegLayout(const std::vector<cv::Mat>& outputs, const ModelConfig& config) {
+    if (config.input_width != 640 || config.input_height != 640)
+        return Status::invalidArgument("Rockchip YOLOv8-seg decoder requires 640x640 input");
+    if (outputs.size()!=10 && outputs.size()!=13)
+        return Status::invalidArgument("Rockchip decoder requires 10 or 13 outputs");
+    if (config.max_detections<=0 || !std::isfinite(config.confidence_threshold) ||
+        config.confidence_threshold<0 || config.confidence_threshold>1 ||
+        !std::isfinite(config.nms_threshold) || config.nms_threshold<0 || config.nms_threshold>1 ||
+        !std::isfinite(config.mask_threshold) || config.mask_threshold<=0 || config.mask_threshold>=1)
+        return Status::invalidArgument("invalid decoder thresholds or detection limit");
+    if (outputs.size()==13) {
+        for (int branch=0;branch<3;++branch) {
+            const int spatial=80>>branch;
+            const auto offset=static_cast<std::size_t>(branch*4);
+            if (!isTensor(outputs[offset],64,spatial) || !isTensor(outputs[offset+1],1,spatial) ||
+                !isTensor(outputs[offset+2],1,spatial) || !isTensor(outputs[offset+3],32,spatial))
+                return Status::invalidArgument("invalid ordered single-class YOLOv8-seg branch");
+        }
+        if (!isTensor(outputs[12],32,160)) return Status::invalidArgument("invalid prototype tensor");
+    } else {
+        for (const int spatial : {80,40,20}) for (const int channels : {64,1,32}) {
+            const auto count=std::count_if(outputs.begin(),outputs.end(),[&](const cv::Mat& tensor) {
+                return isTensor(tensor,channels,spatial);
+            });
+            if (count!=1) return Status::invalidArgument("missing or duplicate single-class YOLOv8-seg tensor");
+        }
+        if (std::count_if(outputs.begin(),outputs.end(),[](const cv::Mat& t){return isTensor(t,32,160);})!=1)
+            return Status::invalidArgument("invalid prototype tensor");
+    }
+    return Status::ok();
+}
+
 Result<SegmentationResult> decodeRockchipYoloV8Seg(
     const std::vector<cv::Mat>& outputs, const Frame& frame, const ModelConfig& config,
     const LetterboxResult& transform, double inference_ms) {
-    if (outputs.size() != 10 && outputs.size() != 13) {
-        return Status::invalidArgument("Rockchip decoder expects 10 or 13 outputs, got " +
-                                       std::to_string(outputs.size()));
-    }
-    if (config.max_detections <= 0) {
-        return Status::invalidArgument("max_detections must be greater than zero");
+    const auto layout = validateRockchipYoloV8SegLayout(outputs,config);
+    if (!layout.isOk()) return layout;
+    if (frame.image.empty() || !std::isfinite(transform.scale) || transform.scale<=0 ||
+        transform.left<0 || transform.top<0 || transform.resized_width<=0 || transform.resized_height<=0 ||
+        transform.left+transform.resized_width>config.input_width ||
+        transform.top+transform.resized_height>config.input_height)
+        return Status::invalidArgument("invalid frame or letterbox transform");
+    for (const auto& tensor : outputs) {
+        if (!tensor.isContinuous() || !cv::checkRange(tensor,true,nullptr))
+            return Status::invalidArgument("non-finite or non-contiguous model output");
     }
 
     const cv::Mat* proto = nullptr;

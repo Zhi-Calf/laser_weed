@@ -21,6 +21,8 @@ struct LetterboxResult {
 
 LetterboxResult letterboxImage(const cv::Mat& source, int width, int height);
 
+Status validateRockchipYoloV8SegLayout(const std::vector<cv::Mat>& outputs, const ModelConfig& config);
+
 Result<SegmentationResult> decodeRockchipYoloV8Seg(
     const std::vector<cv::Mat>& outputs,
     const Frame& frame,

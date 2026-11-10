@@ -17,6 +17,7 @@ extern "C" {
 
 #define RK_ROW_NAV_ABI_VERSION 1u
 #define RK_ROW_NAV_HAS_DYNAMIC_BEV 1
+#define RK_ROW_NAV_HAS_DIAGNOSTICS 1
 typedef struct rk_row_nav_context* rk_row_nav_handle_t;
 /* Fixed-width fields, never C++ types or compiler-dependent enum storage. */
 enum {
@@ -94,6 +95,32 @@ typedef struct {
     double processing_ms;
     double frame_age_ms;
 } rk_row_nav_result_t;
+
+/* Snapshot of the last process attempt on this handle; serial access only.
+   available=1 only after a successful process return (including STALE/NO_ROW).
+   inference_ms includes preprocessing, execution and decoding. RKNN substage
+   fields are available only when detailed_inference=1. Never add them again
+   to inference_ms. Consumers aggregate successful samples for P50/P95. */
+typedef struct {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t available;
+    uint32_t detailed_inference;
+    uint64_t frame_id;
+    double undistort_ms;
+    double inference_ms;
+    double preprocess_ms;
+    double input_setup_ms;
+    double npu_run_ms;
+    double output_copy_ms;
+    double postprocess_ms;
+    double geometry_tracking_ms;
+    double total_ms;
+    double frame_age_ms;
+} rk_row_nav_diagnostics_t;
+RK_ROW_NAV_API void rk_row_nav_diagnostics_init(rk_row_nav_diagnostics_t* diagnostics);
+RK_ROW_NAV_API int32_t rk_row_nav_get_diagnostics(rk_row_nav_handle_t handle,
+    rk_row_nav_diagnostics_t* diagnostics);
 
 /* Call init on owned current-version structures before use.
    API v1 accepts struct_size >= sizeof(v1), preserving unknown tail bytes. */

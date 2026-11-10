@@ -33,6 +33,15 @@ int main() {
         CHECK(rk_row_nav_process(h,&f,&r)==0);
         CHECK(r.observation_status==RK_ROW_NAV_OBSERVATION_VALID && r.frame_id==42);
         CHECK(std::abs(r.lateral_error_m-.10)<.03 && std::abs(r.heading_error_rad)<.001);
+        rk_row_nav_diagnostics_t d; rk_row_nav_diagnostics_init(&d);
+        CHECK(rk_row_nav_get_diagnostics(h,&d)==0 && d.available==1 && d.frame_id==42);
+        CHECK(d.total_ms==r.processing_ms && d.frame_age_ms==r.frame_age_ms);
+        CHECK(d.undistort_ms>=0 && d.inference_ms>=0 && d.geometry_tracking_ms>=0);
+        CHECK(d.detailed_inference==0);
+        struct ExtendedDiagnostics { rk_row_nav_diagnostics_t value; uint64_t tail; } ed;
+        rk_row_nav_diagnostics_init(&ed.value); ed.value.struct_size=sizeof(ed); ed.tail=123;
+        CHECK(rk_row_nav_get_diagnostics(h,&ed.value)==0 && ed.tail==123 && ed.value.struct_size==sizeof(ed));
+        CHECK(rk_row_nav_get_diagnostics(nullptr,&d)==RK_ROW_NAV_INVALID_ARGUMENT);
         CHECK(image==original);
         struct ExtendedResult { rk_row_nav_result_t value; uint64_t sentinel; } extended;
         rk_row_nav_result_init(&extended.value);
@@ -40,6 +49,7 @@ int main() {
         CHECK(rk_row_nav_process(h,&f,&extended.value)==0 && extended.sentinel==0x12345678);
         CHECK(extended.value.struct_size==sizeof(extended));
         f.struct_size=1; CHECK(rk_row_nav_process(h,&f,&r)==RK_ROW_NAV_INVALID_ARGUMENT && std::isnan(r.lateral_error_m));
+        CHECK(rk_row_nav_get_diagnostics(h,&d)==0 && d.available==0);
         f.struct_size=sizeof(f);
         f.pixel_format=RK_ROW_NAV_RGB888; f.capture_time_ns=rk_row_nav_now_ns();
         CHECK(rk_row_nav_process(h,&f,&r)==0 && r.observation_status==RK_ROW_NAV_OBSERVATION_NO_ROW);

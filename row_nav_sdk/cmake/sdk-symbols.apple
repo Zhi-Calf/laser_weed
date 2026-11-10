@@ -10,3 +10,5 @@ _rk_row_nav_destroy
 _rk_row_nav_attitude_init
 _rk_row_nav_dynamic_bev_enabled
 _rk_row_nav_process_with_attitude
+_rk_row_nav_diagnostics_init
+_rk_row_nav_get_diagnostics

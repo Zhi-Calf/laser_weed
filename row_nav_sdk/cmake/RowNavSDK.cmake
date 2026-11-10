@@ -56,3 +56,5 @@ if(RK_NAV_BUILD_TESTS)
     add_test(NAME sdk_${kind} COMMAND rk_sdk_${kind}_test)
   endforeach()
 endif()
+
+install(PROGRAMS ${ROW_NAV_SDK_SOURCE_DIR}/scripts/summarize_diagnostics.py DESTINATION tools)

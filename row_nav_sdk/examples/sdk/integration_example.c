@@ -43,6 +43,17 @@ int main(int argc, char** argv) {
         printf("lateral_m=%f heading_rad=%f confidence=%f\n", result.lateral_error_m, result.heading_error_rad, result.confidence);
     else printf("observation unavailable: status=%u\n", result.observation_status);
     printf("processing_ms=%.3f frame_age_ms=%.3f\n", result.processing_ms, result.frame_age_ms);
+    rk_row_nav_diagnostics_t diagnostics;
+    rk_row_nav_diagnostics_init(&diagnostics);
+    if (!rk_row_nav_get_diagnostics(handle, &diagnostics) && diagnostics.available) {
+        printf("undistort_ms=%.3f inference_ms=%.3f geometry_tracking_ms=%.3f detailed=%u\n",
+            diagnostics.undistort_ms, diagnostics.inference_ms, diagnostics.geometry_tracking_ms,
+            diagnostics.detailed_inference);
+        if (diagnostics.detailed_inference) printf(
+            "preprocess_ms=%.3f input_setup_ms=%.3f npu_run_ms=%.3f output_copy_ms=%.3f postprocess_ms=%.3f\n",
+            diagnostics.preprocess_ms, diagnostics.input_setup_ms, diagnostics.npu_run_ms,
+            diagnostics.output_copy_ms, diagnostics.postprocess_ms);
+    }
     rk_row_nav_destroy(handle); free(data);
     return code ? 3 : 0;
 }

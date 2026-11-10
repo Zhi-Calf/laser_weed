@@ -21,6 +21,8 @@ OnnxYoloV8Segmenter::OnnxYoloV8Segmenter() : impl_(std::make_unique<Impl>()) {}
 OnnxYoloV8Segmenter::~OnnxYoloV8Segmenter() = default;
 
 Status OnnxYoloV8Segmenter::load(const ModelConfig& config) {
+    if (config.input_width!=640 || config.input_height!=640)
+        return Status::invalidArgument("Rockchip YOLOv8-seg decoder requires 640x640 input");
     if (config.path.empty()) return Status::invalidArgument("model path is empty");
     if (!std::filesystem::exists(config.path)) {
         return Status::notFound("model not found: " + config.path.string());

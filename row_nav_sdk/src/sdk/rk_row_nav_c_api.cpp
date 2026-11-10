@@ -22,6 +22,8 @@ struct rk_row_nav_context {
     rk_nav::CameraCalibration calibration;
     cv::Mat map_x, map_y;
     double max_age_ms = 0;
+    rk_row_nav_diagnostics_t diagnostics{};
+    bool rknn_backend = false;
 };
 
 namespace {
@@ -61,11 +63,21 @@ void rk_row_nav_result_init(rk_row_nav_result_t* r) {
     *r = {}; r->struct_size = sizeof(*r); r->abi_version = RK_ROW_NAV_ABI_VERSION;
     invalidate(*r);
 }
+void rk_row_nav_diagnostics_init(rk_row_nav_diagnostics_t* d) {
+    if (!d) return;
+    *d = {}; d->struct_size = sizeof(*d); d->abi_version = RK_ROW_NAV_ABI_VERSION;
+}
+int32_t rk_row_nav_get_diagnostics(rk_row_nav_handle_t h, rk_row_nav_diagnostics_t* d) {
+    if (!h || !compatible(d)) return fail(RK_ROW_NAV_INVALID_ARGUMENT, "invalid diagnostics handle or structure");
+    const auto size = d->struct_size;
+    *d = h->diagnostics; d->struct_size = size; d->abi_version = RK_ROW_NAV_ABI_VERSION;
+    return RK_ROW_NAV_OK;
+}
 void rk_row_nav_attitude_init(rk_row_nav_attitude_t* a) {
     if (!a) return;
     *a = {}; a->struct_size = sizeof(*a); a->abi_version = RK_ROW_NAV_ABI_VERSION;
 }
-const char* rk_row_nav_version(void) { return "0.2.0"; }
+const char* rk_row_nav_version(void) { return "0.2.1"; }
 uint64_t rk_row_nav_now_ns(void) {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -140,6 +152,8 @@ int32_t rk_row_nav_create(const rk_row_nav_config_t* c, rk_row_nav_handle_t* han
             if (!loaded.isOk()) return fail(RK_ROW_NAV_MODEL_ERROR, loaded.message().c_str());
         } catch (const std::exception& e) { return fail(RK_ROW_NAV_MODEL_ERROR, e.what()); }
         ctx->max_age_ms = c->max_frame_age_ms;
+        ctx->rknn_backend = c->backend == RK_ROW_NAV_RKNN;
+        rk_row_nav_diagnostics_init(&ctx->diagnostics);
         *handle = ctx.release();
         return RK_ROW_NAV_OK;
     } catch (const std::exception& e) { return fail(RK_ROW_NAV_INTERNAL_ERROR, e.what()); }
@@ -149,6 +163,7 @@ int32_t rk_row_nav_create(const rk_row_nav_config_t* c, rk_row_nav_handle_t* han
 static int32_t processImpl(rk_row_nav_handle_t h, const rk_row_nav_frame_t* f,
                           const rk_row_nav_attitude_t* a, rk_row_nav_result_t* r) {
     last_error[0] = '\0';
+    if (h) rk_row_nav_diagnostics_init(&h->diagnostics);
     if (!compatible(r)) return fail(RK_ROW_NAV_INVALID_ARGUMENT, "invalid result struct size or ABI version");
     const uint32_t result_size = r->struct_size;
     rk_row_nav_result_init(r); r->struct_size = result_size;
@@ -162,6 +177,7 @@ static int32_t processImpl(rk_row_nav_handle_t h, const rk_row_nav_frame_t* f,
             return fail(RK_ROW_NAV_INVALID_ARGUMENT, "invalid frame buffer, stride, size, handle or monotonic timestamp");
         if (f->pixel_format != RK_ROW_NAV_BGR888 && f->pixel_format != RK_ROW_NAV_RGB888)
             return fail(RK_ROW_NAV_UNSUPPORTED, "only BGR888 and RGB888 supported");
+        h->diagnostics.frame_id = f->frame_id;
         r->capture_time_ns = f->capture_time_ns; r->frame_id = f->frame_id;
         std::optional<rk_nav::BevProjector> frame_projector;
         if (h->dynamic_bev) {
@@ -183,6 +199,9 @@ static int32_t processImpl(rk_row_nav_handle_t h, const rk_row_nav_frame_t* f,
             r->frame_age_ms = double(end - f->capture_time_ns) / 1e6;
             if (r->frame_age_ms > h->max_age_ms) r->observation_status = RK_ROW_NAV_OBSERVATION_STALE;
             if (r->observation_status != RK_ROW_NAV_OBSERVATION_VALID) invalidate(*r);
+            h->diagnostics.available = 1;
+            h->diagnostics.total_ms = r->processing_ms;
+            h->diagnostics.frame_age_ms = r->frame_age_ms;
             return int32_t(RK_ROW_NAV_OK);
         };
         if (double(start - f->capture_time_ns) / 1e6 > h->max_age_ms) return finish();
@@ -191,15 +210,28 @@ static int32_t processImpl(rk_row_nav_handle_t h, const rk_row_nav_frame_t* f,
         cv::Mat bgr;
         if (f->pixel_format == RK_ROW_NAV_RGB888) cv::cvtColor(input, bgr, cv::COLOR_RGB2BGR);
         else bgr = input;
+        const auto correction_start = rk_row_nav_now_ns();
         cv::Mat corrected;
         cv::remap(bgr, corrected, h->map_x, h->map_y, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+        h->diagnostics.undistort_ms = double(rk_row_nav_now_ns()-correction_start)/1e6;
+        const auto inference_start = rk_row_nav_now_ns();
         auto segmented = h->segmenter->infer({corrected, static_cast<int64_t>(f->capture_time_ns), f->frame_id});
+        h->diagnostics.inference_ms = double(rk_row_nav_now_ns()-inference_start)/1e6;
         if (!segmented.isOk()) return fail(RK_ROW_NAV_INFERENCE_ERROR, segmented.status().message().c_str());
+        const auto& timing = segmented.value().timing;
+        h->diagnostics.detailed_inference = h->rknn_backend ? 1u : 0u;
+        h->diagnostics.preprocess_ms = timing.preprocess_ms;
+        h->diagnostics.input_setup_ms = timing.input_setup_ms;
+        h->diagnostics.npu_run_ms = timing.npu_run_ms;
+        h->diagnostics.output_copy_ms = timing.output_copy_ms;
+        h->diagnostics.postprocess_ms = timing.postprocess_ms;
+        const auto geometry_start = rk_row_nav_now_ns();
         const long double deadline=static_cast<long double>(f->capture_time_ns)+static_cast<long double>(h->max_age_ms)*1e6L;
         const auto deadline_ns=deadline>=static_cast<long double>(std::numeric_limits<std::uint64_t>::max()) ?
             std::numeric_limits<std::uint64_t>::max() : static_cast<std::uint64_t>(deadline);
         auto output = h->pipeline->process(segmented.value(),0.0,deadline_ns,
             frame_projector ? &*frame_projector : nullptr);
+        h->diagnostics.geometry_tracking_ms = double(rk_row_nav_now_ns()-geometry_start)/1e6;
         if (!output.isOk()) return fail(output.status().code()==rk_nav::StatusCode::kInvalidArgument ?
             RK_ROW_NAV_INVALID_ARGUMENT : RK_ROW_NAV_INTERNAL_ERROR,output.status().message().c_str());
         const auto& nav = output.value().navigation;
@@ -227,6 +259,7 @@ int32_t rk_row_nav_process_with_attitude(rk_row_nav_handle_t h, const rk_row_nav
     const rk_row_nav_attitude_t* a, rk_row_nav_result_t* r) {
     // NULL must not accidentally select the static legacy API.
     if (!a) {
+        if (h) rk_row_nav_diagnostics_init(&h->diagnostics);
         if (compatible(r)) {const auto size=r->struct_size; rk_row_nav_result_init(r); r->struct_size=size;}
         return fail(RK_ROW_NAV_INVALID_ARGUMENT,"attitude is null");
     }

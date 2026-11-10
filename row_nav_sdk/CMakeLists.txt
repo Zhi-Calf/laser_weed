@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(row_nav_sdk VERSION 0.2.0 LANGUAGES C CXX)
+project(row_nav_sdk VERSION 0.2.1 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -49,7 +49,7 @@ if(RK_NAV_BUILD_TESTS)
     tests/unit/camera_calibration_test.cpp tests/unit/centerline_fitter_test.cpp
     tests/unit/dynamic_bev_test.cpp tests/unit/multi_row_test.cpp
     tests/unit/perception_pipeline_test.cpp tests/unit/row_extractor_test.cpp
-    tests/unit/row_temporal_tracker_test.cpp tests/unit/status_test.cpp)
+    tests/unit/row_temporal_tracker_test.cpp tests/unit/status_test.cpp tests/unit/yolov8_postprocess_test.cpp)
   target_include_directories(rk_nav_unit_tests PRIVATE tests)
   target_link_libraries(rk_nav_unit_tests PRIVATE rk_nav_core)
   add_test(NAME rk_nav_unit_tests COMMAND rk_nav_unit_tests)

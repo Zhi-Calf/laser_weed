@@ -1,6 +1,7 @@
 #include "rk_nav/inference/rknn_yolov8_segmenter.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -13,6 +14,8 @@
 #include <rknn_api.h>
 
 #include "rk_nav/inference/yolov8_seg_postprocess.hpp"
+#include "rk_nav/inference/tensor_conversion.hpp"
+#include "rk_nav/core/scope_exit.hpp"
 
 namespace rk_nav {
 namespace {
@@ -42,49 +45,14 @@ Result<cv::Mat> outputAsNchw(const rknn_output& output, const rknn_tensor_attr& 
     }
     if (output.buf == nullptr) return Status::internal("RKNN returned a null output buffer");
 
-    const auto value_at = [&](std::size_t index) -> float {
-        if (requested_float || attr.type == RKNN_TENSOR_FLOAT32) {
-            return static_cast<const float*>(output.buf)[index];
-        }
-        if (attr.type == RKNN_TENSOR_INT8) {
-            const auto value = static_cast<const std::int8_t*>(output.buf)[index];
-            return static_cast<float>(static_cast<int>(value) - attr.zp) * attr.scale;
-        }
-        const auto value = static_cast<const std::uint8_t*>(output.buf)[index];
-        return static_cast<float>(static_cast<int>(value) - attr.zp) * attr.scale;
-    };
-
-    if (attr.fmt == RKNN_TENSOR_NHWC) {
-        const int sizes[4] = {static_cast<int>(attr.dims[0]), static_cast<int>(attr.dims[3]),
-                              static_cast<int>(attr.dims[1]), static_cast<int>(attr.dims[2])};
-        cv::Mat nchw(4, sizes, CV_32F);
-        float* destination = nchw.ptr<float>();
-        const int height = sizes[2];
-        const int width = sizes[3];
-        const int channels = sizes[1];
-        for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; ++x) {
-                for (int channel = 0; channel < channels; ++channel) {
-                    destination[(channel * height + y) * width + x] =
-                        value_at(static_cast<std::size_t>((y * width + x) * channels + channel));
-                }
-            }
-        }
-        return nchw;
+    const auto type = requested_float || attr.type==RKNN_TENSOR_FLOAT32 ? detail::TensorStorage::Float32 :
+        attr.type==RKNN_TENSOR_INT8 ? detail::TensorStorage::Int8 : detail::TensorStorage::UInt8;
+    std::array<int,4> dims{};
+    for (int i=0;i<4;++i) {
+        if (!attr.dims[i] || attr.dims[i]>8192) return Status::invalidArgument("invalid RKNN tensor dimension");
+        dims[static_cast<std::size_t>(i)]=static_cast<int>(attr.dims[i]);
     }
-
-    const int sizes[4] = {static_cast<int>(attr.dims[0]), static_cast<int>(attr.dims[1]),
-                          static_cast<int>(attr.dims[2]), static_cast<int>(attr.dims[3])};
-    cv::Mat nchw(4, sizes, CV_32F);
-    if (requested_float || attr.type == RKNN_TENSOR_FLOAT32) {
-        std::memcpy(nchw.ptr<float>(), output.buf, attr.n_elems * sizeof(float));
-    } else {
-        float* destination = nchw.ptr<float>();
-        for (std::size_t index = 0; index < attr.n_elems; ++index) {
-            destination[index] = value_at(index);
-        }
-    }
-    return nchw;
+    return detail::tensorToNchw(output.buf,output.size,dims,attr.fmt==RKNN_TENSOR_NHWC,type,attr.zp,attr.scale);
 }
 
 }  // namespace
@@ -162,6 +130,12 @@ Status RknnYoloV8Segmenter::load(const ModelConfig& config) {
     }
 
     const auto& input = impl_->input_attrs.front();
+    if (input.n_dims!=4 || input.dims[0]!=1 ||
+        (input.fmt!=RKNN_TENSOR_NCHW && input.fmt!=RKNN_TENSOR_NHWC) ||
+        input.dims[input.fmt==RKNN_TENSOR_NCHW ? 1 : 3]!=3 ||
+        (input.type!=RKNN_TENSOR_UINT8 && input.type!=RKNN_TENSOR_INT8 && input.type!=RKNN_TENSOR_FLOAT16 && input.type!=RKNN_TENSOR_FLOAT32)) {
+        impl_->reset(); return Status::invalidArgument("RKNN requires batch-one four-dimensional RGB input");
+    }
     const int model_height = input.fmt == RKNN_TENSOR_NCHW
         ? static_cast<int>(input.dims[2]) : static_cast<int>(input.dims[1]);
     const int model_width = input.fmt == RKNN_TENSOR_NCHW
@@ -172,6 +146,30 @@ Status RknnYoloV8Segmenter::load(const ModelConfig& config) {
                                        std::to_string(model_width) + "x" +
                                        std::to_string(model_height));
     }
+    std::vector<cv::Mat> layout;
+    for (const auto& attr : impl_->output_attrs) {
+        if (attr.n_dims!=4 || (attr.fmt!=RKNN_TENSOR_NCHW && attr.fmt!=RKNN_TENSOR_NHWC) ||
+            (attr.type!=RKNN_TENSOR_INT8 && attr.type!=RKNN_TENSOR_UINT8 &&
+             attr.type!=RKNN_TENSOR_FLOAT16 && attr.type!=RKNN_TENSOR_FLOAT32) ||
+            ((attr.type==RKNN_TENSOR_INT8 || attr.type==RKNN_TENSOR_UINT8) &&
+             (attr.qnt_type!=RKNN_TENSOR_QNT_AFFINE_ASYMMETRIC || !std::isfinite(attr.scale) || attr.scale<=0 ||
+              (attr.type==RKNN_TENSOR_INT8 && (attr.zp < -128 || attr.zp > 127)) ||
+              (attr.type==RKNN_TENSOR_UINT8 && (attr.zp < 0 || attr.zp > 255))))) {
+            impl_->reset(); return Status::invalidArgument("unsupported RKNN output format, type or quantization");
+        }
+        int sizes[4];
+        for (int i=0;i<4;++i) {
+            const auto value=attr.dims[i];
+            if (!value || value>8192) { impl_->reset(); return Status::invalidArgument("invalid RKNN output dimension"); }
+            sizes[i]=static_cast<int>(value);
+        }
+        if (attr.fmt==RKNN_TENSOR_NHWC) { const int channels=sizes[3]; sizes[3]=sizes[2]; sizes[2]=sizes[1]; sizes[1]=channels; }
+        const auto elements=static_cast<uint64_t>(sizes[0])*sizes[1]*sizes[2]*sizes[3];
+        if (elements!=attr.n_elems || elements>4194304) { impl_->reset(); return Status::invalidArgument("inconsistent RKNN output element count"); }
+        layout.emplace_back(4,sizes,CV_32F);
+    }
+    const auto valid_layout=validateRockchipYoloV8SegLayout(layout,config);
+    if (!valid_layout.isOk()) { impl_->reset(); return valid_layout; }
     impl_->config = config;
     impl_->loaded = true;
     return Status::ok();
@@ -236,6 +234,9 @@ Result<RknnRawOutput> RknnYoloV8Segmenter::execute(RknnPreparedInput prepared) {
                             raw_outputs.data(), nullptr);
     if (code != RKNN_SUCC) return rknnFailure("rknn_outputs_get", code);
 
+    detail::ScopeExit lease([&]() noexcept {
+        rknn_outputs_release(impl_->context,static_cast<uint32_t>(raw_outputs.size()),raw_outputs.data());
+    });
     std::vector<cv::Mat> outputs;
     outputs.reserve(raw_outputs.size());
     Status conversion_status = Status::ok();
@@ -248,8 +249,7 @@ Result<RknnRawOutput> RknnYoloV8Segmenter::execute(RknnPreparedInput prepared) {
         }
         outputs.push_back(std::move(converted.value()));
     }
-    rknn_outputs_release(impl_->context, static_cast<uint32_t>(raw_outputs.size()),
-                         raw_outputs.data());
+
     if (!conversion_status.isOk()) return conversion_status;
     prepared.timing.output_copy_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - stage_started).count();
