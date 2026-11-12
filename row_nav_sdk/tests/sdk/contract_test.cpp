@@ -42,6 +42,25 @@ int main() {
         rk_row_nav_diagnostics_init(&ed.value); ed.value.struct_size=sizeof(ed); ed.tail=123;
         CHECK(rk_row_nav_get_diagnostics(h,&ed.value)==0 && ed.tail==123 && ed.value.struct_size==sizeof(ed));
         CHECK(rk_row_nav_get_diagnostics(nullptr,&d)==RK_ROW_NAV_INVALID_ARGUMENT);
+        rk_row_nav_debug_t debug; rk_row_nav_debug_init(&debug);
+        CHECK(rk_row_nav_get_debug(h,&debug)==0 && !debug.available);
+        CHECK(rk_row_nav_set_debug_enabled(h,2)==RK_ROW_NAV_INVALID_ARGUMENT);
+        CHECK(rk_row_nav_set_debug_enabled(h,1)==0);
+        CHECK(rk_row_nav_process(h,&f,&r)==0);
+        CHECK(rk_row_nav_get_debug(h,&debug)==0 && debug.available && debug.frame_id==42);
+        CHECK(debug.mask_width==320 && debug.mask_height==240 && debug.instance_count==1);
+        CHECK(debug.pair_valid && debug.centerline_valid && debug.centerline_inliers>0);
+        CHECK(debug.returned_rows>=2 && debug.selected_left>=0 && debug.selected_right>=0);
+        uint64_t required=0;
+        CHECK(rk_row_nav_copy_debug_mask(h,42,nullptr,0,&required)==0 && required==320*240);
+        std::vector<uint8_t> mask(required+1,123);
+        CHECK(rk_row_nav_copy_debug_mask(h,42,mask.data(),1,&required)==RK_ROW_NAV_INVALID_ARGUMENT && mask[0]==123);
+        CHECK(rk_row_nav_copy_debug_mask(h,41,mask.data(),mask.size(),&required)==RK_ROW_NAV_INVALID_ARGUMENT);
+        CHECK(rk_row_nav_copy_debug_mask(h,42,mask.data(),mask.size(),&required)==0);
+        CHECK(mask[240*320]==123 && mask[120*320+130]==255 && mask[120*320+160]==0);
+        struct ExtendedDebug {rk_row_nav_debug_t value; uint64_t sentinel;} extra;
+        rk_row_nav_debug_init(&extra.value);extra.value.struct_size=sizeof(extra);extra.sentinel=123;
+        CHECK(rk_row_nav_get_debug(h,&extra.value)==0 && extra.sentinel==123 && extra.value.struct_size==sizeof(extra));
         CHECK(image==original);
         struct ExtendedResult { rk_row_nav_result_t value; uint64_t sentinel; } extended;
         rk_row_nav_result_init(&extended.value);
@@ -50,6 +69,8 @@ int main() {
         CHECK(extended.value.struct_size==sizeof(extended));
         f.struct_size=1; CHECK(rk_row_nav_process(h,&f,&r)==RK_ROW_NAV_INVALID_ARGUMENT && std::isnan(r.lateral_error_m));
         CHECK(rk_row_nav_get_diagnostics(h,&d)==0 && d.available==0);
+        CHECK(rk_row_nav_get_debug(h,&debug)==0 && !debug.available);
+        CHECK(rk_row_nav_copy_debug_mask(h,42,nullptr,0,&required)==0 && required==0);
         f.struct_size=sizeof(f);
         f.pixel_format=RK_ROW_NAV_RGB888; f.capture_time_ns=rk_row_nav_now_ns();
         CHECK(rk_row_nav_process(h,&f,&r)==0 && r.observation_status==RK_ROW_NAV_OBSERVATION_NO_ROW);
@@ -65,6 +86,8 @@ int main() {
         f.data_size_bytes=image.size(); f.pixel_format=99; CHECK(rk_row_nav_process(h,&f,&r)==RK_ROW_NAV_UNSUPPORTED);
         f.pixel_format=RK_ROW_NAV_RGB888; f.width=319;
         CHECK(rk_row_nav_process(h,&f,&r)==RK_ROW_NAV_INVALID_ARGUMENT); f.width=320;
+        CHECK(rk_row_nav_set_debug_enabled(h,0)==0);
+        CHECK(rk_row_nav_get_debug(h,&debug)==0 && !debug.available);
         rk_row_nav_destroy(h); h=nullptr;
         for (int i=0;i<20;++i) { CHECK(rk_row_nav_create(&c,&h)==0); rk_row_nav_destroy(h); h=nullptr; }
         // Configure row spacing through the existing BEV file without changing the C ABI.
@@ -94,8 +117,10 @@ int main() {
         rk_row_nav_destroy(h); h=nullptr;
         std::ofstream(bev)<<original_bev;
         c.max_frame_age_ms=10; CHECK(rk_row_nav_create(&c,&h)==0);
+        CHECK(rk_row_nav_set_debug_enabled(h,1)==0);
         f.frame_id=97; f.capture_time_ns=rk_row_nav_now_ns();
         CHECK(rk_row_nav_process(h,&f,&r)==0 && r.observation_status==RK_ROW_NAV_OBSERVATION_STALE);
+        CHECK(rk_row_nav_get_debug(h,&debug)==0 && debug.available && debug.observation_status==RK_ROW_NAV_OBSERVATION_STALE);
         CHECK(r.processing_ms>=20 && std::isnan(r.lateral_error_m));
         rk_row_nav_destroy(h); h=nullptr;
         std::ofstream(bev) << "%YAML:1.0\nschema_version: 1\ncalibration_valid: 0\n";

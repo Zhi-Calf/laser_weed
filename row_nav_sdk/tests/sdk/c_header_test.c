@@ -9,7 +9,7 @@ int main(void) {
     if (!strlen(rk_row_nav_get_last_error()) || !isnan(result.lateral_error_m)) return 2;
     if (rk_row_nav_process(0, 0, &result) != RK_ROW_NAV_INVALID_ARGUMENT) return 3;
     if (result.observation_status != RK_ROW_NAV_OBSERVATION_INVALID) return 4;
-    if (strcmp(rk_row_nav_version(), "0.2.1") || !rk_row_nav_now_ns()) return 5;
+    if (strcmp(rk_row_nav_version(), "0.2.2") || !rk_row_nav_now_ns()) return 5;
     rk_row_nav_attitude_t attitude; rk_row_nav_attitude_init(&attitude);
     if (attitude.valid || attitude.struct_size != sizeof(attitude)) return 6;
     if (rk_row_nav_dynamic_bev_enabled(0) != RK_ROW_NAV_INVALID_ARGUMENT) return 7;
@@ -17,6 +17,9 @@ int main(void) {
     rk_row_nav_diagnostics_t diagnostics; rk_row_nav_diagnostics_init(&diagnostics);
     if (diagnostics.available || diagnostics.struct_size != sizeof(diagnostics)) return 9;
     if (rk_row_nav_get_diagnostics(0,&diagnostics) != RK_ROW_NAV_INVALID_ARGUMENT) return 10;
+    rk_row_nav_debug_t debug; rk_row_nav_debug_init(&debug);
+    if (debug.available || debug.selected_left!=-1 || debug.struct_size!=sizeof(debug)) return 11;
+    if (rk_row_nav_get_debug(0,&debug)!=RK_ROW_NAV_INVALID_ARGUMENT) return 12;
     rk_row_nav_destroy(0);
     return 0;
 }

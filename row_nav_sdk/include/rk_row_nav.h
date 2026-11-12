@@ -18,6 +18,8 @@ extern "C" {
 #define RK_ROW_NAV_ABI_VERSION 1u
 #define RK_ROW_NAV_HAS_DYNAMIC_BEV 1
 #define RK_ROW_NAV_HAS_DIAGNOSTICS 1
+#define RK_ROW_NAV_HAS_DEBUG 1
+#define RK_ROW_NAV_DEBUG_MAX_ROWS 32u
 typedef struct rk_row_nav_context* rk_row_nav_handle_t;
 /* Fixed-width fields, never C++ types or compiler-dependent enum storage. */
 enum {
@@ -121,6 +123,54 @@ typedef struct {
 RK_ROW_NAV_API void rk_row_nav_diagnostics_init(rk_row_nav_diagnostics_t* diagnostics);
 RK_ROW_NAV_API int32_t rk_row_nav_get_diagnostics(rk_row_nav_handle_t handle,
     rk_row_nav_diagnostics_t* diagnostics);
+
+/* Debug data is opt-in, serial per handle, never a control command.
+   Mask pixels refer to the UNDISTORTED input image, uint8 0/255.
+   Rows are pre-temporal per-frame fits in vehicle x-forward/y-left coordinates;
+   selected indices identify the joint-fit pair, not persistent track IDs. */
+typedef struct {
+    uint64_t id;
+    double slope;
+    double intercept_m;
+    double rms_m;
+    uint64_t inlier_count;
+} rk_row_nav_debug_row_t;
+typedef struct {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t available;
+    uint32_t observation_status;
+    uint64_t frame_id;
+    uint64_t capture_time_ns;
+    uint32_t mask_width;
+    uint32_t mask_height;
+    uint32_t instance_count;
+    uint32_t total_rows;
+    uint32_t returned_rows;
+    int32_t selected_left;
+    int32_t selected_right;
+    uint32_t pair_valid;
+    uint32_t centerline_valid;
+    uint32_t reserved;
+    double joint_left_slope;
+    double joint_left_intercept_m;
+    double joint_right_slope;
+    double joint_right_intercept_m;
+    double centerline_rms_m;
+    uint64_t centerline_inliers;
+    uint64_t centerline_points;
+    rk_row_nav_debug_row_t rows[RK_ROW_NAV_DEBUG_MAX_ROWS];
+} rk_row_nav_debug_t;
+RK_ROW_NAV_API void rk_row_nav_debug_init(rk_row_nav_debug_t* debug);
+/* Enabling/disabling clears old data. Does not reset temporal tracking. */
+RK_ROW_NAV_API int32_t rk_row_nav_set_debug_enabled(rk_row_nav_handle_t handle, uint32_t enabled);
+RK_ROW_NAV_API int32_t rk_row_nav_get_debug(rk_row_nav_handle_t handle, rk_row_nav_debug_t* debug);
+/* Copies to caller-owned tightly packed mask. Query required bytes with NULL,0.
+   Returns INVALID_ARGUMENT for insufficient capacity without writing pixels.
+   Disabled/missing data returns required=0. frame_id must match get_debug;
+   stale IDs are rejected. No SDK buffer pointer is exposed. */
+RK_ROW_NAV_API int32_t rk_row_nav_copy_debug_mask(rk_row_nav_handle_t handle,
+    uint64_t frame_id, uint8_t* destination, uint64_t capacity, uint64_t* required);
 
 /* Call init on owned current-version structures before use.
    API v1 accepts struct_size >= sizeof(v1), preserving unknown tail bytes. */

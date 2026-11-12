@@ -50,13 +50,17 @@ image_to_bev: !!opencv-matrix
         if i!=2:
             image[:,128:133,0]=255;image[:,178:183,0]=255
         cv2.imwrite(str(images/f'{i}.png'),image)
-    base=[sys.executable,str(script),'--library',str(library),'--model',str(model),'--intrinsics',str(intrinsic),'--bev',str(bev),'--fps','120','--overlay-every','1']
+    base=[sys.executable,str(script),'--library',str(library),'--model',str(model),'--intrinsics',str(intrinsic),'--bev',str(bev),'--fps','120','--overlay-every','1','--debug-masks']
     out=root/'out'
     subprocess.run(base+['--input',str(images),'--output',str(out),'--warmup','1'],check=True)
     summary=json.loads((out/'summary.json').read_text());assert summary['measured_frames']==3
     assert summary['valid_frames']==2 and summary['jumps']==0
     assert json.loads((out/'manifest.json').read_text())['completed']
     records=[json.loads(s) for s in (out/'frames.jsonl').read_text().splitlines()]
+    assert records[1]['debug']['pair_valid']==1
+    assert records[1]['debug']['returned_rows']>=2
+    assert len(list((out/'debug-masks').glob('*.png')))==4
+    assert cv2.imread(str(out/'debug-masks/000001.png'),0)[120,130]==255
     assert len(records)==4 and records[0]['warmup']
     assert abs(records[1]['lateral_error_m']-.1)<.03
     assert records[2]['lateral_error_m'] is None

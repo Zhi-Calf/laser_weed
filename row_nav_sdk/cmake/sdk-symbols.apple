@@ -12,3 +12,7 @@ _rk_row_nav_dynamic_bev_enabled
 _rk_row_nav_process_with_attitude
 _rk_row_nav_diagnostics_init
 _rk_row_nav_get_diagnostics
+_rk_row_nav_debug_init
+_rk_row_nav_set_debug_enabled
+_rk_row_nav_get_debug
+_rk_row_nav_copy_debug_mask

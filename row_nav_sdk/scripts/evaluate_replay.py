@@ -21,6 +21,11 @@ class Result(C.Structure):
 class Diagnostics(C.Structure):
     _fields_ = [(n, U) for n in ('struct_size', 'abi_version', 'available', 'detailed_inference')] + [('frame_id', Q)] + [(n, D) for n in FIELDS]
 
+class DebugRow(C.Structure):
+    _fields_=[('id',Q),('slope',D),('intercept_m',D),('rms_m',D),('inlier_count',Q)]
+class Debug(C.Structure):
+    _fields_=[(n,U) for n in ('struct_size','abi_version','available','observation_status')] + [('frame_id',Q),('capture_time_ns',Q)] + [(n,U) for n in ('mask_width','mask_height','instance_count','total_rows','returned_rows')] + [('selected_left',C.c_int32),('selected_right',C.c_int32)] + [(n,U) for n in ('pair_valid','centerline_valid','reserved')] + [(n,D) for n in ('joint_left_slope','joint_left_intercept_m','joint_right_slope','joint_right_intercept_m','centerline_rms_m')] + [('centerline_inliers',Q),('centerline_points',Q),('rows',DebugRow*32)]
+
 def load_sdk(path):
     lib = C.CDLL(str(Path(path).resolve()))
     for name, typ in [('config', Config), ('frame', Frame), ('result', Result), ('diagnostics', Diagnostics)]:
@@ -85,7 +90,7 @@ def run(args):
     config.backend = 1 if args.backend=='onnx' else 2
     config.max_frame_age_ms = args.max_age_ms
     handle = C.c_void_p()
-    manifest = dict(schema_version=1, sdk=lib.rk_row_nav_version().decode(), backend=args.backend,
+    manifest = dict(debug_masks=args.debug_masks, schema_version=1, sdk=lib.rk_row_nav_version().decode(), backend=args.backend,
         timestamp_mode='paced_playback_monotonic_not_sensor_time', fps=args.fps, warmup=args.warmup,
         limit=args.limit, max_frame_age_ms=args.max_age_ms, overlay='navigation_text_only_no_pixel_mask',
         independent_images=args.independent_images,
@@ -100,6 +105,13 @@ def run(args):
             raise RuntimeError(lib.rk_row_nav_get_last_error().decode())
         if lib.rk_row_nav_dynamic_bev_enabled(handle): raise ValueError('Dynamic BEV requires recorded synchronized attitude; this replay supports static calibration only')
         save('manifest.json',manifest)
+        if args.debug_masks:
+            lib.rk_row_nav_debug_init.argtypes=[C.POINTER(Debug)]; lib.rk_row_nav_debug_init.restype=None
+            lib.rk_row_nav_set_debug_enabled.argtypes=[C.c_void_p,U]
+            lib.rk_row_nav_get_debug.argtypes=[C.c_void_p,C.POINTER(Debug)]
+            lib.rk_row_nav_copy_debug_mask.argtypes=[C.c_void_p,Q,C.POINTER(C.c_uint8),Q,C.POINTER(Q)]
+            if lib.rk_row_nav_set_debug_enabled(handle,1): raise RuntimeError('Cannot enable debug')
+            (args.output/'debug-masks').mkdir()
         (args.output/'overlays').mkdir()
         with (args.output/'frames.jsonl').open('w') as log:
             last_submit=None
@@ -108,6 +120,7 @@ def run(args):
                 if args.independent_images and index:
                     lib.rk_row_nav_destroy(handle); handle=C.c_void_p()
                     if lib.rk_row_nav_create(C.byref(config),C.byref(handle)): raise RuntimeError(lib.rk_row_nav_get_last_error().decode())
+                    if args.debug_masks and lib.rk_row_nav_set_debug_enabled(handle,1): raise RuntimeError('Cannot enable debug')
                 if last_submit is not None:
                     time.sleep(max(0,1/args.fps-(time.monotonic()-last_submit)))
                 frame=Frame(); lib.rk_row_nav_frame_init(C.byref(frame))
@@ -128,6 +141,21 @@ def run(args):
                 record['available']=int(diag_code==0 and diag.available==1)
                 record['detailed_inference']=int(diag.detailed_inference)
                 valid=code==0 and result.observation_status==1 and all(math.isfinite(v) for v in (result.lateral_error_m,result.heading_error_rad))
+                if args.debug_masks:
+                    debug=Debug();lib.rk_row_nav_debug_init(C.byref(debug))
+                    if lib.rk_row_nav_get_debug(handle,C.byref(debug)): raise RuntimeError('Cannot get debug data')
+                    record['debug_available']=bool(debug.available)
+                    if debug.available:
+                        if debug.frame_id!=frame.frame_id: raise RuntimeError('Debug frame mismatch')
+                        record['debug']={n:clean(getattr(debug,n)) for n in ('observation_status','instance_count','total_rows','returned_rows','selected_left','selected_right','pair_valid','centerline_valid','joint_left_slope','joint_left_intercept_m','joint_right_slope','joint_right_intercept_m','centerline_rms_m','centerline_inliers','centerline_points')}
+                        record['debug']['rows']=[{n:clean(getattr(row,n)) for n,_ in DebugRow._fields_} for row in debug.rows[:debug.returned_rows]]
+                        required=Q()
+                        if lib.rk_row_nav_copy_debug_mask(handle,frame.frame_id,None,0,C.byref(required)): raise RuntimeError('Cannot query debug mask')
+                        if required.value!=debug.mask_width*debug.mask_height: raise RuntimeError('Invalid mask size')
+                        pixels=(C.c_uint8*required.value)()
+                        if lib.rk_row_nav_copy_debug_mask(handle,frame.frame_id,pixels,required.value,C.byref(required)): raise RuntimeError('Cannot copy debug mask')
+                        mask=np.ctypeslib.as_array(pixels).reshape(debug.mask_height,debug.mask_width)
+                        if not cv2.imwrite(str(args.output/'debug-masks'/f'{index:06d}.png'),mask): raise RuntimeError('Cannot save debug mask')
                 record['jump']=False
                 if not record['warmup']:
                     counts[str(code if code else result.observation_status)]=counts.get(str(code if code else result.observation_status),0)+1
@@ -166,6 +194,7 @@ def main():
     p.add_argument('--warmup',type=int,default=0);p.add_argument('--overlay-every',type=int,default=10)
     p.add_argument('--max-age-ms',type=float,default=250)
     p.add_argument('--jump-m',type=float,default=.15);p.add_argument('--jump-deg',type=float,default=5)
+    p.add_argument('--debug-masks',action='store_true',help='Opt-in SDK debug masks in undistorted input coordinates; requires 0.2.2')
     p.add_argument('--independent-images',action='store_true',help='Reset handle between unrelated images; disable temporal jump metrics')
     args=p.parse_args()
     if any(not math.isfinite(v) or v<=0 for v in (args.max_age_ms,args.jump_m,args.jump_deg)): p.error('Thresholds must be finite and positive')

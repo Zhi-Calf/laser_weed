@@ -2,6 +2,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -24,6 +26,9 @@ struct rk_row_nav_context {
     double max_age_ms = 0;
     rk_row_nav_diagnostics_t diagnostics{};
     bool rknn_backend = false;
+    bool debug_enabled = false;
+    rk_row_nav_debug_t debug{};
+    cv::Mat debug_mask;
 };
 
 namespace {
@@ -73,11 +78,39 @@ int32_t rk_row_nav_get_diagnostics(rk_row_nav_handle_t h, rk_row_nav_diagnostics
     *d = h->diagnostics; d->struct_size = size; d->abi_version = RK_ROW_NAV_ABI_VERSION;
     return RK_ROW_NAV_OK;
 }
+void rk_row_nav_debug_init(rk_row_nav_debug_t* d) {
+    if (!d) return;
+    *d={}; d->struct_size=sizeof(*d); d->abi_version=RK_ROW_NAV_ABI_VERSION;
+    d->selected_left=d->selected_right=-1;
+}
+int32_t rk_row_nav_set_debug_enabled(rk_row_nav_handle_t h, uint32_t enabled) {
+    if (!h || enabled>1) return fail(RK_ROW_NAV_INVALID_ARGUMENT,"invalid debug toggle");
+    h->debug_enabled=enabled==1; rk_row_nav_debug_init(&h->debug); h->debug_mask.release();
+    return RK_ROW_NAV_OK;
+}
+int32_t rk_row_nav_get_debug(rk_row_nav_handle_t h, rk_row_nav_debug_t* d) {
+    if (!h || !compatible(d)) return fail(RK_ROW_NAV_INVALID_ARGUMENT,"invalid debug structure");
+    const auto size=d->struct_size; *d=h->debug; d->struct_size=size;
+    return RK_ROW_NAV_OK;
+}
+int32_t rk_row_nav_copy_debug_mask(rk_row_nav_handle_t h, uint64_t frame_id,
+    uint8_t* destination, uint64_t capacity, uint64_t* required) {
+    if (!required) return fail(RK_ROW_NAV_INVALID_ARGUMENT,"required bytes pointer is null");
+    *required=0;
+    if (!h) return fail(RK_ROW_NAV_INVALID_ARGUMENT,"null handle");
+    if (!h->debug.available) return RK_ROW_NAV_OK;
+    if (frame_id!=h->debug.frame_id) return fail(RK_ROW_NAV_INVALID_ARGUMENT,"debug frame ID mismatch");
+    *required=h->debug_mask.total();
+    if (!destination && capacity==0) return RK_ROW_NAV_OK;
+    if (!destination || capacity<*required) return fail(RK_ROW_NAV_INVALID_ARGUMENT,"debug mask capacity too small");
+    std::memcpy(destination,h->debug_mask.data,static_cast<std::size_t>(*required));
+    return RK_ROW_NAV_OK;
+}
 void rk_row_nav_attitude_init(rk_row_nav_attitude_t* a) {
     if (!a) return;
     *a = {}; a->struct_size = sizeof(*a); a->abi_version = RK_ROW_NAV_ABI_VERSION;
 }
-const char* rk_row_nav_version(void) { return "0.2.1"; }
+const char* rk_row_nav_version(void) { return "0.2.2"; }
 uint64_t rk_row_nav_now_ns(void) {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -154,6 +187,7 @@ int32_t rk_row_nav_create(const rk_row_nav_config_t* c, rk_row_nav_handle_t* han
         ctx->max_age_ms = c->max_frame_age_ms;
         ctx->rknn_backend = c->backend == RK_ROW_NAV_RKNN;
         rk_row_nav_diagnostics_init(&ctx->diagnostics);
+        rk_row_nav_debug_init(&ctx->debug);
         *handle = ctx.release();
         return RK_ROW_NAV_OK;
     } catch (const std::exception& e) { return fail(RK_ROW_NAV_INTERNAL_ERROR, e.what()); }
@@ -163,7 +197,7 @@ int32_t rk_row_nav_create(const rk_row_nav_config_t* c, rk_row_nav_handle_t* han
 static int32_t processImpl(rk_row_nav_handle_t h, const rk_row_nav_frame_t* f,
                           const rk_row_nav_attitude_t* a, rk_row_nav_result_t* r) {
     last_error[0] = '\0';
-    if (h) rk_row_nav_diagnostics_init(&h->diagnostics);
+    if (h) { rk_row_nav_diagnostics_init(&h->diagnostics); rk_row_nav_debug_init(&h->debug); h->debug_mask.release(); }
     if (!compatible(r)) return fail(RK_ROW_NAV_INVALID_ARGUMENT, "invalid result struct size or ABI version");
     const uint32_t result_size = r->struct_size;
     rk_row_nav_result_init(r); r->struct_size = result_size;
@@ -199,6 +233,9 @@ static int32_t processImpl(rk_row_nav_handle_t h, const rk_row_nav_frame_t* f,
             r->frame_age_ms = double(end - f->capture_time_ns) / 1e6;
             if (r->frame_age_ms > h->max_age_ms) r->observation_status = RK_ROW_NAV_OBSERVATION_STALE;
             if (r->observation_status != RK_ROW_NAV_OBSERVATION_VALID) invalidate(*r);
+            if (h->debug_enabled && !h->debug_mask.empty()) {
+                h->debug.available=1; h->debug.observation_status=r->observation_status;
+            }
             h->diagnostics.available = 1;
             h->diagnostics.total_ms = r->processing_ms;
             h->diagnostics.frame_age_ms = r->frame_age_ms;
@@ -225,6 +262,7 @@ static int32_t processImpl(rk_row_nav_handle_t h, const rk_row_nav_frame_t* f,
         h->diagnostics.npu_run_ms = timing.npu_run_ms;
         h->diagnostics.output_copy_ms = timing.output_copy_ms;
         h->diagnostics.postprocess_ms = timing.postprocess_ms;
+        if (h->debug_enabled) h->debug_mask=segmented.value().combined_mask.clone();
         const auto geometry_start = rk_row_nav_now_ns();
         const long double deadline=static_cast<long double>(f->capture_time_ns)+static_cast<long double>(h->max_age_ms)*1e6L;
         const auto deadline_ns=deadline>=static_cast<long double>(std::numeric_limits<std::uint64_t>::max()) ?
@@ -234,6 +272,30 @@ static int32_t processImpl(rk_row_nav_handle_t h, const rk_row_nav_frame_t* f,
         h->diagnostics.geometry_tracking_ms = double(rk_row_nav_now_ns()-geometry_start)/1e6;
         if (!output.isOk()) return fail(output.status().code()==rk_nav::StatusCode::kInvalidArgument ?
             RK_ROW_NAV_INVALID_ARGUMENT : RK_ROW_NAV_INTERNAL_ERROR,output.status().message().c_str());
+        if (h->debug_enabled) {
+            auto& d=h->debug;
+            d.frame_id=f->frame_id; d.capture_time_ns=f->capture_time_ns;
+            d.mask_width=static_cast<uint32_t>(h->debug_mask.cols); d.mask_height=static_cast<uint32_t>(h->debug_mask.rows);
+            d.instance_count=static_cast<uint32_t>(segmented.value().instances.size());
+            const auto& rows=output.value().rows;
+            if (rows) {
+                d.total_rows=static_cast<uint32_t>(rows->fitted_rows.size());
+                d.returned_rows=std::min(d.total_rows,RK_ROW_NAV_DEBUG_MAX_ROWS);
+                d.selected_left=rows->selected_left; d.selected_right=rows->selected_right;
+                d.pair_valid=rows->navigation_pair_valid ? 1u : 0u;
+                d.joint_left_slope=rows->joint_fit.left_slope; d.joint_left_intercept_m=rows->joint_fit.left_intercept_m;
+                d.joint_right_slope=rows->joint_fit.right_slope; d.joint_right_intercept_m=rows->joint_fit.right_intercept_m;
+                for (uint32_t i=0;i<d.returned_rows;++i) {
+                    const auto& row=rows->fitted_rows[i];
+                    d.rows[i]={row.id,row.slope,row.intercept_m,row.rms_m,row.inliers.size()};
+                }
+            }
+            if (output.value().centerline) {
+                const auto& fit=*output.value().centerline;
+                d.centerline_valid=1; d.centerline_rms_m=fit.rms_residual_m;
+                d.centerline_inliers=fit.inlier_count; d.centerline_points=fit.point_count;
+            }
+        }
         const auto& nav = output.value().navigation;
         if (nav.status == rk_nav::TrackingStatus::kValid &&
             (!std::isfinite(nav.lateral_error_m) || !std::isfinite(nav.heading_error_rad) ||
@@ -259,7 +321,7 @@ int32_t rk_row_nav_process_with_attitude(rk_row_nav_handle_t h, const rk_row_nav
     const rk_row_nav_attitude_t* a, rk_row_nav_result_t* r) {
     // NULL must not accidentally select the static legacy API.
     if (!a) {
-        if (h) rk_row_nav_diagnostics_init(&h->diagnostics);
+        if (h) { rk_row_nav_diagnostics_init(&h->diagnostics); rk_row_nav_debug_init(&h->debug); h->debug_mask.release(); }
         if (compatible(r)) {const auto size=r->struct_size; rk_row_nav_result_init(r); r->struct_size=size;}
         return fail(RK_ROW_NAV_INVALID_ARGUMENT,"attitude is null");
     }

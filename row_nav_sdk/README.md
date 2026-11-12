@@ -76,3 +76,5 @@ SDK 独立构建和 4 组 CTest 已在 MyUbuntu 通过，含动态 SDK 契约。
 推理诊断、模型范围与验证边界见 [推理库 0.2.1 更新记录](docs/inference-hardening-20261110.md)。
 
 统一图片/视频回放、结果记录和统计见 [离线回放说明](docs/offline-replay.md)。
+
+可选分割mask和多行拟合诊断见 [SDK调试接口](docs/debug-interface.md)。
