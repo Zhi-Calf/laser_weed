@@ -12,7 +12,7 @@
 #include "rk_nav/inference/rknn_yolov8_segmenter.hpp"
 #endif
 int main(int argc,char** argv) {
-    if (argc!=6) { std::cerr<<"usage: segmentation_replay onnx|rknn model image-directory new-output-directory limit\n";return 1; }
+    if (argc!=6 && argc!=7) { std::cerr<<"usage: segmentation_replay onnx|rknn model image-directory new-output-directory limit [fast|full]\n";return 1; }
     try {
         const std::string backend=argv[1];
         std::unique_ptr<rk_nav::Segmenter> segmenter;
@@ -34,7 +34,9 @@ int main(int argc,char** argv) {
         }
         std::sort(images.begin(),images.end());
         if (images.empty()) throw std::runtime_error("no images");
-        rk_nav::ModelConfig config;config.path=argv[2];config.materialize_instance_masks=false;config.max_detections=16;
+        const std::string mode=argc==7 ? argv[6] : "fast";
+        if (mode!="fast" && mode!="full") throw std::runtime_error("mask mode must be fast or full");
+        rk_nav::ModelConfig config;config.path=argv[2];config.materialize_instance_masks=mode=="full";config.max_detections=16;
         const auto loaded=segmenter->load(config);
         if (!loaded.isOk()) throw std::runtime_error(loaded.message());
         std::filesystem::create_directories(output/"masks");std::filesystem::create_directories(output/"overlays");

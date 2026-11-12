@@ -1,0 +1,50 @@
+{
+  "parameters": {
+    "threshold": 127,
+    "min_length": 80,
+    "boundary_margin": 8,
+    "junction_radius": 2,
+    "far_width": 6.0,
+    "near_width": 18.0,
+    "horizon": 0.2,
+    "gamma": 2.0,
+    "gap": 2.0,
+    "epsilon": 0.5,
+    "min_area": 20.0
+  },
+  "splits": {
+    "train": {
+      "images": 1250,
+      "instances": 4679,
+      "empty_labels": 0,
+      "discarded_branches": 2809,
+      "source_foreground_pixels": 15692771,
+      "output_foreground_pixels": 18559357,
+      "source_covered_pixels": 12149851,
+      "overlapping_pixels": 0,
+      "source_coverage": 0.7742323519536479
+    },
+    "val": {
+      "images": 250,
+      "instances": 1470,
+      "empty_labels": 0,
+      "discarded_branches": 1317,
+      "source_foreground_pixels": 5679087,
+      "output_foreground_pixels": 4870914,
+      "source_covered_pixels": 3923554,
+      "overlapping_pixels": 0,
+      "source_coverage": 0.6908776005720638
+    },
+    "test": {
+      "images": 430,
+      "instances": 1541,
+      "empty_labels": 0,
+      "discarded_branches": 1027,
+      "source_foreground_pixels": 5453419,
+      "output_foreground_pixels": 6407771,
+      "source_covered_pixels": 4081362,
+      "overlapping_pixels": 0,
+      "source_coverage": 0.7484042579526715
+    }
+  }
+}

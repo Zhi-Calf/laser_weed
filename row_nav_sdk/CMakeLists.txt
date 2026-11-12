@@ -75,3 +75,9 @@ if(RK_NAV_BUILD_TESTS AND NOT RK_NAV_WITH_RKNN AND ROW_NAV_REPLAY_TEST_PYTHON)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk/test_replay.py
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/evaluate_replay.py $<TARGET_FILE:rk_replay_test_sdk>)
 endif()
+
+if(RK_NAV_BUILD_TESTS AND ROW_NAV_REPLAY_TEST_PYTHON)
+  add_test(NAME sdk_mask_evaluation COMMAND ${ROW_NAV_REPLAY_TEST_PYTHON}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk/test_mask_evaluation.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/evaluate_masks.py)
+endif()

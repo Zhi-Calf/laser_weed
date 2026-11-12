@@ -78,3 +78,5 @@ SDK 独立构建和 4 组 CTest 已在 MyUbuntu 通过，含动态 SDK 契约。
 统一图片/视频回放、结果记录和统计见 [离线回放说明](docs/offline-replay.md)。
 
 可选分割mask和多行拟合诊断见 [SDK调试接口](docs/debug-interface.md)。
+
+430张公开派生测试图的定量检查见 [分割评测报告](docs/mask-evaluation-20261112.md)。

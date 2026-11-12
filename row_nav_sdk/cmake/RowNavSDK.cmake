@@ -62,3 +62,5 @@ install(PROGRAMS ${ROW_NAV_SDK_SOURCE_DIR}/scripts/summarize_diagnostics.py DEST
 install(PROGRAMS ${ROW_NAV_SDK_SOURCE_DIR}/scripts/evaluate_replay.py DESTINATION tools)
 
 install(PROGRAMS ${ROW_NAV_SDK_SOURCE_DIR}/scripts/inspect_segmentation.py DESTINATION tools)
+
+install(PROGRAMS ${ROW_NAV_SDK_SOURCE_DIR}/scripts/evaluate_masks.py DESTINATION tools)

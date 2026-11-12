@@ -18,17 +18,18 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for n in ('binary','model','input','output'):p.add_argument('--'+n,type=Path,required=True)
     p.add_argument('--backend',choices=['onnx','rknn'],default='onnx')
+    p.add_argument('--mask-mode',choices=['fast','full'],default='fast')
     p.add_argument('--limit',type=int,default=50)
     a=p.parse_args()
     if a.limit<1 or a.output.exists():p.error('Positive limit and new output directory required')
     sources=sorted(f for f in a.input.iterdir() if f.is_file() and f.suffix.lower() in {'.jpg','.jpeg','.png'})[:a.limit]
     if not sources:p.error('No input images')
-    manifest=dict(schema_version=1,backend=a.backend,limit=a.limit,
+    manifest=dict(schema_version=1,backend=a.backend,limit=a.limit,mask_mode=a.mask_mode,
         model=dict(path=str(a.model.resolve()),sha256=sha(a.model)),
         binary=dict(path=str(a.binary.resolve()),sha256=sha(a.binary)),
         inputs=[dict(path=str(f.resolve()),sha256=sha(f)) for f in sources],
         metric_boundary='Segmentation-only independent images; no calibration or vehicle accuracy',completed=False)
-    result=subprocess.run([str(a.binary.resolve()),a.backend,str(a.model.resolve()),str(a.input.resolve()),str(a.output.resolve()),str(a.limit)],capture_output=True,text=True)
+    result=subprocess.run([str(a.binary.resolve()),a.backend,str(a.model.resolve()),str(a.input.resolve()),str(a.output.resolve()),str(a.limit),a.mask_mode],capture_output=True,text=True)
     a.output.mkdir(parents=True,exist_ok=True)
     (a.output/'run.log').write_text(result.stdout+'\n'+result.stderr)
     manifest['return_code']=result.returncode;manifest['completed']=result.returncode==0
