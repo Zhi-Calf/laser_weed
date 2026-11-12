@@ -9,7 +9,7 @@ class OnnxYoloV8Segmenter::Impl {};
 OnnxYoloV8Segmenter::OnnxYoloV8Segmenter() : impl_(std::make_unique<Impl>()) {}
 OnnxYoloV8Segmenter::~OnnxYoloV8Segmenter() = default;
 Status OnnxYoloV8Segmenter::load(const ModelConfig& c) {
-    return c.path == "test-only" ? Status::ok() : Status::notFound("test model missing");
+    return c.path.filename() == "test-only" ? Status::ok() : Status::notFound("test model missing");
 }
 Result<SegmentationResult> OnnxYoloV8Segmenter::infer(const Frame& f) {
     if (f.sequence == 99) throw std::runtime_error("test inference exception");

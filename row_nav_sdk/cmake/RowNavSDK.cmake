@@ -58,3 +58,5 @@ if(RK_NAV_BUILD_TESTS)
 endif()
 
 install(PROGRAMS ${ROW_NAV_SDK_SOURCE_DIR}/scripts/summarize_diagnostics.py DESTINATION tools)
+
+install(PROGRAMS ${ROW_NAV_SDK_SOURCE_DIR}/scripts/evaluate_replay.py DESTINATION tools)

@@ -62,3 +62,16 @@ if(ROW_NAV_BUILD_LEGACY_CALIBRATION_TOOLS)
     install(TARGETS ${tool} RUNTIME DESTINATION bin)
   endforeach()
 endif()
+
+if(RK_NAV_BUILD_TESTS AND NOT RK_NAV_WITH_RKNN)
+  # Test-only backend; never install this library.
+  add_library(rk_replay_test_sdk SHARED tests/sdk/fake_segmenter.cpp src/sdk/rk_row_nav_c_api.cpp)
+  target_link_libraries(rk_replay_test_sdk PRIVATE rk_nav_core)
+endif()
+
+set(ROW_NAV_REPLAY_TEST_PYTHON "" CACHE FILEPATH "Optional Python with numpy/opencv for replay integration test")
+if(RK_NAV_BUILD_TESTS AND NOT RK_NAV_WITH_RKNN AND ROW_NAV_REPLAY_TEST_PYTHON)
+  add_test(NAME sdk_replay COMMAND ${ROW_NAV_REPLAY_TEST_PYTHON}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk/test_replay.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/evaluate_replay.py $<TARGET_FILE:rk_replay_test_sdk>)
+endif()
