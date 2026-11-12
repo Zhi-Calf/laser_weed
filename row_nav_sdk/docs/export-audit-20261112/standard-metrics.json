@@ -1,0 +1,52 @@
+{
+  "inference_manifest_sha256": "46147323514ae743d6c8b4c053d2bad347d554ad519188173c7c0da57f4cebbb",
+  "images": 50,
+  "micro": {
+    "iou": 0.3721125443822292,
+    "precision": 0.5281316475565223,
+    "recall": 0.5574472459738878,
+    "f1": 0.542393619103259
+  },
+  "macro_iou": 0.38356861043649026,
+  "images_with_defined_iou": 50,
+  "near_micro": {
+    "iou": 0.39083224277579315,
+    "precision": 0.5838552738002821,
+    "recall": 0.5417442921685611,
+    "f1": 0.5620120540141902
+  },
+  "near_fraction": 0.3333333333333333,
+  "minimum_region_recall": 0.5,
+  "regions": 161,
+  "regions_below_recall": 73,
+  "whole_image_misses": 0,
+  "notes": "Derived polygon consistency only. Near=bottom image fraction, not metric distance. Region recall threshold is a diagnostic, not detection mAP.",
+  "worst_iou_indices": [
+    5,
+    39,
+    15,
+    13,
+    10,
+    26,
+    8,
+    12,
+    19,
+    16,
+    35,
+    18
+  ],
+  "worst_near_recall_indices": [
+    5,
+    13,
+    15,
+    39,
+    26,
+    18,
+    16,
+    19,
+    12,
+    10,
+    17,
+    23
+  ]
+}

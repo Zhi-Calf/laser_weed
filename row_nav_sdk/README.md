@@ -80,3 +80,5 @@ SDK 独立构建和 4 组 CTest 已在 MyUbuntu 通过，含动态 SDK 契约。
 可选分割mask和多行拟合诊断见 [SDK调试接口](docs/debug-interface.md)。
 
 430张公开派生测试图的定量检查见 [分割评测报告](docs/mask-evaluation-20261112.md)。
+
+原始权重、导出与主机运行时差异见 [一致性核查](docs/export-audit-20261112.md)。

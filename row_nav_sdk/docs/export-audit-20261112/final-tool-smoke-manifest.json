@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "inputs": [
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/0.jpg",
+      "sha256": "09d482a043a7bb62b45e32651e13fb30a3a8c55e141bc87a9810c4c855bf26f6"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/1.jpg",
+      "sha256": "612f15b4ff85bb77fd18d78580fcd9aa271b634b77057db0069f9c8da4af5b5b"
+    }
+  ],
+  "completed": true,
+  "preprocessing": "square RGB /255 resize640; CPU float32",
+  "files": {
+    "weights": {
+      "path": "/home/zhouboyang/workspace/rk/artifacts/training/crdld-yolo11n-seg-tracked-v1-100e/weights/best.pt",
+      "sha256": "03afd772ce6fb333eb263e6cbad76b8a65cebe256c03b68f6451fa7c2e56b73e"
+    },
+    "standard": {
+      "path": "/home/zhouboyang/workspace/rk/models/onnx/crdld-yolo11n-seg-tracked-v1-100e.onnx",
+      "sha256": "4b95fd3ddd28a02daed48b5ad93c3a7b408be03e321514df2b9be5a75946570c"
+    },
+    "optimized": {
+      "path": "/home/zhouboyang/workspace/rk/models/onnx/crdld-yolo11n-seg-tracked-v1-100e-rknnopt.onnx",
+      "sha256": "dc2b3f1a25642e131484de03b42fc8bdd0d787a3198bf068df7933109f4a7480"
+    }
+  },
+  "ultralytics": "8.3.9",
+  "export_head_sha256": "ef8954f35060b57d3b7c774af3bbe628a9603554b23babf962aa246904e952f4",
+  "torch": "2.1.0+cu121",
+  "opencv": "4.8.1",
+  "conf": 0.25,
+  "iou": 0.7,
+  "max_det": 16,
+  "reference": "local Ultralytics native mask reconstruction",
+  "sdk_inference_manifest_sha256": "c64e55b6da1a862ce81ef6cb5cebaae582c452406b2df669a7ef282c89534946"
+}

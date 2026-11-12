@@ -1,0 +1,9 @@
+{
+  "images": 50,
+  "pytorch_standard_mean_mask_iou": 0.9999989209603453,
+  "pytorch_sdk_mean_mask_iou": 0.42554700145455854,
+  "max_decoded_abs": 0.0035400390625,
+  "max_proto_abs": 3.814697265625e-05,
+  "max_optimized_abs": 7.677078247070312e-05,
+  "notes": "Mask agreement is pairwise, not label accuracy. Raw box errors are in input pixel units. Empty/empty pair agreement=1."
+}

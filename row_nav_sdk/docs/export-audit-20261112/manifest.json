@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "inputs": [
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/0.jpg",
+      "sha256": "09d482a043a7bb62b45e32651e13fb30a3a8c55e141bc87a9810c4c855bf26f6"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/1.jpg",
+      "sha256": "612f15b4ff85bb77fd18d78580fcd9aa271b634b77057db0069f9c8da4af5b5b"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/10.jpg",
+      "sha256": "dc4514e7378469ac20d7dfb02823b3fdf821b6a59e649bb0fceb3d43f186f5ed"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/100.jpg",
+      "sha256": "3494093a6da1b79563a80c3ebbc16e9768659774f7e36355a1d1cd4b7f466004"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/101.jpg",
+      "sha256": "72d46c9672190036e6b45520cd23f64721c9e0e76ca2017a2116a6806582d7c4"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/102.jpg",
+      "sha256": "bca344d9f5d3269784439252de035e236894d3fd5445ddf22afa51a35e36cecf"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/103.jpg",
+      "sha256": "e6dc2ff2029697f47a602a5853772cdc08d9b9a7ffde7235c1895f144043c798"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/104.jpg",
+      "sha256": "0312618a3668a00ab5ec67e1973eb9ecb63efbb1449af01a108daf92f148105e"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/105.jpg",
+      "sha256": "7a1e9961cbff00666645d4acd58ca7c4b7118235e789e858e69e9793b73826aa"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/106.jpg",
+      "sha256": "295ac69361b81b6373bd23faa8039957395bdd3f46558b9bc9484cc7333fa143"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/107.jpg",
+      "sha256": "32ba82ce7c47e2f9c5518719b29811d6650e95a3eee5f872c9c82cc3af885e39"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/108.jpg",
+      "sha256": "12deb93f2cc5b0d8668a442d8fe4fa61dbc5df8a4821e86b8f8fad886f96178a"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/109.jpg",
+      "sha256": "38b9ed4c1f6b9bbc754caf97d398a93981efb76864c3eff992479b7f39506600"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/11.jpg",
+      "sha256": "863e991cadc091d613d6bd6dca2900947ce828f8c7867b5f064631436f86432a"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/110.jpg",
+      "sha256": "43624abfbaae6f3b01094d31bf933b95e90a20cce2806a7ce4a8f56f50febb43"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/111.jpg",
+      "sha256": "0665543e422df30186827a942414c157eece01208418fb3be4f1fe2a10a21018"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/112.jpg",
+      "sha256": "1f1df27d4792374e51e1adcc1924b59ac243d21d968aebbf122df616f0303d98"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/113.jpg",
+      "sha256": "d5073c617fdf93c1448aaaef712081afcdf4316abc03eb54a48e67c59cde0743"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/114.jpg",
+      "sha256": "cec1b3bf63b5ddc0387fefcf8fcc2cfbc8ce46971a0c1e2530487139dab480a3"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/115.jpg",
+      "sha256": "e9879a58b1277168d709b65119e01393428e4055fa1f8dc1929b2059381f2487"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/116.jpg",
+      "sha256": "ca55c89bfccfda6e3587e8019ccaafc4563f54d302e273a5ec46df2da88fc320"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/117.jpg",
+      "sha256": "bef227c96c0389e3af92bc8bb56a3d26fd8f7ac3c553f6b9fd4c1d894dea6a90"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/118.jpg",
+      "sha256": "6858ad0f66932b8f6397cddde576284a7a20a4cbdfe85cf4707b494e08a7f617"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/119.jpg",
+      "sha256": "6ce76270e107866bb1e27fe9d13ba948559b49626f2962da8657670f50ff997e"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/12.jpg",
+      "sha256": "f0d7c965657118f535cf889b212b439e37b0a106ef6c577c7060e9c7f551bbc7"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/120.jpg",
+      "sha256": "d45973172a6e637ec77da6e408c8cd5c49ccfd849f681231076f8a68610fabae"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/121.jpg",
+      "sha256": "33d97b2cb9e1090c73693721518a8ac342d2414d16d32c57433b31316b426821"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/122.jpg",
+      "sha256": "8561bd12e1a246e18f53b9f436bbfd0fa8f841cffd6a00219ab10c537b8aacea"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/123.jpg",
+      "sha256": "bf016291146ed9bdd1c6294e6e4a8d5284c912faecb8a4bfac47de77757eb168"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/124.jpg",
+      "sha256": "d8f6a994f9655b44cd588472e653405a30bcd8449b7f24499a8f069689605cb6"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/125.jpg",
+      "sha256": "1a93af7e0ba653ed9bab9f7e435e6e020e96897234758489e1e72abb8b2a8d0c"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/126.jpg",
+      "sha256": "77fa4410be44689e6b8843559b3c8d7a918809695b8db39e282db6fbe8e0a826"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/127.jpg",
+      "sha256": "d056a0180d338f915e9665c1c06f7d93a5be94ea65bd59b4073fdc644aa3d009"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/128.jpg",
+      "sha256": "633e35b46ce4e10e1cc389355fb9bfe09dfc2af9fcf0a5ba5c108f329bf7b7a3"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/129.jpg",
+      "sha256": "192681e89132d4a28dabfee06dab0f8cab073923c80196c70b8e2f0e101ebef4"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/13.jpg",
+      "sha256": "5263fe1dd72e6c1cca91bec342696425f8dd55e33d774da9cb9268621cdc160d"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/130.jpg",
+      "sha256": "1d073560dcb810edbea9786a1946869c05966ff4d2c84a51efc0c62e42cedddf"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/131.jpg",
+      "sha256": "c7f3a3928b16d792aa0222ed902d3690c7837b4787f18a71ddfe4a7dc50dd411"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/132.jpg",
+      "sha256": "728dfc04593606d63972e5e6927dd73d79feb2a2f97c9b9d1f88d00b0e34ecc0"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/133.jpg",
+      "sha256": "88ce70f054681329c493206dde3b06dacf9e92c4f48a5d768dd5d05d6e4565b6"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/134.jpg",
+      "sha256": "bba754b5627bf732c550d56e420d67b1c3965c007cd19924092e76566bc4fba4"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/135.jpg",
+      "sha256": "d48f42e5dd7b89597769839e71f62733d2b1dc572178c32454b87754ed37c28e"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/136.jpg",
+      "sha256": "ae51a20ab48f57d504abd5ad6a2595065af156f0209a20739ff6ff53a9bc4d09"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/137.jpg",
+      "sha256": "721a6338e11ad6ea52cfe4a9bf2a383e50c8ac2914665b683f0ce38dc7eacb67"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/138.jpg",
+      "sha256": "fef0d6b135fe9512e91376cd3667ee4b88fb1bc6cc1b97de210ebb5ce3af8d24"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/139.jpg",
+      "sha256": "0fcce89954fdb014293ddb6e71dbc9dfb88b0d92373736aaffde805e39f92e77"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/14.jpg",
+      "sha256": "31e53d0806a551062f6de0c29c9e8f9ebe995c9fb7d316626814279a50b7d88a"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/140.jpg",
+      "sha256": "4ddc23e8eb272421554a6d0c3c1196d3f56499ad186e1fc184b476972d695de7"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/141.jpg",
+      "sha256": "aaa84c3c822a97c90bc40595c54047ef953ec769bbbde206a74f121271c59b35"
+    },
+    {
+      "path": "/home/zhouboyang/workspace/rk/data/processed/crdld-yolo-seg-tracked-v1/images/test/142.jpg",
+      "sha256": "e4112eef0c9c7647d71a77f42d9a060b1a98ac326de3f4e79956fa25a82b3a4d"
+    }
+  ],
+  "completed": true,
+  "preprocessing": "square RGB /255 resize640; CPU float32",
+  "files": {
+    "weights": {
+      "path": "/home/zhouboyang/workspace/rk/artifacts/training/crdld-yolo11n-seg-tracked-v1-100e/weights/best.pt",
+      "sha256": "03afd772ce6fb333eb263e6cbad76b8a65cebe256c03b68f6451fa7c2e56b73e"
+    },
+    "standard": {
+      "path": "/home/zhouboyang/workspace/rk/models/onnx/crdld-yolo11n-seg-tracked-v1-100e.onnx",
+      "sha256": "4b95fd3ddd28a02daed48b5ad93c3a7b408be03e321514df2b9be5a75946570c"
+    },
+    "optimized": {
+      "path": "/home/zhouboyang/workspace/rk/models/onnx/crdld-yolo11n-seg-tracked-v1-100e-rknnopt.onnx",
+      "sha256": "dc2b3f1a25642e131484de03b42fc8bdd0d787a3198bf068df7933109f4a7480"
+    }
+  },
+  "torch": "2.1.0+cu121",
+  "opencv": "4.8.1",
+  "conf": 0.25,
+  "iou": 0.7,
+  "max_det": 16,
+  "reference": "local Ultralytics native mask reconstruction",
+  "sdk_inference_manifest_sha256": "c64e55b6da1a862ce81ef6cb5cebaae582c452406b2df669a7ef282c89534946"
+}
