@@ -81,3 +81,9 @@ if(RK_NAV_BUILD_TESTS AND ROW_NAV_REPLAY_TEST_PYTHON)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk/test_mask_evaluation.py
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/evaluate_masks.py)
 endif()
+
+if(RK_NAV_BUILD_TESTS AND ROW_NAV_REPLAY_TEST_PYTHON)
+  add_test(NAME sdk_board_kit COMMAND ${ROW_NAV_REPLAY_TEST_PYTHON}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk/test_board_kit.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/board/run_regression.py)
+endif()

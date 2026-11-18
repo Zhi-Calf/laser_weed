@@ -12,7 +12,7 @@
 #include "rk_nav/inference/rknn_yolov8_segmenter.hpp"
 #endif
 int main(int argc,char** argv) {
-    if (argc!=6 && argc!=7) { std::cerr<<"usage: segmentation_replay onnx|rknn model image-directory new-output-directory limit [fast|full]\n";return 1; }
+    if (argc!=6 && argc!=7 && argc!=8) { std::cerr<<"usage: segmentation_replay onnx|rknn model image-directory new-output-directory limit [fast|full] [rounds1-100]\n";return 1; }
     try {
         const std::string backend=argv[1];
         std::unique_ptr<rk_nav::Segmenter> segmenter;
@@ -34,8 +34,14 @@ int main(int argc,char** argv) {
         }
         std::sort(images.begin(),images.end());
         if (images.empty()) throw std::runtime_error("no images");
-        const std::string mode=argc==7 ? argv[6] : "fast";
+        const std::string mode=argc>=7 ? argv[6] : "fast";
         if (mode!="fast" && mode!="full") throw std::runtime_error("mask mode must be fast or full");
+        int rounds=1;
+        if (argc==8) {
+            std::size_t used=0;rounds=std::stoi(argv[7],&used);
+            if (used!=std::string(argv[7]).size() || rounds<1 || rounds>100) throw std::runtime_error("invalid rounds");
+        }
+        if (images.size()>static_cast<std::size_t>(limit)) images.resize(static_cast<std::size_t>(limit));
         rk_nav::ModelConfig config;config.path=argv[2];config.materialize_instance_masks=mode=="full";config.max_detections=16;
         const auto loaded=segmenter->load(config);
         if (!loaded.isOk()) throw std::runtime_error(loaded.message());
@@ -43,8 +49,9 @@ int main(int argc,char** argv) {
         std::ofstream csv(output/"frames.csv"); csv<<"index,instances,mask_fraction,inference_ms\n";
         if (!csv) throw std::runtime_error("cannot write report");
         int failures=0,index=0;
-        for (const auto& path : images) {
-            if (index>=limit) break;
+        std::ofstream memory(output/"memory.csv");memory<<"round,rss_kib\n";
+        for (int round=0;round<rounds;++round) {
+          for (const auto& path : images) {
             cv::Mat image=cv::imread(path.string());
             if (image.empty()) throw std::runtime_error("cannot decode: "+path.string());
             const auto started=std::chrono::steady_clock::now();
@@ -56,11 +63,15 @@ int main(int argc,char** argv) {
             tint.setTo(cv::Scalar(0,255,0),seg.combined_mask);
             cv::addWeighted(image,.6,tint,.4,0,overlay);
             const auto name=std::to_string(index)+".png";
-            if (!cv::imwrite((output/"masks"/name).string(),seg.combined_mask) ||
-                !cv::imwrite((output/"overlays"/name).string(),overlay)) throw std::runtime_error("image write failed");
+            if (round==0 && (!cv::imwrite((output/"masks"/name).string(),seg.combined_mask) ||
+                !cv::imwrite((output/"overlays"/name).string(),overlay))) throw std::runtime_error("image write failed");
             csv<<index<<','<<seg.instances.size()<<','<<double(cv::countNonZero(seg.combined_mask))/double(seg.combined_mask.total())<<','<<total_ms<<'\n';
-            std::ofstream identity(output/(std::to_string(index)+".source.txt"));identity<<path.string()<<'\n';
+            if(round==0) {std::ofstream identity(output/(std::to_string(index)+".source.txt"));identity<<path.string()<<'\n';}
             ++index;
+        }
+          std::ifstream status("/proc/self/status");std::string line;long rss=-1;
+          while(std::getline(status,line)) if(line.rfind("VmRSS:",0)==0) rss=std::stol(line.substr(6));
+          memory<<round<<','<<rss<<'\n';memory.flush();
         }
         std::cout<<"frames="<<index<<" failures="<<failures<<"\n";
         return failures?2:0;
