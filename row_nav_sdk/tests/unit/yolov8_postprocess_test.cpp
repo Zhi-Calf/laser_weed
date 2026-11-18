@@ -108,3 +108,23 @@ TEST_CASE("NMS detection limit applies after suppression of duplicate candidates
     REQUIRE(result.isOk()); REQUIRE(result.value().instances.size()==2);
     REQUIRE(result.value().instances[1].confidence==.8F);
 }
+TEST_CASE("Mask materialization changes ownership only, including letterbox and custom threshold") {
+    for (const cv::Size size : {cv::Size(513,319),cv::Size(319,513),cv::Size(512,512)}) {
+        auto out=tensors(true);out[1].ptr<float>()[40*80+40]=.9F;out[2]=out[1].clone();
+        out[3].setTo(cv::Scalar(.01)); // 32*.01=0.32 < logit(0.75), > logit(0.5)
+        rk_nav::Frame f{cv::Mat::zeros(size,CV_8UC3),1,1};
+        rk_nav::ModelConfig c;
+        auto t=rk_nav::letterboxImage(f.image,640,640);
+        auto full=rk_nav::decodeRockchipYoloV8Seg(out,f,c,t,0);
+        c.materialize_instance_masks=false;
+        auto compact=rk_nav::decodeRockchipYoloV8Seg(out,f,c,t,0);
+        REQUIRE(full.isOk()); REQUIRE(compact.isOk());
+        REQUIRE(cv::countNonZero(full.value().combined_mask)>0);
+        REQUIRE(cv::norm(full.value().combined_mask,compact.value().combined_mask,cv::NORM_INF)==0);
+        REQUIRE(!full.value().instances[0].mask.empty());
+        REQUIRE(compact.value().instances[0].mask.empty());
+        c.mask_threshold=.75;
+        auto strict=rk_nav::decodeRockchipYoloV8Seg(out,f,c,t,0);
+        REQUIRE(strict.isOk()); REQUIRE(cv::countNonZero(strict.value().combined_mask)==0);
+    }
+}

@@ -84,3 +84,5 @@ SDK 独立构建和 4 组 CTest 已在 MyUbuntu 通过，含动态 SDK 契约。
 原始权重、导出与主机运行时差异见 [一致性核查](docs/export-audit-20261112.md)。
 
 主机ONNX请使用经过核验的独立OpenCV4.8+环境；版本0.2.3修复NMS候选上限，详见[运行时修复与430张重测](docs/host-runtime-20261118.md)。
+
+SDK0.2.4统一mask重建，省内存模式不再改变合并mask；见[mask一致性与全量重测](docs/mask-alignment-20261118.md)。

@@ -74,3 +74,5 @@ install(PROGRAMS ${ROW_NAV_SDK_SOURCE_DIR}/scripts/inspect_segmentation.py DESTI
 install(PROGRAMS ${ROW_NAV_SDK_SOURCE_DIR}/scripts/evaluate_masks.py DESTINATION tools)
 
 install(PROGRAMS ${ROW_NAV_SDK_SOURCE_DIR}/scripts/compare_exports.py ${ROW_NAV_SDK_SOURCE_DIR}/scripts/compare_cpp_dump.py DESTINATION tools)
+
+install(PROGRAMS ${ROW_NAV_SDK_SOURCE_DIR}/scripts/compare_mask_paths.py DESTINATION tools)

@@ -110,7 +110,7 @@ void rk_row_nav_attitude_init(rk_row_nav_attitude_t* a) {
     if (!a) return;
     *a = {}; a->struct_size = sizeof(*a); a->abi_version = RK_ROW_NAV_ABI_VERSION;
 }
-const char* rk_row_nav_version(void) { return "0.2.3"; }
+const char* rk_row_nav_version(void) { return "0.2.4"; }
 uint64_t rk_row_nav_now_ns(void) {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());

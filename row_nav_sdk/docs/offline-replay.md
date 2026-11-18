@@ -51,3 +51,5 @@ python3 row_nav_sdk/scripts/inspect_segmentation.py \
 完整输出保存在 MyUbuntu `/home/zhouboyang/workspace/sdk-replay-20261112/real-seg-50-v2`。仓库仅存汇总、可复现指纹与一张示例：[summary](replay-20261112/summary.json)、[manifest](replay-20261112/manifest.json)。五组现有CTest再次通过。本次新增的是离线mask导出工具，公开C接口仍只返回导航结果，尚未增加通用调试结果接口。
 
 ![真实模型在公开图片上的行带输出，绿色为预测，非人工真值](replay-20261112/sample-overlay.png)
+
+0.2.4起 --mask-mode fast/full只决定是否保留实例mask，合并mask语义一致，见[重建修复](mask-alignment-20261118.md)。

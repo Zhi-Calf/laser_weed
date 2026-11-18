@@ -8,6 +8,9 @@ import numpy as np
 sys.path.insert(0,str(Path(sys.argv[1]).resolve().parent))
 from evaluate_masks import counts,metrics,rasterize,evaluate
 from inspect_segmentation import sha
+from compare_mask_paths import centers
+assert np.array_equal(centers(np.array([0,1,1,0,1],bool)),[1.5,4.])
+assert len(centers(np.zeros(5,bool)))==0
 truth=np.array([[1,1],[0,0]],bool);pred=np.array([[1,0],[1,0]],bool)
 assert counts(pred,truth)==dict(tp=1,fp=1,fn=1)
 assert metrics(counts(pred,truth))['iou']==1/3

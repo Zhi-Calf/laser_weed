@@ -214,11 +214,10 @@ Result<SegmentationResult> decodeRockchipYoloV8Seg(
         ++branch;
     }
 
-    std::vector<cv::Rect> nms_boxes;
+    std::vector<cv::Rect2d> nms_boxes;
     std::vector<float> nms_scores;
     for (const auto& candidate : candidates) {
-        nms_boxes.emplace_back(static_cast<int>(candidate.box.x), static_cast<int>(candidate.box.y),
-                               static_cast<int>(candidate.box.width), static_cast<int>(candidate.box.height));
+        nms_boxes.push_back(candidate.box);
         nms_scores.push_back(candidate.score);
     }
     std::vector<int> keep;
@@ -234,7 +233,17 @@ Result<SegmentationResult> decodeRockchipYoloV8Seg(
     result.combined_mask = cv::Mat::zeros(frame.image.size(), CV_8UC1);
     const int proto_height = proto->size[2];
     const int proto_width = proto->size[3];
-    cv::Mat combined_proto = cv::Mat::zeros(proto_height, proto_width, CV_8UC1);
+    const float logit_threshold=std::log(config.mask_threshold/(1.0F-config.mask_threshold));
+    // Match native reference: remove prototype padding, interpolate LOGITS to
+    // original resolution, crop in original coordinates, then threshold.
+    const double gain=std::min(static_cast<double>(proto_height)/frame.image.rows,
+                               static_cast<double>(proto_width)/frame.image.cols);
+    const double pad_x=(proto_width-frame.image.cols*gain)/2;
+    const double pad_y=(proto_height-frame.image.rows*gain)/2;
+    const int left=static_cast<int>(pad_x), top=static_cast<int>(pad_y);
+    const int right=static_cast<int>(proto_width-pad_x),bottom=static_cast<int>(proto_height-pad_y);
+    if (right<=left || bottom<=top) return Status::invalidArgument("empty prototype content");
+    const cv::Rect content(left,top,right-left,bottom-top);
     for (const int index : keep) {
         const auto& candidate = candidates[static_cast<std::size_t>(index)];
         cv::Mat logits(proto_height, proto_width, CV_32F, cv::Scalar(0));
@@ -250,63 +259,27 @@ Result<SegmentationResult> decodeRockchipYoloV8Seg(
         instance.box = toOriginalBox(candidate.box, transform, frame.image.size());
         instance.class_id = 0;
         instance.confidence = candidate.score;
+        cv::Mat original_logits;
+        cv::resize(logits(content),original_logits,frame.image.size(),0,0,cv::INTER_LINEAR);
+        const auto& box=candidate.box;
+        // crop_mask uses integer pixel coordinates >= left/top and < right/bottom.
+        const double x1=std::clamp((box.x-transform.left)/transform.scale,0.,double(frame.image.cols));
+        const double y1=std::clamp((box.y-transform.top)/transform.scale,0.,double(frame.image.rows));
+        const double x2=std::clamp((box.x+box.width-transform.left)/transform.scale,0.,double(frame.image.cols));
+        const double y2=std::clamp((box.y+box.height-transform.top)/transform.scale,0.,double(frame.image.rows));
+        const cv::Rect roi(static_cast<int>(std::ceil(x1)),static_cast<int>(std::ceil(y1)),
+            std::max(0,static_cast<int>(std::ceil(x2))-static_cast<int>(std::ceil(x1))),
+            std::max(0,static_cast<int>(std::ceil(y2))-static_cast<int>(std::ceil(y1))));
+        cv::Mat binary;
+        if (roi.area()>0) {
+            binary=original_logits(roi)>logit_threshold;
+            cv::bitwise_or(result.combined_mask(roi),binary,result.combined_mask(roi));
+        }
         if (config.materialize_instance_masks) {
-            cv::Mat model_mask;
-            cv::resize(logits, model_mask, cv::Size(config.input_width, config.input_height),
-                       0, 0, cv::INTER_LINEAR);
-            cv::exp(-model_mask, model_mask);
-            model_mask = 1.0 / (1.0 + model_mask);
-            cv::Mat binary = model_mask > config.mask_threshold;
-            const cv::Rect model_bounds(0, 0, config.input_width, config.input_height);
-            const cv::Rect clipped = nms_boxes[static_cast<std::size_t>(index)] & model_bounds;
-            cv::Mat cropped = cv::Mat::zeros(binary.size(), CV_8UC1);
-            if (clipped.area() > 0) binary(clipped).copyTo(cropped(clipped));
-            const cv::Rect content(transform.left, transform.top,
-                                   transform.resized_width, transform.resized_height);
-            cv::resize(cropped(content), instance.mask, frame.image.size(),
-                       0, 0, cv::INTER_NEAREST);
-            cv::bitwise_or(result.combined_mask, instance.mask, result.combined_mask);
-        } else {
-            cv::Mat probability;
-            cv::exp(-logits, probability);
-            probability = 1.0 / (1.0 + probability);
-            cv::Mat binary = probability > config.mask_threshold;
-            const double scale_x = static_cast<double>(proto_width) /
-                                   static_cast<double>(config.input_width);
-            const double scale_y = static_cast<double>(proto_height) /
-                                   static_cast<double>(config.input_height);
-            const auto& box = candidate.box;
-            const int proto_left = static_cast<int>(std::floor(box.x * scale_x));
-            const int proto_top = static_cast<int>(std::floor(box.y * scale_y));
-            const int proto_right = static_cast<int>(std::ceil((box.x + box.width) * scale_x));
-            const int proto_bottom = static_cast<int>(std::ceil((box.y + box.height) * scale_y));
-            cv::Rect proto_box(proto_left, proto_top,
-                               proto_right - proto_left, proto_bottom - proto_top);
-            proto_box &= cv::Rect(0, 0, proto_width, proto_height);
-            if (proto_box.area() > 0) {
-                cv::bitwise_or(combined_proto(proto_box), binary(proto_box),
-                               combined_proto(proto_box));
-            }
+            instance.mask=cv::Mat::zeros(frame.image.size(),CV_8UC1);
+            if (roi.area()>0) binary.copyTo(instance.mask(roi));
         }
         result.instances.push_back(std::move(instance));
-    }
-    if (!config.materialize_instance_masks && !keep.empty()) {
-        const double proto_scale_x = static_cast<double>(proto_width) /
-                                     static_cast<double>(config.input_width);
-        const double proto_scale_y = static_cast<double>(proto_height) /
-                                     static_cast<double>(config.input_height);
-        const int left = std::clamp(static_cast<int>(std::floor(
-            static_cast<double>(transform.left) * proto_scale_x)), 0, proto_width - 1);
-        const int top = std::clamp(static_cast<int>(std::floor(
-            static_cast<double>(transform.top) * proto_scale_y)), 0, proto_height - 1);
-        const int right = std::clamp(static_cast<int>(std::ceil(
-            static_cast<double>(transform.left + transform.resized_width) * proto_scale_x)),
-            left + 1, proto_width);
-        const int bottom = std::clamp(static_cast<int>(std::ceil(
-            static_cast<double>(transform.top + transform.resized_height) * proto_scale_y)),
-            top + 1, proto_height);
-        cv::resize(combined_proto(cv::Rect(left, top, right - left, bottom - top)),
-                   result.combined_mask, frame.image.size(), 0, 0, cv::INTER_NEAREST);
     }
     result.inference_ms = inference_ms;
     return result;

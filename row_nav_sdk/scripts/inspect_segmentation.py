@@ -18,7 +18,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for n in ('binary','model','input','output'):p.add_argument('--'+n,type=Path,required=True)
     p.add_argument('--backend',choices=['onnx','rknn'],default='onnx')
-    p.add_argument('--mask-mode',choices=['fast','full'],default='fast')
+    p.add_argument('--mask-mode',choices=['fast','full'],default='fast',help='fast retains union only; full also retains per-instance masks (0.2.4+: identical union)')
     p.add_argument('--limit',type=int,default=50)
     a=p.parse_args()
     if a.limit<1 or a.output.exists():p.error('Positive limit and new output directory required')
