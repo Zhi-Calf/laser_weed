@@ -14,6 +14,14 @@ elseif(UNIX)
   set_target_properties(rk_row_nav PROPERTIES INSTALL_RPATH "$ORIGIN")
   target_link_options(rk_row_nav PRIVATE "LINKER:--version-script=${ROW_NAV_SDK_SOURCE_DIR}/cmake/sdk-symbols.map")
 endif()
+# Explicit opt-in for isolated host OpenCV installations; default deployment stays $ORIGIN.
+set(ROW_NAV_OPENCV_RUNTIME_DIR "" CACHE PATH "Optional absolute runtime directory of isolated OpenCV shared libraries")
+if(ROW_NAV_OPENCV_RUNTIME_DIR)
+  if(NOT IS_ABSOLUTE "${ROW_NAV_OPENCV_RUNTIME_DIR}" OR NOT IS_DIRECTORY "${ROW_NAV_OPENCV_RUNTIME_DIR}")
+    message(FATAL_ERROR "ROW_NAV_OPENCV_RUNTIME_DIR must be an existing absolute directory")
+  endif()
+  set_property(TARGET rk_row_nav APPEND PROPERTY INSTALL_RPATH "${ROW_NAV_OPENCV_RUNTIME_DIR}")
+endif()
 install(TARGETS rk_row_nav EXPORT RowNavTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})

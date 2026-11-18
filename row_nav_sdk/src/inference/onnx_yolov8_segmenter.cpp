@@ -21,6 +21,9 @@ OnnxYoloV8Segmenter::OnnxYoloV8Segmenter() : impl_(std::make_unique<Impl>()) {}
 OnnxYoloV8Segmenter::~OnnxYoloV8Segmenter() = default;
 
 Status OnnxYoloV8Segmenter::load(const ModelConfig& config) {
+#if CV_VERSION_MAJOR < 4 || (CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR < 8)
+    return Status::unavailable("ONNX backend requires validated OpenCV >=4.8; older host DNN produced divergent tensors. Use isolated OpenCV build; RKNN backend is unaffected by this guard.");
+#endif
     if (config.input_width!=640 || config.input_height!=640)
         return Status::invalidArgument("Rockchip YOLOv8-seg decoder requires 640x640 input");
     if (config.path.empty()) return Status::invalidArgument("model path is empty");
@@ -61,10 +64,12 @@ Result<SegmentationResult> OnnxYoloV8Segmenter::infer(const Frame& frame) {
         const auto names = impl_->network.getUnconnectedOutLayersNames();
         std::vector<cv::Mat> outputs;
         impl_->network.forward(outputs, names);
+        auto normalized=normalizeOnnxYoloSegOutputs(outputs);
+        if (!normalized.isOk()) return normalized.status();
         const double elapsed_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - started).count();
         return decodeRockchipYoloV8Seg(
-            outputs, frame, impl_->config, transformed, elapsed_ms);
+            normalized.value(), frame, impl_->config, transformed, elapsed_ms);
     } catch (const cv::Exception& error) {
         return Status::internal("ONNX inference failed: " + std::string(error.what()));
     }

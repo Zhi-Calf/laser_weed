@@ -83,3 +83,28 @@ TEST_CASE("RKNN output cleanup guard releases once on normal return and exceptio
     } catch (const std::bad_alloc&) {}
     REQUIRE(releases==2);
 }
+
+TEST_CASE("ONNX outputs normalize reordered duplicate score branches") {
+    auto out=tensors(true);
+    std::reverse(out.begin(),out.end());
+    auto normalized=rk_nav::normalizeOnnxYoloSegOutputs(out);
+    REQUIRE(normalized.isOk());
+    REQUIRE(rk_nav::validateRockchipYoloV8SegLayout(normalized.value(),{}).isOk());
+    out=tensors(true); out[2].setTo(cv::Scalar(.8));
+    REQUIRE(!rk_nav::normalizeOnnxYoloSegOutputs(out).isOk());
+    out=tensors(true); out[0]=out[3];
+    REQUIRE(!rk_nav::normalizeOnnxYoloSegOutputs(out).isOk());
+}
+TEST_CASE("NMS detection limit applies after suppression of duplicate candidates") {
+    auto out=tensors(true);
+    // Three neighboring high-score duplicate boxes, then a separate weaker row.
+    auto* score=out[1].ptr<float>();
+    score[40*80+39]=.95F;score[40*80+40]=.94F;score[40*80+41]=.93F;
+    score[10*80+10]=.8F;
+    out[2]=out[1].clone();
+    rk_nav::ModelConfig c;c.max_detections=2;
+    rk_nav::Frame f{cv::Mat::zeros(640,640,CV_8UC3),1,1};
+    auto result=rk_nav::decodeRockchipYoloV8Seg(out,f,c,rk_nav::letterboxImage(f.image,640,640),0);
+    REQUIRE(result.isOk()); REQUIRE(result.value().instances.size()==2);
+    REQUIRE(result.value().instances[1].confidence==.8F);
+}

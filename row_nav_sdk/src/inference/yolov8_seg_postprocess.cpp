@@ -82,6 +82,29 @@ LetterboxResult letterboxImage(const cv::Mat& source, int width, int height) {
     return result;
 }
 
+Result<std::vector<cv::Mat>> normalizeOnnxYoloSegOutputs(const std::vector<cv::Mat>& outputs) {
+    if (outputs.size()!=13) return outputs; // 10-output decoder already resolves by unique shape.
+    std::vector<cv::Mat> ordered;
+    for (int spatial : {80,40,20}) {
+        std::vector<cv::Mat> boxes,scores,coefficients;
+        for (const auto& t : outputs) {
+            if (isTensor(t,64,spatial)) boxes.push_back(t);
+            if (isTensor(t,1,spatial)) scores.push_back(t);
+            if (isTensor(t,32,spatial)) coefficients.push_back(t);
+        }
+        if (boxes.size()!=1 || scores.size()!=2 || coefficients.size()!=1)
+            return Status::invalidArgument("ambiguous ONNX single-class output layout");
+        if (!cv::checkRange(scores[0]) || !cv::checkRange(scores[1]) ||
+            cv::norm(scores[0],scores[1],cv::NORM_INF)>1e-5)
+            return Status::invalidArgument("single-class score and sum outputs disagree");
+        ordered.insert(ordered.end(),{boxes[0],scores[0],scores[1],coefficients[0]});
+    }
+    int count=0;
+    for (const auto& t : outputs) if (isTensor(t,32,160)) {ordered.push_back(t);++count;}
+    if (count!=1) return Status::invalidArgument("ambiguous ONNX prototype output");
+    return ordered;
+}
+
 Status validateRockchipYoloV8SegLayout(const std::vector<cv::Mat>& outputs, const ModelConfig& config) {
     if (config.input_width != 640 || config.input_height != 640)
         return Status::invalidArgument("Rockchip YOLOv8-seg decoder requires 640x640 input");
@@ -200,7 +223,10 @@ Result<SegmentationResult> decodeRockchipYoloV8Seg(
     }
     std::vector<int> keep;
     cv::dnn::NMSBoxes(nms_boxes, nms_scores, config.confidence_threshold,
-                      config.nms_threshold, keep, 1.0F, config.max_detections);
+                      config.nms_threshold, keep, 1.0F, 0);
+    // OpenCV top_k truncates BEFORE suppression, unlike max_det in Ultralytics.
+    if (keep.size()>static_cast<std::size_t>(config.max_detections))
+        keep.resize(static_cast<std::size_t>(config.max_detections));
 
     SegmentationResult result;
     result.sequence = frame.sequence;

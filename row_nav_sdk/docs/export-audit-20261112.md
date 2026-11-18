@@ -55,3 +55,5 @@ PYTHONPATH=/absolute/ultralytics_yolo11 YOLO_CONFIG_DIR=/absolute/isolated-confi
 后续顺序：隔离构建一个数值与参考一致的主机ONNX运行环境，确认输出节点排序契约，重跑同样430张；然后再判断标签/训练的剩余问题。板端RKNN必须另行核查，不能据此推断也有问题。
 
 最终工具显式设置OpenCV backend/CPU target后，100.jpg原始张量对照再次复现；最终Python工具另以2张完成烟测，参考mask相互IoU=1。50张统计与2张烟测分别保留，未混合样本。
+
+后续已完成隔离运行时和NMS修复，见[2026-11-18重测记录](host-runtime-20261118.md)。

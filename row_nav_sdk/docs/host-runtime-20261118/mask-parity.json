@@ -1,0 +1,22 @@
+{
+  "real-seg-430-fast": {
+    "images": 50,
+    "mean_pair_iou": 0.5149930571646149,
+    "minimum_pair_iou": 0.2971759500260281
+  },
+  "real-seg-50-full": {
+    "images": 50,
+    "mean_pair_iou": 0.5574887228199382,
+    "minimum_pair_iou": 0.3180511929425917
+  },
+  "real-seg-50-full-nms": {
+    "images": 50,
+    "mean_pair_iou": 0.9084439993523101,
+    "minimum_pair_iou": 0.8571293584049892
+  },
+  "real-seg-430-fast-nms": {
+    "images": 50,
+    "mean_pair_iou": 0.8207419554551643,
+    "minimum_pair_iou": 0.7885345175615665
+  }
+}
