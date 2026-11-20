@@ -298,9 +298,9 @@ void SdkClient::loadParameters() {
   declare_parameter("dev_id", "");
   declare_parameter("dev_type", "");
   declare_parameter("sdk_openapi_host", "openapi.qxwz.com");
-  declare_parameter("sdk_openapi_port", 8443);
+  declare_parameter("sdk_openapi_port", 8000);
   declare_parameter("sdk_oss_host", "oss.qxwz.com");
-  declare_parameter("sdk_oss_port", 8008);
+  declare_parameter("sdk_oss_port", 8007);
   declare_parameter("sdk_coord_frame", static_cast<int>(kQxwzCoordFrameWgs84));
   declare_parameter("sdk_coord_epoch", "2005.1");
   declare_parameter("gga_interval_sec", 1.0);
@@ -358,12 +358,12 @@ void SdkClient::loadParameters() {
     sdk_coord_epoch_ = "2005.1";
   }
   if (!valid_port(sdk_openapi_port_)) {
-    SPDLOG_WARN("sdk_openapi_port={} 非法, 使用默认 8443", sdk_openapi_port_);
-    sdk_openapi_port_ = 8443;
+    SPDLOG_WARN("sdk_openapi_port={} 非法, 使用默认 8000", sdk_openapi_port_);
+    sdk_openapi_port_ = 8000;
   }
   if (!valid_port(sdk_oss_port_)) {
-    SPDLOG_WARN("sdk_oss_port={} 非法, 使用默认 8008", sdk_oss_port_);
-    sdk_oss_port_ = 8008;
+    SPDLOG_WARN("sdk_oss_port={} 非法, 使用默认 8007", sdk_oss_port_);
+    sdk_oss_port_ = 8007;
   }
 
   SPDLOG_INFO("========== 千寻 SDK 客户端参数加载 ==========");

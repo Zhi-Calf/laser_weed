@@ -15,11 +15,12 @@ sdk_client:
     dev_type: ""
 
     # SDK 1.29 服务器配置 (默认域名已关闭, 必须通过 init 的 serv_conf 传入)
-    # 官方加密服务端口示例: OpenAPI 8443, OSS 8008; 非加密端口为 8000/8007。
+    # 随包 release 库为非 TLS 构建, 必须使用非加密端口 8000/8007。
+    # 更换为 TLS 版本 SDK 库时, 才使用加密端口 8443/8008。
     sdk_openapi_host: "openapi.qxwz.com"
-    sdk_openapi_port: 8443
+    sdk_openapi_port: 8000
     sdk_oss_host: "oss.qxwz.com"
-    sdk_oss_port: 8008
+    sdk_oss_port: 8007
 
     # NOSR 坐标框架/历元: frame 1=ITRF2008, 2=WGS84, 3=CGCS2000; epoch 格式 "年.月"
     # 若差分服务要求其他历元, 按服务端实际坐标系修改。
