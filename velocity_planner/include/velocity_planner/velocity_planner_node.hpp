@@ -16,33 +16,28 @@ namespace velocity_planner {
 
 class VelocityPlannerNode : public rclcpp::Node {
 public:
-  // 创建避停状态节点并初始化过滤器。
   explicit VelocityPlannerNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
 
 private:
-  // 读取日志配置参数。
   void LoadLogParameters();
-  // 读取 ROI 和超时参数。
   void LoadParameters();
-  // 创建订阅者、发布者和定时器。
   void SetupInterfaces();
-  // 缓存最新点云供定时处理。
   void CloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr cloud);
-  // 处理最新点云并发布避停状态。
   void PublishStatus();
 
+private:
   std::string input_cloud_topic_;       // 输入点云话题
   std::string output_status_topic_;     // 输出的避停状态话题
   double point_cloud_timeout_s_{0.5};   // 点云心跳超时 (s)
   double stop_hold_s_{0.3};             // 障碍消失后的停车保持时间
   RoiConfig roi_config_;                // ROI 参数
-
+private:
   std::string log_dir_{"/opt/agri/logs"};   // spdlog 日志目录
   int log_file_size_mb_{50};                // 单个日志文件大小上限 (MB)
   int log_file_count_{10};                  // 滚动保留的日志文件数量
   bool log_enable_console_{true};           // 是否同时输出到终端
   std::string log_level_{"info"};           // 日志级别
-
+private:
   std::unique_ptr<RoiFilter> roi_filter_;       // ROI 过滤器
   std::unique_ptr<StopHoldFilter> stop_hold_;   // 停车保持过滤器
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
