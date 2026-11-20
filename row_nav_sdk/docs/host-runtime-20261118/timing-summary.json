@@ -1,0 +1,17 @@
+{
+  "frames": 430,
+  "nonempty_frames": 430,
+  "timing": {
+    "available_samples": 430,
+    "stages": {
+      "inference_ms": {
+        "samples": 430,
+        "mean": 53.450127209302295,
+        "p50": 52.8018,
+        "p95": 57.7826,
+        "maximum": 86.8192
+      }
+    }
+  },
+  "notes": "SDK infer wall time includes decoding, excludes image IO. Cold first frame included. Nonempty is not accuracy. Files are sorted, not random sampled."
+}

@@ -16,6 +16,7 @@ struct ModelConfig {
     float nms_threshold{0.70F};
     float mask_threshold{0.5F};
     int max_detections{100};
+    // Only controls retention of per-instance masks; combined mask pixels are identical.
     bool materialize_instance_masks{true};
 };
 

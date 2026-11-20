@@ -72,3 +72,19 @@ source install/crop-row-source/setup.bash
 SDK 独立构建和 4 组 CTest 已在 MyUbuntu 通过，含动态 SDK 契约。
 完整迁移测试记录、统一 ROS 构建和安装验证结果见 `docs/migration-20261026.md`。
 这些测试不等于田间精度、板端 NPU 性能或实车控制验收。
+
+推理诊断、模型范围与验证边界见 [推理库 0.2.1 更新记录](docs/inference-hardening-20261110.md)。
+
+统一图片/视频回放、结果记录和统计见 [离线回放说明](docs/offline-replay.md)。
+
+可选分割mask和多行拟合诊断见 [SDK调试接口](docs/debug-interface.md)。
+
+430张公开派生测试图的定量检查见 [分割评测报告](docs/mask-evaluation-20261112.md)。
+
+原始权重、导出与主机运行时差异见 [一致性核查](docs/export-audit-20261112.md)。
+
+主机ONNX请使用经过核验的独立OpenCV4.8+环境；版本0.2.3修复NMS候选上限，详见[运行时修复与430张重测](docs/host-runtime-20261118.md)。
+
+SDK0.2.4统一mask重建，省内存模式不再改变合并mask；见[mask一致性与全量重测](docs/mask-alignment-20261118.md)。
+
+新版RK3588固定图片回归包见[交付与验证记录](docs/board-regression-package-20261118.md)，现场操作见[同事测试说明](docs/board-regression-guide.md)。

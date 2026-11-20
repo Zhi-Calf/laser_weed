@@ -18,24 +18,28 @@ endif()
 # find dependencies
 find_package(std_msgs REQUIRED)
 
-find_package(catkin REQUIRED COMPONENTS
+find_package(catkin REQUIRED
+  COMPONENTS
   roscpp
   std_msgs
   sensor_msgs
   message_generation
-  )
+)
 
-add_message_files(FILES
+add_message_files(
+  FILES
   RslidarPacket.msg
-  )
+)
 
-generate_messages(DEPENDENCIES 
+generate_messages(
+  DEPENDENCIES
   std_msgs
   sensor_msgs
-  )
+)
 
-catkin_package(CATKIN_DEPENDS 
-  std_msgs 
+catkin_package(
+  CATKIN_DEPENDS
+  std_msgs
   sensor_msgs
   message_runtime
-  )
+)

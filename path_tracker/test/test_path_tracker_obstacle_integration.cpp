@@ -437,16 +437,19 @@ TEST(PathTrackerSteerRateIntegration, LimitsSteeringCommandRate) {
 }
 
 TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackOnInvalidStatus) {
+  constexpr double kControlHz = 20.0;
+  constexpr double kMaxSteerRateDeg = 180.0;
+  constexpr double kCropTimeoutS = 0.5;
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
-    rclcpp::Parameter("control_hz", 20.0),
+    rclcpp::Parameter("control_hz", kControlHz),
     rclcpp::Parameter("require_velocity_planner", false),
     rclcpp::Parameter("viz", false),
     rclcpp::Parameter("wheelbase", 1.2),
     rclcpp::Parameter("max_lateral_error_m", 0.3),
-    rclcpp::Parameter("max_steer_rate_deg_s", 180.0),
+    rclcpp::Parameter("max_steer_rate_deg_s", kMaxSteerRateDeg),
     rclcpp::Parameter("row_vision_enabled", true),
-    rclcpp::Parameter("crop_row_timeout_s", 0.5),
+    rclcpp::Parameter("crop_row_timeout_s", kCropTimeoutS),
   });
 
   auto tester  = std::make_shared<rclcpp::Node>("path_tracker_vision_test");
@@ -546,7 +549,11 @@ TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackOnInvalidStatus)
   stale_heartbeat.sequence = sequence;
   publishers.crop->publish(stale_heartbeat);
   executor.spin_some();
-  SpinFor(executor, publishers, pose, path, mode, nullptr, 0.12);
+  // 切回全局路径仍须遵守转角速率限制；等待回正，但不能等到视觉自然超时。
+  const double return_to_path_s =
+      std::abs(vision_steer) / (kMaxSteerRateDeg * M_PI / 180.0) + 3.0 / kControlHz;
+  ASSERT_LT(return_to_path_s, kCropTimeoutS);
+  SpinFor(executor, publishers, pose, path, mode, nullptr, return_to_path_s);
   EXPECT_NEAR(last_command.steer_angle_rad, 0.0, 1e-9);
 
   SpinForWithCropRow(

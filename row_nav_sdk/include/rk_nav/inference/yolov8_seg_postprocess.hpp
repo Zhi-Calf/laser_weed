@@ -21,6 +21,11 @@ struct LetterboxResult {
 
 LetterboxResult letterboxImage(const cv::Mat& source, int width, int height);
 
+Status validateRockchipYoloV8SegLayout(const std::vector<cv::Mat>& outputs, const ModelConfig& config);
+
+// ONNX runtimes may reorder graph outputs. Single-class score/sum duplicates must agree.
+Result<std::vector<cv::Mat>> normalizeOnnxYoloSegOutputs(const std::vector<cv::Mat>& outputs);
+
 Result<SegmentationResult> decodeRockchipYoloV8Seg(
     const std::vector<cv::Mat>& outputs,
     const Frame& frame,

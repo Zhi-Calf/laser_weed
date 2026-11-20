@@ -1,0 +1,195 @@
+{
+  "date": "2026-11-03 Asia/Shanghai",
+  "source_commit": "d918ff6fe64313b3fa0e5c6d198e2ea084374135",
+  "base_commit": "7a811ea",
+  "architecture": "x86_64",
+  "ros": "ROS 2 Humble",
+  "host": "MyUbuntu",
+  "image": "laser-weed-full-check:20261103-7a811ea",
+  "image_id": "sha256:c332a4a278d0158baa974ce517cd626a744b843ddd359132defc55bb57517574",
+  "packages": [
+    "crop_row_perception",
+    "global_path_planner",
+    "gnss_localization",
+    "path_tracker",
+    "row_nav_calibration",
+    "row_nav_sdk",
+    "rslidar_msg",
+    "rslidar_sdk",
+    "sim_vehicle",
+    "velocity_planner",
+    "weeder_base",
+    "weeder_msgs"
+  ],
+  "build_succeeded": true,
+  "tests_reported": 282,
+  "errors": 0,
+  "failures": 0,
+  "skipped_count": 27,
+  "skipped": [
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "ThirdParty/clipper2/include/clipper2/clipper.core.h",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "ThirdParty/clipper2/include/clipper2/clipper.engine.h",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "ThirdParty/clipper2/include/clipper2/clipper.h",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "ThirdParty/clipper2/include/clipper2/clipper.minkowski.h",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "ThirdParty/clipper2/include/clipper2/clipper.offset.h",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "ThirdParty/clipper2/include/clipper2/clipper.rectclip.h",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "ThirdParty/clipper2/include/clipper2/clipper.version.h",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "ThirdParty/clipper2/src/clipper.engine.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "ThirdParty/clipper2/src/clipper.offset.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "ThirdParty/clipper2/src/clipper.rectclip.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "include/global_path_planner/bow.hpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "include/global_path_planner/eigen_boost_adaptor.hpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "include/global_path_planner/fault_codes.hpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "include/global_path_planner/global_path_planner.hpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "include/global_path_planner/logging.hpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "src/bow.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "src/bow_detail.hpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "src/global_path_planner.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "src/global_path_planner_main.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "src/logging.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "test/bow_test_facade.hpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "test/test_bow_detail.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "test/test_bow_min_width_direction.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "test/test_bow_parallel.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "test/test_bow_planner.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "test/test_global_path_planner_node.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    },
+    {
+      "file": "global_path_planner/test_results/global_path_planner/cppcheck.xunit.xml",
+      "name": "test/test_path_config.cpp",
+      "reason": "![CDATA[Test Skipped due to cppcheck 2.7 performance issues]]"
+    }
+  ],
+  "simulation": {
+    "path_points": 3090,
+    "valid_pose_messages": 100,
+    "command_messages": 19,
+    "moving_commands": 9,
+    "mode": 1,
+    "displacement_m": 0.20856040640129703,
+    "baseline": [
+      1.5179992200970784,
+      1.7036542241233366
+    ],
+    "elapsed_s": 2.129678072175011,
+    "passed": true
+  },
+  "simulation_uses_global_path": true,
+  "simulation_uses_real_perception": false,
+  "simulation_lidar_gating": false,
+  "arm64_workspace_built": false,
+  "physical_hardware_tested": false,
+  "architecture_exclusion": "aarch64-only qxwz sdk_client_node not linked on x86; sdk_client_source_check compiled",
+  "schema_sources": [
+    "https://raw.githubusercontent.com/ros-infrastructure/rep/master/xsd/package_format3.xsd",
+    "https://raw.githubusercontent.com/ros-infrastructure/rep/master/xsd/package_common.xsd"
+  ],
+  "schemas_sha256": {
+    "package_common.xsd": "941ea8645344f3c4b7b9d7e68799898309d65a18225fa9cbef4169d95d1a3211",
+    "package_format3.xsd": "f096a197ed6d7878984bb2501a55f7f1bd4895d254399fb7857e154bfb644f41"
+  },
+  "source_patch_sha256": "0ee209821f702b6e6ce1157122a583023dc7ed64a6ac0f2f7a26a3455920357c"
+}

@@ -67,7 +67,7 @@ def main() -> None:
     dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_1000)
     board = cv2.aruco.CharucoBoard((7, 10), 0.0565, 0.0422, dictionary)
     board.setLegacyPattern(False)
-    board_image = board.generateImage((700, 1000), marginSize=24, borderBits=1)
+    board_image = board.generateImage((700, 1000), marginSize=0, borderBits=1)
 
     for group, count, offset in (
         ("intrinsic", args.train, 0),

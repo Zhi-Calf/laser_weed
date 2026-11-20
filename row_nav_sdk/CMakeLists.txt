@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(row_nav_sdk VERSION 0.2.0 LANGUAGES C CXX)
+project(row_nav_sdk VERSION 0.2.4 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -35,7 +35,7 @@ if(RK_NAV_WITH_RKNN)
 endif()
 include(cmake/RowNavSDK.cmake)
 if(ROW_NAV_BUILD_TOOLS)
-  foreach(tool bev_calibrate bev_calibration_visualize)
+  foreach(tool bev_calibrate bev_calibration_visualize segmentation_replay onnx_tensor_dump)
     add_executable(${tool} apps/${tool}.cpp)
     target_link_libraries(${tool} PRIVATE rk_nav_core)
     install(TARGETS ${tool} RUNTIME DESTINATION bin)
@@ -49,7 +49,7 @@ if(RK_NAV_BUILD_TESTS)
     tests/unit/camera_calibration_test.cpp tests/unit/centerline_fitter_test.cpp
     tests/unit/dynamic_bev_test.cpp tests/unit/multi_row_test.cpp
     tests/unit/perception_pipeline_test.cpp tests/unit/row_extractor_test.cpp
-    tests/unit/row_temporal_tracker_test.cpp tests/unit/status_test.cpp)
+    tests/unit/row_temporal_tracker_test.cpp tests/unit/status_test.cpp tests/unit/yolov8_postprocess_test.cpp)
   target_include_directories(rk_nav_unit_tests PRIVATE tests)
   target_link_libraries(rk_nav_unit_tests PRIVATE rk_nav_core)
   add_test(NAME rk_nav_unit_tests COMMAND rk_nav_unit_tests)
@@ -61,4 +61,29 @@ if(ROW_NAV_BUILD_LEGACY_CALIBRATION_TOOLS)
     target_link_libraries(${tool} PRIVATE rk_nav_core)
     install(TARGETS ${tool} RUNTIME DESTINATION bin)
   endforeach()
+endif()
+
+if(RK_NAV_BUILD_TESTS AND NOT RK_NAV_WITH_RKNN)
+  # Test-only backend; never install this library.
+  add_library(rk_replay_test_sdk SHARED tests/sdk/fake_segmenter.cpp src/sdk/rk_row_nav_c_api.cpp)
+  target_link_libraries(rk_replay_test_sdk PRIVATE rk_nav_core)
+endif()
+
+set(ROW_NAV_REPLAY_TEST_PYTHON "" CACHE FILEPATH "Optional Python with numpy/opencv for replay integration test")
+if(RK_NAV_BUILD_TESTS AND NOT RK_NAV_WITH_RKNN AND ROW_NAV_REPLAY_TEST_PYTHON)
+  add_test(NAME sdk_replay COMMAND ${ROW_NAV_REPLAY_TEST_PYTHON}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk/test_replay.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/evaluate_replay.py $<TARGET_FILE:rk_replay_test_sdk>)
+endif()
+
+if(RK_NAV_BUILD_TESTS AND ROW_NAV_REPLAY_TEST_PYTHON)
+  add_test(NAME sdk_mask_evaluation COMMAND ${ROW_NAV_REPLAY_TEST_PYTHON}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk/test_mask_evaluation.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/evaluate_masks.py)
+endif()
+
+if(RK_NAV_BUILD_TESTS AND ROW_NAV_REPLAY_TEST_PYTHON)
+  add_test(NAME sdk_board_kit COMMAND ${ROW_NAV_REPLAY_TEST_PYTHON}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk/test_board_kit.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/board/run_regression.py)
 endif()

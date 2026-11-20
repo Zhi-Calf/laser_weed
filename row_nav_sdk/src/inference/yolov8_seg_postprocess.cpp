@@ -82,15 +82,74 @@ LetterboxResult letterboxImage(const cv::Mat& source, int width, int height) {
     return result;
 }
 
+Result<std::vector<cv::Mat>> normalizeOnnxYoloSegOutputs(const std::vector<cv::Mat>& outputs) {
+    if (outputs.size()!=13) return outputs; // 10-output decoder already resolves by unique shape.
+    std::vector<cv::Mat> ordered;
+    for (int spatial : {80,40,20}) {
+        std::vector<cv::Mat> boxes,scores,coefficients;
+        for (const auto& t : outputs) {
+            if (isTensor(t,64,spatial)) boxes.push_back(t);
+            if (isTensor(t,1,spatial)) scores.push_back(t);
+            if (isTensor(t,32,spatial)) coefficients.push_back(t);
+        }
+        if (boxes.size()!=1 || scores.size()!=2 || coefficients.size()!=1)
+            return Status::invalidArgument("ambiguous ONNX single-class output layout");
+        if (!cv::checkRange(scores[0]) || !cv::checkRange(scores[1]) ||
+            cv::norm(scores[0],scores[1],cv::NORM_INF)>1e-5)
+            return Status::invalidArgument("single-class score and sum outputs disagree");
+        ordered.insert(ordered.end(),{boxes[0],scores[0],scores[1],coefficients[0]});
+    }
+    int count=0;
+    for (const auto& t : outputs) if (isTensor(t,32,160)) {ordered.push_back(t);++count;}
+    if (count!=1) return Status::invalidArgument("ambiguous ONNX prototype output");
+    return ordered;
+}
+
+Status validateRockchipYoloV8SegLayout(const std::vector<cv::Mat>& outputs, const ModelConfig& config) {
+    if (config.input_width != 640 || config.input_height != 640)
+        return Status::invalidArgument("Rockchip YOLOv8-seg decoder requires 640x640 input");
+    if (outputs.size()!=10 && outputs.size()!=13)
+        return Status::invalidArgument("Rockchip decoder requires 10 or 13 outputs");
+    if (config.max_detections<=0 || !std::isfinite(config.confidence_threshold) ||
+        config.confidence_threshold<0 || config.confidence_threshold>1 ||
+        !std::isfinite(config.nms_threshold) || config.nms_threshold<0 || config.nms_threshold>1 ||
+        !std::isfinite(config.mask_threshold) || config.mask_threshold<=0 || config.mask_threshold>=1)
+        return Status::invalidArgument("invalid decoder thresholds or detection limit");
+    if (outputs.size()==13) {
+        for (int branch=0;branch<3;++branch) {
+            const int spatial=80>>branch;
+            const auto offset=static_cast<std::size_t>(branch*4);
+            if (!isTensor(outputs[offset],64,spatial) || !isTensor(outputs[offset+1],1,spatial) ||
+                !isTensor(outputs[offset+2],1,spatial) || !isTensor(outputs[offset+3],32,spatial))
+                return Status::invalidArgument("invalid ordered single-class YOLOv8-seg branch");
+        }
+        if (!isTensor(outputs[12],32,160)) return Status::invalidArgument("invalid prototype tensor");
+    } else {
+        for (const int spatial : {80,40,20}) for (const int channels : {64,1,32}) {
+            const auto count=std::count_if(outputs.begin(),outputs.end(),[&](const cv::Mat& tensor) {
+                return isTensor(tensor,channels,spatial);
+            });
+            if (count!=1) return Status::invalidArgument("missing or duplicate single-class YOLOv8-seg tensor");
+        }
+        if (std::count_if(outputs.begin(),outputs.end(),[](const cv::Mat& t){return isTensor(t,32,160);})!=1)
+            return Status::invalidArgument("invalid prototype tensor");
+    }
+    return Status::ok();
+}
+
 Result<SegmentationResult> decodeRockchipYoloV8Seg(
     const std::vector<cv::Mat>& outputs, const Frame& frame, const ModelConfig& config,
     const LetterboxResult& transform, double inference_ms) {
-    if (outputs.size() != 10 && outputs.size() != 13) {
-        return Status::invalidArgument("Rockchip decoder expects 10 or 13 outputs, got " +
-                                       std::to_string(outputs.size()));
-    }
-    if (config.max_detections <= 0) {
-        return Status::invalidArgument("max_detections must be greater than zero");
+    const auto layout = validateRockchipYoloV8SegLayout(outputs,config);
+    if (!layout.isOk()) return layout;
+    if (frame.image.empty() || !std::isfinite(transform.scale) || transform.scale<=0 ||
+        transform.left<0 || transform.top<0 || transform.resized_width<=0 || transform.resized_height<=0 ||
+        transform.left+transform.resized_width>config.input_width ||
+        transform.top+transform.resized_height>config.input_height)
+        return Status::invalidArgument("invalid frame or letterbox transform");
+    for (const auto& tensor : outputs) {
+        if (!tensor.isContinuous() || !cv::checkRange(tensor,true,nullptr))
+            return Status::invalidArgument("non-finite or non-contiguous model output");
     }
 
     const cv::Mat* proto = nullptr;
@@ -155,16 +214,18 @@ Result<SegmentationResult> decodeRockchipYoloV8Seg(
         ++branch;
     }
 
-    std::vector<cv::Rect> nms_boxes;
+    std::vector<cv::Rect2d> nms_boxes;
     std::vector<float> nms_scores;
     for (const auto& candidate : candidates) {
-        nms_boxes.emplace_back(static_cast<int>(candidate.box.x), static_cast<int>(candidate.box.y),
-                               static_cast<int>(candidate.box.width), static_cast<int>(candidate.box.height));
+        nms_boxes.push_back(candidate.box);
         nms_scores.push_back(candidate.score);
     }
     std::vector<int> keep;
     cv::dnn::NMSBoxes(nms_boxes, nms_scores, config.confidence_threshold,
-                      config.nms_threshold, keep, 1.0F, config.max_detections);
+                      config.nms_threshold, keep, 1.0F, 0);
+    // OpenCV top_k truncates BEFORE suppression, unlike max_det in Ultralytics.
+    if (keep.size()>static_cast<std::size_t>(config.max_detections))
+        keep.resize(static_cast<std::size_t>(config.max_detections));
 
     SegmentationResult result;
     result.sequence = frame.sequence;
@@ -172,7 +233,17 @@ Result<SegmentationResult> decodeRockchipYoloV8Seg(
     result.combined_mask = cv::Mat::zeros(frame.image.size(), CV_8UC1);
     const int proto_height = proto->size[2];
     const int proto_width = proto->size[3];
-    cv::Mat combined_proto = cv::Mat::zeros(proto_height, proto_width, CV_8UC1);
+    const float logit_threshold=std::log(config.mask_threshold/(1.0F-config.mask_threshold));
+    // Match native reference: remove prototype padding, interpolate LOGITS to
+    // original resolution, crop in original coordinates, then threshold.
+    const double gain=std::min(static_cast<double>(proto_height)/frame.image.rows,
+                               static_cast<double>(proto_width)/frame.image.cols);
+    const double pad_x=(proto_width-frame.image.cols*gain)/2;
+    const double pad_y=(proto_height-frame.image.rows*gain)/2;
+    const int left=static_cast<int>(pad_x), top=static_cast<int>(pad_y);
+    const int right=static_cast<int>(proto_width-pad_x),bottom=static_cast<int>(proto_height-pad_y);
+    if (right<=left || bottom<=top) return Status::invalidArgument("empty prototype content");
+    const cv::Rect content(left,top,right-left,bottom-top);
     for (const int index : keep) {
         const auto& candidate = candidates[static_cast<std::size_t>(index)];
         cv::Mat logits(proto_height, proto_width, CV_32F, cv::Scalar(0));
@@ -188,63 +259,27 @@ Result<SegmentationResult> decodeRockchipYoloV8Seg(
         instance.box = toOriginalBox(candidate.box, transform, frame.image.size());
         instance.class_id = 0;
         instance.confidence = candidate.score;
+        cv::Mat original_logits;
+        cv::resize(logits(content),original_logits,frame.image.size(),0,0,cv::INTER_LINEAR);
+        const auto& box=candidate.box;
+        // crop_mask uses integer pixel coordinates >= left/top and < right/bottom.
+        const double x1=std::clamp((box.x-transform.left)/transform.scale,0.,double(frame.image.cols));
+        const double y1=std::clamp((box.y-transform.top)/transform.scale,0.,double(frame.image.rows));
+        const double x2=std::clamp((box.x+box.width-transform.left)/transform.scale,0.,double(frame.image.cols));
+        const double y2=std::clamp((box.y+box.height-transform.top)/transform.scale,0.,double(frame.image.rows));
+        const cv::Rect roi(static_cast<int>(std::ceil(x1)),static_cast<int>(std::ceil(y1)),
+            std::max(0,static_cast<int>(std::ceil(x2))-static_cast<int>(std::ceil(x1))),
+            std::max(0,static_cast<int>(std::ceil(y2))-static_cast<int>(std::ceil(y1))));
+        cv::Mat binary;
+        if (roi.area()>0) {
+            binary=original_logits(roi)>logit_threshold;
+            cv::bitwise_or(result.combined_mask(roi),binary,result.combined_mask(roi));
+        }
         if (config.materialize_instance_masks) {
-            cv::Mat model_mask;
-            cv::resize(logits, model_mask, cv::Size(config.input_width, config.input_height),
-                       0, 0, cv::INTER_LINEAR);
-            cv::exp(-model_mask, model_mask);
-            model_mask = 1.0 / (1.0 + model_mask);
-            cv::Mat binary = model_mask > config.mask_threshold;
-            const cv::Rect model_bounds(0, 0, config.input_width, config.input_height);
-            const cv::Rect clipped = nms_boxes[static_cast<std::size_t>(index)] & model_bounds;
-            cv::Mat cropped = cv::Mat::zeros(binary.size(), CV_8UC1);
-            if (clipped.area() > 0) binary(clipped).copyTo(cropped(clipped));
-            const cv::Rect content(transform.left, transform.top,
-                                   transform.resized_width, transform.resized_height);
-            cv::resize(cropped(content), instance.mask, frame.image.size(),
-                       0, 0, cv::INTER_NEAREST);
-            cv::bitwise_or(result.combined_mask, instance.mask, result.combined_mask);
-        } else {
-            cv::Mat probability;
-            cv::exp(-logits, probability);
-            probability = 1.0 / (1.0 + probability);
-            cv::Mat binary = probability > config.mask_threshold;
-            const double scale_x = static_cast<double>(proto_width) /
-                                   static_cast<double>(config.input_width);
-            const double scale_y = static_cast<double>(proto_height) /
-                                   static_cast<double>(config.input_height);
-            const auto& box = candidate.box;
-            const int proto_left = static_cast<int>(std::floor(box.x * scale_x));
-            const int proto_top = static_cast<int>(std::floor(box.y * scale_y));
-            const int proto_right = static_cast<int>(std::ceil((box.x + box.width) * scale_x));
-            const int proto_bottom = static_cast<int>(std::ceil((box.y + box.height) * scale_y));
-            cv::Rect proto_box(proto_left, proto_top,
-                               proto_right - proto_left, proto_bottom - proto_top);
-            proto_box &= cv::Rect(0, 0, proto_width, proto_height);
-            if (proto_box.area() > 0) {
-                cv::bitwise_or(combined_proto(proto_box), binary(proto_box),
-                               combined_proto(proto_box));
-            }
+            instance.mask=cv::Mat::zeros(frame.image.size(),CV_8UC1);
+            if (roi.area()>0) binary.copyTo(instance.mask(roi));
         }
         result.instances.push_back(std::move(instance));
-    }
-    if (!config.materialize_instance_masks && !keep.empty()) {
-        const double proto_scale_x = static_cast<double>(proto_width) /
-                                     static_cast<double>(config.input_width);
-        const double proto_scale_y = static_cast<double>(proto_height) /
-                                     static_cast<double>(config.input_height);
-        const int left = std::clamp(static_cast<int>(std::floor(
-            static_cast<double>(transform.left) * proto_scale_x)), 0, proto_width - 1);
-        const int top = std::clamp(static_cast<int>(std::floor(
-            static_cast<double>(transform.top) * proto_scale_y)), 0, proto_height - 1);
-        const int right = std::clamp(static_cast<int>(std::ceil(
-            static_cast<double>(transform.left + transform.resized_width) * proto_scale_x)),
-            left + 1, proto_width);
-        const int bottom = std::clamp(static_cast<int>(std::ceil(
-            static_cast<double>(transform.top + transform.resized_height) * proto_scale_y)),
-            top + 1, proto_height);
-        cv::resize(combined_proto(cv::Rect(left, top, right - left, bottom - top)),
-                   result.combined_mask, frame.image.size(), 0, 0, cv::INTER_NEAREST);
     }
     result.inference_ms = inference_ms;
     return result;
