@@ -94,6 +94,8 @@ add_executable(gnss_driver_node
   src/gnss_driver_main.cpp
   src/serial_port.cpp
   src/giavp_parser.cpp
+  src/inspvaa_parser.cpp
+  src/gga_status_parser.cpp
   src/gnss_driver.cpp
 )
 
@@ -183,6 +185,7 @@ if(QXWZ_SDK_AVAILABLE)
   target_compile_definitions(sdk_client_node PRIVATE
     SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
   )
+
 else()
   # 没有匹配的 aarch64 库时仍编译一次源码，尽早发现 SDK 头文件/API 漂移。
   add_library(sdk_client_source_check OBJECT
@@ -233,6 +236,7 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/check_params.py
       --src ${CMAKE_CURRENT_SOURCE_DIR}/src
       --yaml ${CMAKE_CURRENT_SOURCE_DIR}/config/gnss_driver.yaml
+      ${CMAKE_CURRENT_SOURCE_DIR}/config/nav3120_driver.yaml
       ${CMAKE_CURRENT_SOURCE_DIR}/config/ntrip_client.yaml
       ${CMAKE_CURRENT_SOURCE_DIR}/config/sdk_client.yaml
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO)
@@ -261,6 +265,43 @@ if(BUILD_TESTING)
   ament_add_gtest(test_gga_parser test/test_gga_parser.cpp src/gga_parser.cpp)
   target_include_directories(test_gga_parser PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+
+  ament_add_gtest(test_nav3120_parsers
+    test/test_nav3120_parsers.cpp
+    src/inspvaa_parser.cpp
+    src/gga_status_parser.cpp
+  )
+  target_include_directories(test_nav3120_parsers PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+
+  ament_add_gtest(test_nav3120_driver
+    test/test_nav3120_driver.cpp
+    src/gnss_driver.cpp
+    src/serial_port.cpp
+    src/giavp_parser.cpp
+    src/inspvaa_parser.cpp
+    src/gga_status_parser.cpp
+  )
+  target_include_directories(test_nav3120_driver PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${EIGEN3_INCLUDE_DIR}
+  )
+  ament_target_dependencies(test_nav3120_driver
+    rclcpp
+    sensor_msgs
+    geometry_msgs
+    nav_msgs
+    tf2
+    tf2_ros
+    tf2_geometry_msgs
+    weeder_msgs
+  )
+  target_link_libraries(test_nav3120_driver
+    gnss_logging
+    ${GEOGRAPHIC_LIBRARY}
+    spdlog::spdlog
   )
 endif()
 

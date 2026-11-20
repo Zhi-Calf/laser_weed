@@ -7,6 +7,7 @@ import sys
 
 EXPECTED_NODES = {
     "gnss_driver.yaml": "gnss_driver",
+    "nav3120_driver.yaml": "gnss_driver",
     "ntrip_client.yaml": "ntrip_client",
     "sdk_client.yaml": "sdk_client",
 }

@@ -23,6 +23,27 @@ ros2 launch gnss_localization localization.launch.py
 ros2 launch tractor_bringup bringup.launch.py
 ```
 
+## NAV3120 INSPVAA + GGA 输入
+
+`gnss_driver` 默认仍解析原设备的 `$GIAVP`。NAV3120 使用
+`input_protocol: inspvaa_gga`，从同一串口同时读取：
+
+- `INSPVAA`：融合经纬高、东北天速度、roll/pitch/yaw、GPS 周/周内秒和 INS 状态；
+- `GNGGA`：卫星数、RTK Fixed/Float 状态、HDOP 和差分龄期。
+
+融合位置和姿态来自 INSPVAA；GGA 只覆盖卫星数、定位质量与 `Pose.valid`。
+GGA 无解或超过 `gga_timeout_sec` 未更新时，节点继续发布融合位置用于诊断，但
+`/gnss_driver/pose.valid=false` 且卫星数清零。
+
+启动命令：
+
+```bash
+ros2 launch gnss_localization nav3120_localization.launch.py
+```
+
+默认配置为 `/dev/ttyS9`、115200、10 Hz INSPVAA + GGA。部署前必须按实车修改
+`config/nav3120_driver.yaml` 中的 ENU 原点、杆臂和航向安装偏角。
+
 **ENU 原点（datum）优先取 `gnss_driver.yaml` 的 `origin_lat/origin_lon/origin_alt`**。
 这三个值必须与 `global_path_planner.yaml` 中 `poly` 的第一个顶点完全一致：
 规划器用该顶点做 ENU 投影，`gnss_driver` 用同一坐标把 RTK 位置投影成

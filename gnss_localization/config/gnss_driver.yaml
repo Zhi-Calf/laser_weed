@@ -2,6 +2,7 @@ gnss_driver:
   ros__parameters:
     serial_port: "/dev/ttyUSB0"
     baud_rate: 115200
+    input_protocol: "giavp"    # giavp 或 inspvaa_gga
     frame_id: "gnss_link"
 
     # ENU 原点（首个路径点）。必须与
@@ -15,6 +16,7 @@ gnss_driver:
     gnss_log_interval: 500      # GNSS 状态日志条数间隔 (10Hz 下 500 条 = 50s)
     pose_log_interval: 10       # 位姿日志条数间隔 (10Hz 下 10 条 = 1s)
     giavp_timeout_sec: 1.0      # 超过该时长无有效 GIAVP 帧即记录超时告警
+    gga_timeout_sec: 1.5        # inspvaa_gga 模式: 超过该时长无 GGA 质量帧则位姿无效
     use_gps_timestamp: true     # 使用 GPSWeek/GPSTime 作为传感器消息时间
     gps_utc_leap_seconds: 18    # 2026 年 GPS 与 UTC 的闰秒差
 

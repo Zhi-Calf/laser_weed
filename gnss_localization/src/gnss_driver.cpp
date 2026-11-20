@@ -68,9 +68,11 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   if (!serial_.open(serial_port_path_, baud_rate_)) {
     throw std::runtime_error("无法打开 GNSS 串口: " + serial_port_path_);
   }
-  has_giavp_       = false;
-  last_status_     = 0;
-  last_giavp_time_ = std::chrono::steady_clock::now();
+  has_navigation_       = false;
+  has_gga_              = false;
+  last_status_          = 0;
+  last_navigation_time_ = std::chrono::steady_clock::now();
+  last_gga_time_        = std::chrono::steady_clock::now();
   SPDLOG_INFO("串口已打开: {}", serial_port_path_);
 
   rclcpp::QoS qos_sensor = rclcpp::SensorDataQoS(rclcpp::KeepLast(5));
@@ -101,13 +103,17 @@ void GnssDriver::updateHealth() {
     return;
   }
 
-  const double silent_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - last_giavp_time_).count();
+  const double silent_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - last_navigation_time_).count();
   if (silent_seconds >= giavp_timeout_sec_) {
-    updateHealthState(HealthState::kGiavpTimeout, "GIAVP 数据超时");
+    updateHealthState(HealthState::kNavigationTimeout, "GNSS 导航数据超时");
     return;
   }
-  if (!has_giavp_) {
-    updateHealthState(HealthState::kWaiting, "GNSS 串口已打开，等待 GIAVP 数据");
+  if (!has_navigation_) {
+    updateHealthState(HealthState::kWaiting, "GNSS 串口已打开，等待导航数据");
+    return;
+  }
+  if (input_protocol_ == "inspvaa_gga" && !ggaFresh()) {
+    updateHealthState(HealthState::kLowStatus, "GGA 数据缺失或超时，RTK 状态不可用");
     return;
   }
   if (last_status_ != kStatusRtkFixed) {
@@ -160,6 +166,7 @@ void GnssDriver::loadLogParameters() {
 void GnssDriver::loadParameters() {
   declare_parameter("serial_port", "/dev/ttyS0");
   declare_parameter("baud_rate", 115200);
+  declare_parameter("input_protocol", "giavp");
   declare_parameter("frame_id", "gnss_link");
   declare_parameter("origin_lat", std::numeric_limits<double>::quiet_NaN());
   declare_parameter("origin_lon", std::numeric_limits<double>::quiet_NaN());
@@ -176,11 +183,13 @@ void GnssDriver::loadParameters() {
   declare_parameter("gnss_log_interval", 500);
   declare_parameter("pose_log_interval", 10);
   declare_parameter("giavp_timeout_sec", 1.0);
+  declare_parameter("gga_timeout_sec", 1.5);
   declare_parameter("use_gps_timestamp", true);
   declare_parameter("gps_utc_leap_seconds", 18);
 
   serial_port_path_       = get_parameter("serial_port").as_string();
   baud_rate_              = get_parameter("baud_rate").as_int();
+  input_protocol_         = get_parameter("input_protocol").as_string();
   frame_id_               = get_parameter("frame_id").as_string();
   const double origin_lat = get_parameter("origin_lat").as_double();
   const double origin_lon = get_parameter("origin_lon").as_double();
@@ -197,8 +206,14 @@ void GnssDriver::loadParameters() {
   gnss_log_interval_      = static_cast<int>(std::max<int64_t>(1, get_parameter("gnss_log_interval").as_int()));
   pose_log_interval_      = static_cast<int>(std::max<int64_t>(1, get_parameter("pose_log_interval").as_int()));
   giavp_timeout_sec_      = PositiveOr("giavp_timeout_sec", get_parameter("giavp_timeout_sec").as_double(), 1.0);
+  gga_timeout_sec_        = PositiveOr("gga_timeout_sec", get_parameter("gga_timeout_sec").as_double(), 1.5);
   use_gps_timestamp_      = get_parameter("use_gps_timestamp").as_bool();
   gps_utc_leap_seconds_   = static_cast<int>(std::max<int64_t>(0, get_parameter("gps_utc_leap_seconds").as_int()));
+
+  if (input_protocol_ != "giavp" && input_protocol_ != "inspvaa_gga") {
+    SPDLOG_WARN("input_protocol={} 非法, 使用默认 giavp", input_protocol_);
+    input_protocol_ = "giavp";
+  }
 
   // ---- ENU 原点: 优先使用 YAML 配置；未配置时沿用首次 RTK 固定解 ----
   const bool origin_any   = !std::isnan(origin_lat) || !std::isnan(origin_lon) || !std::isnan(origin_alt);
@@ -218,7 +233,7 @@ void GnssDriver::loadParameters() {
 
   // 详细打印所有参数
   SPDLOG_INFO("========== GNSS 驱动参数加载 ==========");
-  SPDLOG_INFO("串口: {}, 波特率: {}, frame_id: {}", serial_port_path_, baud_rate_, frame_id_);
+  SPDLOG_INFO("串口: {}, 波特率: {}, 输入协议: {}, frame_id: {}", serial_port_path_, baud_rate_, input_protocol_, frame_id_);
   SPDLOG_INFO("ENU 原点来源: {}", datum_from_config_ ? "YAML" : "首次 RTK 固定解");
   SPDLOG_INFO("航向: std={:.2f}°", heading_std_deg_);
   SPDLOG_INFO("位置精度 (m): 固定解={:.3f} 浮点解={:.3f} RTD={:.3f} 单点={:.3f}", acc_rtk_fixed_, acc_rtk_float_, acc_rtd_, acc_spp_);
@@ -231,6 +246,7 @@ void GnssDriver::loadParameters() {
   SPDLOG_INFO("debug_giavp: {}", debug_giavp_ ? "是" : "否");
   SPDLOG_INFO("GNSS 日志间隔: {} 条 (10Hz 下约 {:.1f}s), 位姿日志间隔: {} 条 (10Hz 下约 {:.1f}s)", gnss_log_interval_, gnss_log_interval_ / 10.0, pose_log_interval_, pose_log_interval_ / 10.0);
   SPDLOG_INFO("GIAVP 超时: {:.2f}s", giavp_timeout_sec_);
+  SPDLOG_INFO("GGA 质量超时: {:.2f}s", gga_timeout_sec_);
   SPDLOG_INFO("GPS 时间戳: {}, UTC 闰秒: {}s", use_gps_timestamp_ ? "启用" : "禁用", gps_utc_leap_seconds_);
   SPDLOG_INFO("日志级别: {}, 目录: {}, 文件上限: {} MB, 文件数量: {}, 控制台: {}", log_level_, log_dir_, log_file_size_mb_, log_file_count_, log_enable_console_ ? "是" : "否");
   SPDLOG_INFO("=========================================");
@@ -267,14 +283,78 @@ void GnssDriver::processLine(const std::string& line) {
     SPDLOG_DEBUG("收到原始报文: {}", preview);
   }
 
+  if (input_protocol_ == "inspvaa_gga") {
+    if (gga_status_parser_.parse(line)) {
+      last_gga_status_ = gga_status_parser_.data();
+      last_gga_time_   = std::chrono::steady_clock::now();
+      has_gga_         = true;
+      return;
+    }
+    if (inspvaa_parser_.parse(line)) {
+      last_navigation_time_ = std::chrono::steady_clock::now();
+      has_navigation_       = true;
+      const GiavpData merged = mergeInspvaaWithGga(inspvaa_parser_.data());
+      last_status_            = merged.status;
+      handleGiavp(merged);
+    }
+    return;
+  }
+
   if (!parser_.parse(line))
     return;
 
-  last_giavp_time_ = std::chrono::steady_clock::now();
-  has_giavp_       = true;
-  last_status_     = parser_.data().status;
+  last_navigation_time_ = std::chrono::steady_clock::now();
+  has_navigation_       = true;
+  last_status_          = parser_.data().status;
 
   handleGiavp(parser_.data());
+}
+
+// 判断 GGA 质量数据是否在有效期内。
+bool GnssDriver::ggaFresh() const {
+  if (!has_gga_) {
+    return false;
+  }
+  const double age = std::chrono::duration<double>(std::chrono::steady_clock::now() - last_gga_time_).count();
+  return age < gga_timeout_sec_;
+}
+
+// 将 INSPVAA 的融合导航与 GGA 的定位质量合并。
+// 输入:
+//   source : INSPVAA 融合位置、速度和姿态
+// 返回:
+//   可供现有发布链路使用的统一数据；GGA 缺失或超时时 status=0
+GiavpData GnssDriver::mergeInspvaaWithGga(const InspvaaData& source) const {
+  GiavpData merged;
+  merged.gps_week         = static_cast<int>(source.gps_week);
+  merged.gps_time_sec     = source.gps_time_sec;
+  merged.heading_deg      = source.heading_deg;
+  merged.pitch_deg        = source.pitch_deg;
+  merged.roll_deg         = source.roll_deg;
+  merged.latitude_deg     = source.latitude_deg;
+  merged.longitude_deg    = source.longitude_deg;
+  merged.altitude_m       = source.height_m;
+  merged.ve_ms            = source.ve_ms;
+  merged.vn_ms            = source.vn_ms;
+  merged.vu_ms            = source.vu_ms;
+  merged.speed_status     = 0;
+  merged.vehicle_speed_kmh = 0.0;
+  merged.acc_x             = 0.0;
+  merged.acc_y             = 0.0;
+  merged.acc_z             = 0.0;
+  merged.gyro_x_dps        = 0.0;
+  merged.gyro_y_dps        = 0.0;
+  merged.gyro_z_dps        = 0.0;
+  if (ggaFresh()) {
+    merged.status = last_gga_status_.fix_quality;
+    merged.nsv1   = last_gga_status_.satellites;
+  } else {
+    merged.status = 0;
+    merged.nsv1   = 0;
+  }
+  merged.nsv2  = 0;
+  merged.valid = merged.status != 0;
+  return merged;
 }
 
 // 处理一帧有效 GIAVP 数据并刷新输出。
@@ -448,7 +528,13 @@ void GnssDriver::publishFix(const GiavpData& d) {
 // 输出:
 //   /gnss_driver/pose、pose_stamped、odom_raw 和 TF。
 void GnssDriver::publishPose(const GiavpData& d) {
-  if (!positionUsable(d))
+  const bool finite_position = std::isfinite(d.latitude_deg) && std::isfinite(d.longitude_deg) && std::isfinite(d.altitude_m);
+  if (!finite_position) {
+    return;
+  }
+  // INSPVAA 模式即使 RTK 非固定也发布融合位置，但 valid=false；否则下游会继续
+  // 使用上一帧 valid=true，无法及时感知固定解丢失。
+  if (d.status == 0 && input_protocol_ != "inspvaa_gga")
     return;
 
   double dev_x = 0.0, dev_y = 0.0, dev_z = 0.0;

@@ -16,6 +16,8 @@
 #include <string>
 
 #include "gnss_localization/giavp_parser.hpp"
+#include "gnss_localization/gga_status_parser.hpp"
+#include "gnss_localization/inspvaa_parser.hpp"
 #include "gnss_localization/serial_port.hpp"
 #include "weeder_msgs/msg/pose.hpp"
 namespace gnss_localization {
@@ -26,7 +28,7 @@ constexpr int kStatusRtkFixed = 4;   // RTK 固定解
 
 /// 双天线 MEMS 组合导航 (INS/GNSS) 驱动节点。
 ///
-/// 从串口读取 $GIAVP 语句, 发布以下话题 (均为节点相对名, 完整名为
+/// 从串口读取 $GIAVP，或 NAV3120 的 INSPVAA + GGA，发布以下话题 (均为节点相对名, 完整名为
 /// /gnss_driver/<topic>):
 ///   ~/fix            原始经纬度 (设备 INS 解算, NavSatFix)
 ///   ~/pose           修正 ENU 位姿 (weeder_msgs/Pose, 含姿态/卫星数/有效性/速度)
@@ -50,7 +52,7 @@ private:
     kWaiting,
     kOk,
     kLowStatus,
-    kGiavpTimeout,
+    kNavigationTimeout,
     kSerial,
   };
 
@@ -60,6 +62,10 @@ private:
   void processLine(const std::string& line);
   // 处理一帧有效的 GIAVP 数据。
   void handleGiavp(const GiavpData& d);
+  // 将 INSPVAA 融合导航和最新 GGA 质量合并为统一数据。
+  GiavpData mergeInspvaaWithGga(const InspvaaData& d) const;
+  // 判断最近一帧 GGA 质量数据是否在有效期内。
+  bool ggaFresh() const;
   // 根据数据新鲜度与定位质量更新健康状态。
   void updateHealth();
   // 更新健康状态并限制重复日志。
@@ -107,12 +113,15 @@ private:
 private:
   SerialPort serial_;
   GiavpParser parser_;
+  InspvaaParser inspvaa_parser_;
+  GgaStatusParser gga_status_parser_;
   std::unique_ptr<GeographicLib::LocalCartesian> datum_proj_;
   mutable std::mutex datum_mutex_;   // 保护 datum_proj_ (防御性: 当前读写均在 timer 回调线程, 无跨线程竞争)
 
 private:
   std::string serial_port_path_;       // 串口设备号
   int baud_rate_{115200};              // 串口波特率
+  std::string input_protocol_{"giavp"};   // 输入协议: giavp 或 inspvaa_gga
   std::string frame_id_;               // 发布的坐标系
   double heading_std_deg_{0.2};        // 航向标准差 (deg)
   double acc_rtk_fixed_{0.02};         // rtk 固定解
@@ -126,6 +135,7 @@ private:
   int gnss_log_interval_{500};         // GNSS 状态日志条数间隔
   int pose_log_interval_{10};          // 位姿日志条数间隔
   double giavp_timeout_sec_{1.0};      // 无有效 GIAVP 数据超时
+  double gga_timeout_sec_{1.5};        // INSPVAA 模式下无有效 GGA 质量数据超时
   bool use_gps_timestamp_{true};       // 是否使用 GIAVP GPS 时间戳
   int gps_utc_leap_seconds_{18};       // GPS 与 UTC 当前闰秒差
 
@@ -145,10 +155,13 @@ private:
   double datum_alt_m_{0.0};                                     // datum 高程
   bool datum_from_config_{false};                               // ENU 原点是否来自 YAML
   bool first_heading_logged_{false};                            // 是否已打印过首个航向日志
-  bool has_giavp_{false};                                       // 本次串口连接是否收到过有效帧
+  bool has_navigation_{false};                                  // 是否收到过有效导航帧
+  bool has_gga_{false};                                         // 是否收到过有效 GGA 质量帧
   int last_status_{0};                                          // 最近一帧解算状态
   HealthState last_health_state_{HealthState::kWaiting};        // 最近健康状态
-  std::chrono::steady_clock::time_point last_giavp_time_{};     // 最近有效帧时刻
+  std::chrono::steady_clock::time_point last_navigation_time_{};   // 最近有效导航帧时刻
+  std::chrono::steady_clock::time_point last_gga_time_{};          // 最近有效 GGA 时刻
+  GgaFixStatus last_gga_status_;                                // 最近一帧 GGA 质量
 };
 
 }   // namespace gnss_localization
