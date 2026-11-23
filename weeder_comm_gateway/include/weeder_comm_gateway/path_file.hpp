@@ -13,7 +13,7 @@
 #include <cstdint>
 #include <string>
 
-namespace app_bridge::path_file {
+namespace weeder_comm_gateway::path_file {
 
 struct Summary {
   std::string task_name;
@@ -27,4 +27,4 @@ uint32_t Crc32Ieee(const std::string& data);
 // text 是文件全文。成功返回 true 并填 out; 失败返回 false, err 为中文原因 (直接回给 APP)。
 bool Validate(const std::string& text, Summary& out, std::string& err);
 
-}   // namespace app_bridge::path_file
+}   // namespace weeder_comm_gateway::path_file

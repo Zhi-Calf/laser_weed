@@ -3,9 +3,9 @@
 #include <cmath>
 #include <limits>
 
-#include "app_bridge/farm_device.hpp"
+#include "weeder_comm_gateway/farm_device.hpp"
 
-using namespace app_bridge::farm;
+using namespace weeder_comm_gateway::farm;
 
 namespace {
 

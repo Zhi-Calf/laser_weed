@@ -1,4 +1,4 @@
-#include "app_bridge/http_bridge_node.hpp"
+#include "weeder_comm_gateway/http_bridge_node.hpp"
 
 #include <curl/curl.h>
 #include <fcntl.h>
@@ -16,16 +16,16 @@
 #include <system_error>
 #include <utility>
 
-#include "app_bridge/logging.hpp"
-#include "app_bridge/path_file.hpp"
+#include "weeder_comm_gateway/logging.hpp"
+#include "weeder_comm_gateway/path_file.hpp"
 
-namespace app_bridge {
+namespace weeder_comm_gateway {
 
 using json = nlohmann::json;
 
 namespace {
 
-constexpr const char* kNodeName = "http_bridge";
+constexpr const char* kNodeName = "http_bridge_node";
 constexpr const char* kApiPrefix = "/api/v1";
 
 void Reply(httplib::Response& res, int status, const json& body) {
@@ -400,4 +400,4 @@ void HttpBridgeNode::handleGetPath(const httplib::Request& /*req*/, httplib::Res
   Reply(res, 200, {{"success", true}, {"message", ""}, {"points", std::move(points)}});
 }
 
-}   // namespace app_bridge
+}   // namespace weeder_comm_gateway

@@ -20,10 +20,10 @@
 #include <utility>
 #include <vector>
 
-#include "app_bridge/farm_device.hpp"
-#include "app_bridge/mqtt_client.hpp"
+#include "weeder_comm_gateway/farm_device.hpp"
+#include "weeder_comm_gateway/mqtt_client.hpp"
 
-namespace app_bridge {
+namespace weeder_comm_gateway {
 
 // ---- 对接的 ROS 接口 (绝对名, 与各节点的实际发布/服务名一致) ----
 inline constexpr const char* kWorkModeTopic          = "/work_mode";
@@ -161,4 +161,4 @@ private:
   std::optional<std::string> implement_state_;
 };
 
-}   // namespace app_bridge
+}   // namespace weeder_comm_gateway

@@ -1,4 +1,4 @@
-#include "app_bridge/logging.hpp"
+#include "weeder_comm_gateway/logging.hpp"
 
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -13,7 +13,7 @@
 #include <system_error>
 #include <vector>
 
-namespace app_bridge {
+namespace weeder_comm_gateway {
 
 namespace {
 
@@ -99,4 +99,4 @@ void ConfigureLogger(const std::string& name, const std::string& log_dir, size_t
   }
 }
 
-}   // namespace app_bridge
+}   // namespace weeder_comm_gateway

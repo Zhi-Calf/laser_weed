@@ -1,4 +1,4 @@
-#include "app_bridge/mqtt_bridge_node.hpp"
+#include "weeder_comm_gateway/mqtt_bridge_node.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -6,9 +6,9 @@
 #include <thread>
 #include <utility>
 
-#include "app_bridge/logging.hpp"
+#include "weeder_comm_gateway/logging.hpp"
 
-namespace app_bridge {
+namespace weeder_comm_gateway {
 
 using weeder_msgs::msg::CalibrationResult;
 using weeder_msgs::msg::ChassisState;
@@ -19,7 +19,7 @@ using weeder_msgs::srv::CalibrationCommand;
 
 namespace {
 
-constexpr const char* kNodeName = "mqtt_bridge";
+constexpr const char* kNodeName = "mqtt_bridge_node";
 constexpr int kQosAtMostOnce  = 0;
 constexpr int kQosAtLeastOnce = 1;
 
@@ -539,4 +539,4 @@ void MqttBridgeNode::onCalibrationResult(const CalibrationResult::SharedPtr msg)
                farm::CalibrationStatusPayload(farm::CalibrationTypeFromRos(msg->calibration_type), state, calibration_command_id_, msg->message, std::move(result)), true);
 }
 
-}   // namespace app_bridge
+}   // namespace weeder_comm_gateway

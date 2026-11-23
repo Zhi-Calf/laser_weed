@@ -1,6 +1,6 @@
 # 农具（PTO 与三点悬挂）当前生效模式。
 #
-# app_bridge 从 /implement/mode 订阅该消息，用于 APP 遥测中的农具状态。
+# weeder_comm_gateway 从 /implement/mode 订阅该消息，用于 APP 遥测中的农具状态。
 # 本消息只报告已经生效的状态，不表示切换请求是否被受理。
 
 std_msgs/Header header

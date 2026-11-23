@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""mqtt_bridge: 农机 <-> robot-cloud IoT 网关的 MQTT 桥 (FarmDevice v1, robot-cloud docs/IoT接口文档.md)。
+"""mqtt_bridge_node: 农机 <-> robot-cloud IoT 网关的 MQTT 桥。
 
-    ros2 launch app_bridge mqtt_bridge.launch.py
-    ros2 launch app_bridge mqtt_bridge.launch.py mqtt_host:=1.94.199.140 mqtt_port:=11883 \
+    ros2 launch weeder_comm_gateway mqtt_bridge.launch.py
+    ros2 launch weeder_comm_gateway mqtt_bridge.launch.py mqtt_host:=1.94.199.140 mqtt_port:=11883 \
         device_name:=robot_001 device_id:=111 mqtt_bridge_config_file:=/etc/agri/mqtt_bridge.yaml
 
 device_secret 没有对应的 launch 参数: 命令行参数会出现在 ps 里。把它写进机器上单独的 yaml,
@@ -31,14 +31,14 @@ _INT_ARGS = ('mqtt_port',)
 
 def _setup(context, *args, **kwargs):
     default_config = os.path.join(
-        get_package_share_directory('app_bridge'), 'config', 'mqtt_bridge.yaml')
+        get_package_share_directory('weeder_comm_gateway'), 'config', 'mqtt_bridge.yaml')
 
     cfg = LaunchConfiguration('mqtt_bridge_config_file').perform(context).strip()
     if not cfg:
         cfg = default_config
     if not os.path.isfile(cfg):
         # 明确指定了却不存在, 不退回包默认值: 操作员是特意要求它的。
-        return [LogInfo(msg=f'[mqtt_bridge] FATAL: 配置文件不存在: {cfg}')]
+        return [LogInfo(msg=f'[mqtt_bridge_node] FATAL: 配置文件不存在: {cfg}')]
 
     overrides = {}
     for name in _OVERRIDE_ARGS:
@@ -47,11 +47,11 @@ def _setup(context, *args, **kwargs):
             overrides[name] = int(value) if name in _INT_ARGS else value
 
     return [
-        LogInfo(msg=f'[mqtt_bridge] 配置文件: {cfg}'),
+        LogInfo(msg=f'[mqtt_bridge_node] 配置文件: {cfg}'),
         Node(
-            package='app_bridge',
+            package='weeder_comm_gateway',
             executable='mqtt_bridge_node',
-            name='mqtt_bridge',
+            name='mqtt_bridge_node',
             output='screen',
             parameters=[cfg] + ([overrides] if overrides else []),
         ),

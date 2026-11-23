@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <string>
 
-namespace app_bridge {
+namespace weeder_comm_gateway {
 
 // 展开开头的 ~ 与路径里的 $VAR
 std::string ExpandPath(std::string path);
@@ -14,4 +14,4 @@ std::string ExpandPath(std::string path);
 // 日志写到 <log_dir>/<name>.log。没有任何可写目录时抛 std::runtime_error (调用方退回仅终端输出)。
 void ConfigureLogger(const std::string& name, const std::string& log_dir, size_t max_file_size_bytes, size_t max_file_count, bool enable_console, const std::string& log_level);
 
-}   // namespace app_bridge
+}   // namespace weeder_comm_gateway

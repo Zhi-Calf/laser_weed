@@ -19,7 +19,7 @@
 #include <weeder_msgs/msg/gnss_status.hpp>
 #include <vector>
 
-namespace app_bridge::farm {
+namespace weeder_comm_gateway::farm {
 
 using json      = nlohmann::json;
 using TimePoint = std::chrono::system_clock::time_point;
@@ -27,7 +27,7 @@ using TimePoint = std::chrono::system_clock::time_point;
 inline constexpr const char* kSchema         = "farm-device";
 inline constexpr int kSchemaRevision         = 1;
 inline constexpr int kContractRevision       = 1;
-inline constexpr const char* kDriverVersion  = "app_bridge/0.2.0";
+inline constexpr const char* kDriverVersion  = "weeder_comm_gateway/0.2.0";
 inline constexpr size_t kMaxIdLength         = 64;
 
 // ---- 消息类型 (§6, §7) ----
@@ -197,4 +197,4 @@ json TelemetryPayload(const weeder_msgs::msg::GnssStatus* gnss,
 // GnssStatus.fix_type -> rtkStatus (NONE / SINGLE / FLOAT / FIXED)
 std::string RtkStatus(uint8_t fix_type);
 
-}   // namespace app_bridge::farm
+}   // namespace weeder_comm_gateway::farm

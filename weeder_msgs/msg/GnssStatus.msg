@@ -1,6 +1,6 @@
 # GNSS/RTK 状态快照。
 #
-# 该接口从 tractor_msgs 迁移，供 app_bridge 兼容既有 FarmDevice 遥测协议。
+# 该接口从 tractor_msgs 迁移，供 weeder_comm_gateway 兼容既有 FarmDevice 遥测协议。
 # 新控制链路优先使用 Pose.msg；这里的经纬度、航向和定位质量字段用于云端上报。
 
 std_msgs/Header header

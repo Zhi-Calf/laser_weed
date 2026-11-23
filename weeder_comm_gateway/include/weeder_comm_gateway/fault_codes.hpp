@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace app_bridge {
+namespace weeder_comm_gateway {
 
 // ============================================================
 // APP 通信桥故障码 (纯故障 ID, 无等级)
@@ -28,4 +28,4 @@ enum FaultCode : uint32_t {
 };
 }   // namespace http_bridge
 
-}   // namespace app_bridge
+}   // namespace weeder_comm_gateway

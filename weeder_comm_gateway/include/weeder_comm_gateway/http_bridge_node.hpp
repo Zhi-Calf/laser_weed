@@ -15,7 +15,7 @@ struct Request;
 struct Response;
 }   // namespace httplib
 
-namespace app_bridge {
+namespace weeder_comm_gateway {
 
 // ---- 对接的 ROS 接口 ----
 inline constexpr const char* kGlobalPathTopic = "/global_path_planner/path";
@@ -81,4 +81,4 @@ private:
   std::mutex write_mutex_;
 };
 
-}   // namespace app_bridge
+}   // namespace weeder_comm_gateway

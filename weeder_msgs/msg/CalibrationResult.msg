@@ -1,6 +1,6 @@
 # 标定流程结果。
 #
-# app_bridge 用该消息把本机标定结果转换成 APP 的 CALIBRATION_STATUS。
+# weeder_comm_gateway 用该消息把本机标定结果转换成 APP 的 CALIBRATION_STATUS。
 # accepted 语义不在本消息中；指令是否受理由 CalibrationCommand.srv 的响应表达。
 
 std_msgs/Header header

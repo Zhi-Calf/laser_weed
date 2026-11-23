@@ -1,10 +1,10 @@
 #include <gtest/gtest.h>
 
-#include "app_bridge/path_file.hpp"
+#include "weeder_comm_gateway/path_file.hpp"
 
-using app_bridge::path_file::Crc32Ieee;
-using app_bridge::path_file::Summary;
-using app_bridge::path_file::Validate;
+using weeder_comm_gateway::path_file::Crc32Ieee;
+using weeder_comm_gateway::path_file::Summary;
+using weeder_comm_gateway::path_file::Validate;
 
 namespace {
 

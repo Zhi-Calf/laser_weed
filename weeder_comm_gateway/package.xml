@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>app_bridge</name>
+  <name>weeder_comm_gateway</name>
   <version>0.2.0</version>
-  <description>农机通信桥: mqtt_bridge (robot-cloud IoT 网关, FarmDevice v1 协议: 指令 / ACK / 遥测 / 状态 / 故障) 与 http_bridge (路径文件上传 / 下载 / 查询, 协议见 doc/APP接口_MQTT_HTTP_v0.1.md §4)</description>
-  <maintainer email="dev@tractor.local">dev</maintainer>
+  <description>激光除草机通信网关: MQTT 云平台桥接与 APP 局域网 HTTP 路径服务</description>
+  <maintainer email="dev@weeder.local">dev</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
@@ -19,11 +19,11 @@
   <depend>libpaho-mqtt-dev</depend>
   <!-- JSON 编解码, 与 global_path_planner 同一个库; rosdep 键 nlohmann-json-dev -->
   <depend>nlohmann-json-dev</depend>
-  <!-- http_bridge: HTTP 服务用随包的 cpp-httplib (ThirdParty/), https 需要 OpenSSL; rosdep 键 libssl-dev -->
+  <!-- http_bridge_node: HTTP 服务用随包 cpp-httplib，HTTPS 需要 OpenSSL。 -->
   <depend>libssl-dev</depend>
-  <!-- http_bridge: 按 url 下载路径文件; rosdep 键 libcurl-dev -->
+  <!-- http_bridge_node: 按 URL 下载路径文件，rosdep 键 libcurl-dev。 -->
   <depend>libcurl-dev</depend>
-  <!-- http_bridge: ENU -> 经纬度 (与 global_path_planner 同一个投影); rosdep 键 geographiclib -->
+  <!-- http_bridge_node: ENU 转经纬度，rosdep 键 geographiclib。 -->
   <depend>geographiclib</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>

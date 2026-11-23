@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""http_bridge: APP <-> 农机的 HTTP 服务 (协议见 doc/APP接口_MQTT_HTTP_v0.1.md §4)。
+"""http_bridge_node: APP <-> 农机的 HTTP 服务。
 
-    ros2 launch app_bridge http_bridge.launch.py
-    ros2 launch app_bridge http_bridge.launch.py port:=8443 path_file:=/opt/agri/test.json
+    ros2 launch weeder_comm_gateway http_bridge.launch.py
+    ros2 launch weeder_comm_gateway http_bridge.launch.py port:=8443 path_file:=/opt/agri/test.json
 
 参数名为 `http_bridge_config_file` 而非 `config_file`: 多个 launch 组合时同名参数会被最先
 运行的 include 抢占。
@@ -23,13 +23,13 @@ from launch_ros.actions import Node
 
 def _setup(context, *args, **kwargs):
     default_config = os.path.join(
-        get_package_share_directory('app_bridge'), 'config', 'http_bridge.yaml')
+        get_package_share_directory('weeder_comm_gateway'), 'config', 'http_bridge.yaml')
 
     cfg = LaunchConfiguration('http_bridge_config_file').perform(context).strip()
     if not cfg:
         cfg = default_config
     if not os.path.isfile(cfg):
-        return [LogInfo(msg=f'[http_bridge] FATAL: 配置文件不存在: {cfg}')]
+        return [LogInfo(msg=f'[http_bridge_node] FATAL: 配置文件不存在: {cfg}')]
 
     overrides = {}
     port = LaunchConfiguration('port').perform(context).strip()
@@ -40,11 +40,11 @@ def _setup(context, *args, **kwargs):
         overrides['path_file'] = path_file
 
     return [
-        LogInfo(msg=f'[http_bridge] 配置文件: {cfg}'),
+        LogInfo(msg=f'[http_bridge_node] 配置文件: {cfg}'),
         Node(
-            package='app_bridge',
+            package='weeder_comm_gateway',
             executable='http_bridge_node',
-            name='http_bridge',
+            name='http_bridge_node',
             output='screen',
             parameters=[cfg] + ([overrides] if overrides else []),
         ),

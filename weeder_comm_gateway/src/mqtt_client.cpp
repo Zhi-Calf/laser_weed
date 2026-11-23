@@ -1,4 +1,4 @@
-#include "app_bridge/mqtt_client.hpp"
+#include "weeder_comm_gateway/mqtt_client.hpp"
 
 #include <algorithm>
 #include <exception>
@@ -8,7 +8,7 @@
 
 #include <mqtt/async_client.h>
 
-namespace app_bridge {
+namespace weeder_comm_gateway {
 
 namespace {
 
@@ -187,4 +187,4 @@ void MqttClient::setupCallbacks() {
   });
 }
 
-}   // namespace app_bridge
+}   // namespace weeder_comm_gateway

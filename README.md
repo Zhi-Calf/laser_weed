@@ -57,6 +57,7 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker
 | `path_tracker` | 四轮转向统一 LQR 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
 | `weeder_base` | CAN 协议编解码、SocketCAN 驱动、50Hz 指令发送、10Hz 状态发布、全部底盘/BMS 状态接收 |
 | `weeder_msgs` | 车辆、BMS、GNSS、工作模式、全覆盖路径、点云避停状态等 ROS2 消息 |
+| `weeder_comm_gateway` | 云平台 MQTT 桥接与 APP 局域网 HTTP/HTTPS 路径服务 |
 | `velocity_planner` | 直接在 E1R 点云坐标系中执行前向矩形 ROI 判定并发布避停状态 |
 | `rslidar_sdk` | 速腾 E1R 激光雷达 ROS 2 驱动；解析 UDP 数据包并发布 `PointCloud2` |
 | `rslidar_msg` | 速腾激光雷达原始 `RslidarPacket` 消息，供驱动录制/回放 packet 使用 |

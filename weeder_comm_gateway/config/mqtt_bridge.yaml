@@ -1,4 +1,4 @@
-mqtt_bridge:
+mqtt_bridge_node:
   ros__parameters:
     # ------------------------------------------------------------------
     # 设备身份 (FarmDevice v1, robot-cloud docs/IoT接口文档.md §1.3 / §2.2)

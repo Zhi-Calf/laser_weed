@@ -16,7 +16,7 @@ namespace mqtt {
 class async_client;
 }  // namespace mqtt
 
-namespace app_bridge {
+namespace weeder_comm_gateway {
 
 class MqttClient {
 public:
@@ -79,6 +79,6 @@ public:
   std::atomic<bool> stopping_{false};    // 析构时抑制迟到回调
 };
 
-}   // namespace app_bridge
+}   // namespace weeder_comm_gateway
 
 #endif  // APP_BRIDGE_MQTT_CLIENT_H_

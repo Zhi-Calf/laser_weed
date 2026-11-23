@@ -1,4 +1,4 @@
-#include "app_bridge/farm_device.hpp"
+#include "weeder_comm_gateway/farm_device.hpp"
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -12,7 +12,7 @@
 #include <random>
 #include <set>
 
-namespace app_bridge::farm {
+namespace weeder_comm_gateway::farm {
 
 namespace {
 
@@ -565,4 +565,4 @@ json TelemetryPayload(const weeder_msgs::msg::GnssStatus* gnss,
   return p;
 }
 
-}   // namespace app_bridge::farm
+}   // namespace weeder_comm_gateway::farm

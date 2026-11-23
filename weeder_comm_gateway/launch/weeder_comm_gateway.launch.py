@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""app_bridge: 同时启动 mqtt_bridge 与 http_bridge。
+"""weeder_comm_gateway: 同时启动 mqtt_bridge_node 与 http_bridge_node。
 
-    ros2 launch app_bridge app_bridge.launch.py
-    ros2 launch app_bridge app_bridge.launch.py mqtt_host:=192.168.1.100
+    ros2 launch weeder_comm_gateway weeder_comm_gateway.launch.py
 
-各自的参数原样透传给 mqtt_bridge.launch.py / http_bridge.launch.py (见那两个文件)。
+组合 launch 仅使用两份默认 YAML。需要覆盖参数时，分别启动
+mqtt_bridge.launch.py 或 http_bridge.launch.py。
 """
 
 import os
@@ -17,7 +17,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 
 def generate_launch_description():
-    launch_dir = os.path.join(get_package_share_directory('app_bridge'), 'launch')
+    launch_dir = os.path.join(get_package_share_directory('weeder_comm_gateway'), 'launch')
     return LaunchDescription([
         IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(launch_dir, 'mqtt_bridge.launch.py'))),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(launch_dir, 'http_bridge.launch.py'))),

@@ -1,11 +1,11 @@
-#include "app_bridge/path_file.hpp"
+#include "weeder_comm_gateway/path_file.hpp"
 
 #include <cmath>
 #include <cstdio>
 #include <nlohmann/json.hpp>
 #include <vector>
 
-namespace app_bridge::path_file {
+namespace weeder_comm_gateway::path_file {
 
 namespace {
 
@@ -135,4 +135,4 @@ bool Validate(const std::string& text, Summary& out, std::string& err) {
   return true;
 }
 
-}   // namespace app_bridge::path_file
+}   // namespace weeder_comm_gateway::path_file
