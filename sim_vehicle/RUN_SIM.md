@@ -3,19 +3,19 @@
 在没有实车、RTK 接收机和 CAN 硬件的条件下，把整条控制链跑通：
 
 ```text
-sim_vehicle ──/gnss_driver/pose──► path_tracker ──/chassis/cmd──► sim_vehicle
+sim_vehicle_node ──/gnss_driver/pose──► path_tracker ──/chassis/cmd──► sim_vehicle_node
      └──/work_mode──────────────────► path_tracker
 
 global_path_planner（YAML poly 首个顶点为原点）──/path──► path_tracker
 ```
 
-`sim_vehicle` 同时扮演三个角色：GNSS 定位、四轮转向车辆运动学和工作模式管理。
-`sim_vehicle` 和 `sim_orchestrator` 均使用 C++20 实现。
+`sim_vehicle_node` 同时扮演三个角色：GNSS 定位、四轮转向车辆运动学和工作模式管理。
+`sim_vehicle_node` 和 `sim_orchestrator_node` 均使用 C++20 实现。
 `global_path_planner` 启动时直接从 YAML 读取田块和几何参数，不再需要
 `set_source` 服务。
 
 车辆几何默认与 `Laser-Weeding-Sim` 的 Isaac 场景一致：
-这些参数的默认值集中在 `config/sim_vehicle.yaml`，`weeder_sim.launch.py`
+这些参数的默认值集中在 `config/sim_vehicle.yaml`，`sim.launch.py`
 会直接读取该文件，并继续支持通过 launch 参数临时覆盖。
 
 | 参数 | 默认值 | 说明 |
@@ -29,9 +29,9 @@ global_path_planner（YAML poly 首个顶点为原点）──/path──► pat
 | `max_speed_m_s` | `1.4 m/s` | 底盘最大速度 |
 | `max_plant_steer_deg` | `90°` | 单轮最大转向角 |
 | `wheel_count` | `4` | 四轮运动学轮数；当前实现固定按四轮数组计算 |
-| `cmd_timeout_s` | `0.3 s` | 指令超时停车，与 `weeder_base` 一致 |
+| `cmd_timeout_s` | `0.3 s` | 指令超时停车，与 `chassis_driver` 一致 |
 
-`sim_vehicle` 根据 `steer_mode` 输出四个轮子的转角和轮速，并发布
+`sim_vehicle_node` 根据 `steer_mode` 输出四个轮子的转角和轮速，并发布
 `/chassis/state`。当前只实现路径跟踪使用的 `steer_mode=0` 单阿克曼和
 `steer_mode=1` 对称阿克曼；`2/3` 因统一指令中缺少明确的横移/自转语义而停车。
 `/gnss_driver/pose`、TF 和车辆 Marker 始终使用车体几何中心；
@@ -50,40 +50,40 @@ colcon test-result --test-result-base build/sim_vehicle --verbose
 cd /path/to/workspace
 colcon build --symlink-install
 source install/setup.bash
-ros2 launch sim_vehicle weeder_sim.launch.py
+ros2 launch sim_vehicle sim.launch.py
 ```
 
 启动的节点：
 
 | 节点 | 作用 |
 |---|---|
-| `sim_vehicle` | 发布 RTK pose、车辆运动学、`/work_mode` |
+| `sim_vehicle_node` | 发布 RTK pose、车辆运动学、`/work_mode` |
 | `global_path_planner` | 读取 YAML 田块，使用 `poly` 首个顶点作为原点并立即规划 |
 | `path_tracker` | 跟踪 `/global_path_planner/path` |
-| `sim_orchestrator` | 确认路径生成后切 UNMANNED |
+| `sim_orchestrator_node` | 确认路径生成后切 UNMANNED |
 | `rviz2` | 预置田块、路径、车辆和目标点可视化 |
 
-仿真不启动激光雷达和 `velocity_planner`；`weeder_sim.launch.py` 会显式设置
-`require_velocity_planner=false`。实车默认启用避停，不能直接沿用仿真的关闭配置。
+仿真不启动激光雷达和 `velocity_planner`；`sim.launch.py` 会显式设置
+`require_obstacle_monitor=false`。实车默认启用避停，不能直接沿用仿真的关闭配置。
 
 常用参数：
 
 ```bash
 # 改垄宽、WORK 速度和 TURN 速度
-ros2 launch sim_vehicle weeder_sim.launch.py \
+ros2 launch sim_vehicle sim.launch.py \
   ridge_width:=3.0 target_v:=0.6 turn_speed:=0.3
 
 # 无显示器/SSH
-ros2 launch sim_vehicle weeder_sim.launch.py rviz:=false
+ros2 launch sim_vehicle sim.launch.py rviz:=false
 
 # 在安全门限内保留初始横向偏差，便于观察收敛
-ros2 launch sim_vehicle weeder_sim.launch.py align_offset:=0.2
+ros2 launch sim_vehicle sim.launch.py align_offset:=0.2
 ```
 
 仿真节点与其他 ROS 节点一样使用 spdlog 滚动日志：
 
-- `sim_vehicle` 写入 `sim_vehicle.log`
-- `sim_orchestrator` 写入 `sim_orchestrator.log`
+- `sim_vehicle_node` 写入 `sim_vehicle_node.log`
+- `sim_orchestrator_node` 写入 `sim_orchestrator_node.log`
 
 默认目录为 `/opt/agri/logs`；目录不可写时自动回退到 `$ROS_HOME/logs`，
 未设置 `ROS_HOME` 时回退到 `~/.ros/logs`。日志目录、文件大小、保留数量和级别
@@ -107,7 +107,7 @@ global_path_planner:
 - `poly` 是扁平数组，每 3 个数为一个顶点：`lat, lon, alt`。
 - `poly` 顶点必须按田块边界顺序给出（逆序/旋转起点可以），不能自相交；乱序输入会被拒绝。
 - `poly` 的第一个顶点同时作为 ENU 原点；实车还要把
-  `gnss_localization/config/gnss_driver.yaml` 的 `origin_lat/lon/alt`
+  `gnss_localization/config/br100a_driver.yaml` 的 `origin_lat/lon/alt`
   配成同一个坐标。
 - `ridge_width` 必须大于 0，决定弓字形行距。
 - `field_margin` 必须大于等于 0；建议不小于 `ridge_width/2`，保证机具半幅不越过田边
@@ -121,9 +121,9 @@ global_path_planner:
 ```text
 global_path_planner 启动后按 YAML 田块立即规划
     ↓
-sim_orchestrator 检测到非空 /global_path_planner/path
+sim_orchestrator_node 检测到非空 /global_path_planner/path
     ↓
-sim_orchestrator 切 UNMANNED → path_tracker 开始驱动
+sim_orchestrator_node 切 UNMANNED → path_tracker 开始驱动
 ```
 
 ## 四、手动分终端调试
@@ -134,7 +134,7 @@ sim_orchestrator 切 UNMANNED → path_tracker 开始驱动
 
 ```bash
 source install/setup.bash
-ros2 run sim_vehicle sim_vehicle --ros-args \
+ros2 run sim_vehicle sim_vehicle_node --ros-args \
   --params-file install/sim_vehicle/share/sim_vehicle/config/sim_vehicle.yaml \
   -p cmd_timeout_s:=0.3 \
   -p align_to_path_start:=true \
@@ -167,7 +167,7 @@ ros2 topic echo /global_path_planner/path --once \
 ros2 topic pub --once /sim/unmanned std_msgs/msg/Bool "{data: true}"
 ```
 
-`sim_vehicle` 收到后会以 1 Hz 持续转发 `/work_mode`。
+`sim_vehicle_node` 收到后会以 1 Hz 持续转发 `/work_mode`。
 
 ## 五、可视化
 
@@ -181,7 +181,7 @@ ros2 topic pub --once /sim/unmanned std_msgs/msg/Bool "{data: true}"
 | WORK 作业段（绿色） | `/global_path_planner/work_points` |
 | TURN 掉头段（橙色） | `/global_path_planner/turn_points` |
 | 原始完整路径点 | `/global_path_planner/path_points` |
-| 仿真车（车体、黄色车头、四个转向轮） | RViz 显示：`/sim_vehicle/marker`；数据：`/sim_vehicle/marker_array` |
+| 仿真车（车体、黄色车头、四个转向轮） | RViz 显示：`/sim_vehicle_node/marker`；数据：`/sim_vehicle_node/marker_array` |
 | 跟踪目标点 | `/path_tracker/target_point` |
 | 四轮转角与轮速 | `/chassis/state` |
 
@@ -214,14 +214,14 @@ ros2 topic echo /work_mode --once
 
 **path_tracker 一直“定位精度不足”**
 
-`sim_vehicle` 未运行，或 `/gnss_driver/pose` 中 `valid=false`。
+`sim_vehicle_node` 未运行，或 `/gnss_driver/pose` 中 `valid=false`。
 
 **车不动但无报错**
 
 确认 `/work_mode` 为 UNMANNED，且 `/global_path_planner/path` 非空。
 
-**chassis_node 要不要启动**
+**chassis_driver_node 要不要启动**
 
-最小仿真闭环不需要。`sim_vehicle` 已直接订阅 `/chassis/cmd`。启动
-`chassis_node` 只用于检查 CAN 编码，它不会收到真实 VCU 状态，因此
+最小仿真闭环不需要。`sim_vehicle_node` 已直接订阅 `/chassis/cmd`。启动
+`chassis_driver_node` 只用于检查 CAN 编码，它不会收到真实 VCU 状态，因此
 `/chassis/state` 中的 `*_valid` 会保持 false。

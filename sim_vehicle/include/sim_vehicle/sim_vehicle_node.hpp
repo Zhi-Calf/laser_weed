@@ -15,11 +15,11 @@
 #include "tf2_msgs/msg/tf_message.hpp"
 #include "visualization_msgs/msg/marker.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
-#include "weeder_msgs/msg/chassis_cmd.hpp"
-#include "weeder_msgs/msg/chassis_state.hpp"
-#include "weeder_msgs/msg/path.hpp"
-#include "weeder_msgs/msg/pose.hpp"
-#include "weeder_msgs/msg/work_mode.hpp"
+#include "vehicle_interfaces/msg/chassis_cmd.hpp"
+#include "vehicle_interfaces/msg/chassis_state.hpp"
+#include "vehicle_interfaces/msg/path.hpp"
+#include "vehicle_interfaces/msg/pose.hpp"
+#include "vehicle_interfaces/msg/work_mode.hpp"
 
 namespace sim_vehicle {
 
@@ -39,9 +39,9 @@ private:
   void SetupTimers();
 
 private:
-  void OnChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr message);
+  void OnChassisCmd(const vehicle_interfaces::msg::ChassisCmd::SharedPtr message);
   void OnUnmanned(const std_msgs::msg::Bool::SharedPtr message);
-  void OnPath(const weeder_msgs::msg::Path::SharedPtr message);
+  void OnPath(const vehicle_interfaces::msg::Path::SharedPtr message);
   void Tick();
   void PublishPose();
   void PublishTf();
@@ -108,15 +108,15 @@ private:
   rclcpp::Time last_cmd_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);   // 最近一次指令时刻
 
 private:
-  rclcpp::Subscription<weeder_msgs::msg::ChassisCmd>::SharedPtr chassis_cmd_sub_;    // 底盘指令订阅
+  rclcpp::Subscription<vehicle_interfaces::msg::ChassisCmd>::SharedPtr chassis_cmd_sub_;    // 底盘指令订阅
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr unmanned_sub_;                // 无人模式订阅
-  rclcpp::Subscription<weeder_msgs::msg::Path>::SharedPtr path_sub_;                 // 路径订阅
-  rclcpp::Publisher<weeder_msgs::msg::Pose>::SharedPtr pose_pub_;                    // 定位位姿发布
+  rclcpp::Subscription<vehicle_interfaces::msg::Path>::SharedPtr path_sub_;                 // 路径订阅
+  rclcpp::Publisher<vehicle_interfaces::msg::Pose>::SharedPtr pose_pub_;                    // 定位位姿发布
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_stamped_pub_;   // 标准位姿发布
-  rclcpp::Publisher<weeder_msgs::msg::WorkMode>::SharedPtr work_mode_pub_;           // 工作模式发布
+  rclcpp::Publisher<vehicle_interfaces::msg::WorkMode>::SharedPtr work_mode_pub_;           // 工作模式发布
   rclcpp::Publisher<tf2_msgs::msg::TFMessage>::SharedPtr tf_pub_;                    // TF 发布
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;    // 可视化 Marker 发布
-  rclcpp::Publisher<weeder_msgs::msg::ChassisState>::SharedPtr chassis_state_pub_;   // 底盘状态发布
+  rclcpp::Publisher<vehicle_interfaces::msg::ChassisState>::SharedPtr chassis_state_pub_;   // 底盘状态发布
 
 private:
   rclcpp::TimerBase::SharedPtr tick_timer_          = nullptr;   // 仿真主循环定时器

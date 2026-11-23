@@ -14,8 +14,8 @@
 | 方向 | 默认话题与类型 | 约定 |
 |---|---|---|
 | 输入 | `/camera/image_raw` · `sensor_msgs/Image` | 原始畸变 BGR/RGB8，原分辨率、原采集时间；相机帧名必须匹配配置 |
-| 可选输入 | `/gnss_driver/pose` · `weeder_msgs/Pose` | 只读复用组合导航姿态，启用 `attitude_gate` 后作为静态 BEV 的有效性检查 |
-| 输出 | `/crop_row/observation` · `weeder_msgs/CropRowObservation` | 标定车体参考系下的一条选中导航中心线观测；不代表全部稻行 |
+| 可选输入 | `/gnss_driver/pose` · `vehicle_interfaces/Pose` | 只读复用组合导航姿态，启用 `attitude_gate` 后作为静态 BEV 的有效性检查 |
+| 输出 | `/crop_row/observation` · `vehicle_interfaces/CropRowObservation` | 标定车体参考系下的一条选中导航中心线观测；不代表全部稻行 |
 | 诊断记录 | 本地 JSONL 文件 | 只读记录工具生成，非机器人控制话题 |
 
 图像订阅 best effort / volatile / KeepLast(1)；观测发布 reliable / volatile / KeepLast(1)。

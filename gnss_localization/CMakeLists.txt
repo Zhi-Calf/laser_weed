@@ -29,7 +29,7 @@ find_package(nav_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
-find_package(weeder_msgs REQUIRED)
+find_package(vehicle_interfaces REQUIRED)
 find_package(spdlog_vendor REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(Eigen3 REQUIRED)
@@ -90,8 +90,7 @@ target_compile_definitions(gnss_logging PRIVATE
   SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
 )
 
-add_executable(gnss_driver_node
-  src/gnss_driver_main.cpp
+add_library(gnss_driver_core STATIC
   src/serial_port.cpp
   src/giavp_parser.cpp
   src/inspvaa_parser.cpp
@@ -99,13 +98,13 @@ add_executable(gnss_driver_node
   src/gnss_driver.cpp
 )
 
-target_include_directories(gnss_driver_node PUBLIC
+target_include_directories(gnss_driver_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${EIGEN3_INCLUDE_DIR}
 )
 
-ament_target_dependencies(gnss_driver_node
+ament_target_dependencies(gnss_driver_core
   rclcpp
   sensor_msgs
   geometry_msgs
@@ -113,22 +112,34 @@ ament_target_dependencies(gnss_driver_node
   tf2
   tf2_ros
   tf2_geometry_msgs
-  weeder_msgs
+  vehicle_interfaces
 )
 
-target_link_libraries(gnss_driver_node
+target_link_libraries(gnss_driver_core
   gnss_logging
   ${GEOGRAPHIC_LIBRARY}
   spdlog::spdlog
 )
 
 # 让 SPDLOG_* 宏携带源码文件名与行号（source location）
-target_compile_definitions(gnss_driver_node PRIVATE
+target_compile_definitions(gnss_driver_core PRIVATE
   SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
 )
 
+add_executable(br100a_driver_node
+  apps/br100a_driver_main.cpp
+)
+target_link_libraries(br100a_driver_node gnss_driver_core)
+ament_target_dependencies(br100a_driver_node rclcpp)
+
+add_executable(nav3120_driver_node
+  apps/nav3120_driver_main.cpp
+)
+target_link_libraries(nav3120_driver_node gnss_driver_core)
+ament_target_dependencies(nav3120_driver_node rclcpp)
+
 add_executable(ntrip_client_node
-  src/ntrip_client_main.cpp
+  apps/ntrip_client_main.cpp
   src/serial_port.cpp
   src/gga_parser.cpp
   src/ntrip_client.cpp
@@ -155,7 +166,7 @@ target_compile_definitions(ntrip_client_node PRIVATE
 
 if(QXWZ_SDK_AVAILABLE)
   add_executable(sdk_client_node
-    src/sdk_client_main.cpp
+    apps/sdk_client_main.cpp
     src/serial_port.cpp
     src/gga_parser.cpp
     src/sdk_client.cpp
@@ -201,8 +212,15 @@ else()
   )
 endif()
 
-install(TARGETS gnss_driver_node ntrip_client_node
+install(TARGETS
+  br100a_driver_node
+  nav3120_driver_node
+  ntrip_client_node
   DESTINATION lib/${PROJECT_NAME}
+)
+
+install(TARGETS gnss_driver_core
+  ARCHIVE DESTINATION lib
 )
 
 if(QXWZ_SDK_AVAILABLE)
@@ -227,7 +245,7 @@ if(BUILD_TESTING)
   # 参数与 yaml 一致性检查 (脚本在仓库根 scripts/, 各包共用同一份): 代码里 declare_parameter
   # 了但 yaml 漏写的键, 现场只表现为"这个参数改了没用", 用构建期测试拦住
   # (参数名拼写不一致或 YAML 漏键会在这里暴露)。
-  # 三个 yaml 一起比: 脚本按"并集"判据, 键写在哪个节点的 yaml 里都算已配置。
+  # 四个 yaml 一起比: 脚本按"并集"判据, 键写在哪个节点的 yaml 里都算已配置。
   find_package(ament_cmake_test REQUIRED)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   ament_add_test(params_in_yaml
@@ -235,7 +253,7 @@ if(BUILD_TESTING)
       ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/check_params.py
       --src ${CMAKE_CURRENT_SOURCE_DIR}/src
-      --yaml ${CMAKE_CURRENT_SOURCE_DIR}/config/gnss_driver.yaml
+      --yaml ${CMAKE_CURRENT_SOURCE_DIR}/config/br100a_driver.yaml
       ${CMAKE_CURRENT_SOURCE_DIR}/config/nav3120_driver.yaml
       ${CMAKE_CURRENT_SOURCE_DIR}/config/ntrip_client.yaml
       ${CMAKE_CURRENT_SOURCE_DIR}/config/sdk_client.yaml
@@ -278,11 +296,6 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_nav3120_driver
     test/test_nav3120_driver.cpp
-    src/gnss_driver.cpp
-    src/serial_port.cpp
-    src/giavp_parser.cpp
-    src/inspvaa_parser.cpp
-    src/gga_status_parser.cpp
   )
   target_include_directories(test_nav3120_driver PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -296,12 +309,26 @@ if(BUILD_TESTING)
     tf2
     tf2_ros
     tf2_geometry_msgs
-    weeder_msgs
+    vehicle_interfaces
   )
   target_link_libraries(test_nav3120_driver
-    gnss_logging
-    ${GEOGRAPHIC_LIBRARY}
-    spdlog::spdlog
+    gnss_driver_core
+  )
+
+  ament_add_gtest(test_br100a_driver
+    test/test_br100a_driver.cpp
+  )
+  target_include_directories(test_br100a_driver PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${EIGEN3_INCLUDE_DIR}
+  )
+  ament_target_dependencies(test_br100a_driver
+    rclcpp
+    sensor_msgs
+    vehicle_interfaces
+  )
+  target_link_libraries(test_br100a_driver
+    gnss_driver_core
   )
 endif()
 

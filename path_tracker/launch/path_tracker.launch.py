@@ -27,13 +27,13 @@ def generate_launch_description():
             description='Use simulation clock (set true under Gazebo/bag replay)',
         ),
 
-        # 必须单独运行 CAN 桥（weeder_base chassis_node），控制指令才能到达车辆。
+        # 必须单独运行 CAN 桥（chassis_driver chassis_driver_node），控制指令才能到达车辆。
         # 本启动文件故意不启动 CAN 桥，因为它独占 CAN 接口，
         # 并且可能需要按实车部署方式单独启动。
         Node(
             package='path_tracker',
             executable='path_tracker_node',
-            name='path_tracker',
+            name='path_tracker_node',
             output='screen',
             parameters=[
                 params_file,

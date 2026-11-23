@@ -6,12 +6,12 @@
 #include <string>
 #include <vector>
 #include <visualization_msgs/msg/marker.hpp>
-#include <weeder_msgs/msg/chassis_cmd.hpp>
-#include <weeder_msgs/msg/crop_row_observation.hpp>
-#include <weeder_msgs/msg/obstacle_status.hpp>
-#include <weeder_msgs/msg/path.hpp>
-#include <weeder_msgs/msg/pose.hpp>
-#include <weeder_msgs/msg/work_mode.hpp>
+#include <vehicle_interfaces/msg/chassis_cmd.hpp>
+#include <vehicle_interfaces/msg/crop_row_observation.hpp>
+#include <vehicle_interfaces/msg/obstacle_status.hpp>
+#include <vehicle_interfaces/msg/path.hpp>
+#include <vehicle_interfaces/msg/pose.hpp>
+#include <vehicle_interfaces/msg/work_mode.hpp>
 
 #include "path_tracker/global_path_locator.hpp"
 #include "path_tracker/lqr.hpp"
@@ -39,11 +39,11 @@ private:
   void SetupInterfaces();
   void ControlTick();
 
-  void PoseCallback(const weeder_msgs::msg::Pose::SharedPtr msg);
-  void PathCallback(const weeder_msgs::msg::Path::SharedPtr msg);
-  void WorkModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg);
-  void ObstacleStatusCallback(const weeder_msgs::msg::ObstacleStatus::SharedPtr msg);
-  void CropRowCallback(const weeder_msgs::msg::CropRowObservation::SharedPtr msg);
+  void PoseCallback(const vehicle_interfaces::msg::Pose::SharedPtr msg);
+  void PathCallback(const vehicle_interfaces::msg::Path::SharedPtr msg);
+  void WorkModeCallback(const vehicle_interfaces::msg::WorkMode::SharedPtr msg);
+  void ObstacleStatusCallback(const vehicle_interfaces::msg::ObstacleStatus::SharedPtr msg);
+  void CropRowCallback(const vehicle_interfaces::msg::CropRowObservation::SharedPtr msg);
 
   ReferenceSource SelectReferenceSource(const PathMatchResult& match, const rclcpp::Time& now) const;
   static const char* ReferenceSourceName(ReferenceSource source);
@@ -63,8 +63,8 @@ private:
   double pose_timeout_s_                    = 1.0;
   double path_timeout_s_                    = 1.0;
   double work_mode_timeout_s_               = 1.0;
-  double velocity_planner_status_timeout_s_ = 1.0;
-  bool require_velocity_planner_            = true;
+  double obstacle_monitor_status_timeout_s_ = 1.0;
+  bool require_obstacle_monitor_            = true;
 
 private:
   std::string frame_id_ = "odom";
@@ -87,7 +87,7 @@ private:
   rclcpp::Time last_path_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
   bool has_path_               = false;
   int path_point_count_        = 0;
-  weeder_msgs::msg::Path::SharedPtr last_loaded_path_;  // 最后成功加载的路径
+  vehicle_interfaces::msg::Path::SharedPtr last_loaded_path_;  // 最后成功加载的路径
 
 private:
   rclcpp::Time last_work_mode_time_    = rclcpp::Time(0, 0, RCL_ROS_TIME);
@@ -115,12 +115,12 @@ private:
   double last_steer_cmd_rad_ = 0.0;   // 用于转角速率限制 (rad)
 
 private:
-  rclcpp::Subscription<weeder_msgs::msg::Pose>::SharedPtr pose_sub_;
-  rclcpp::Subscription<weeder_msgs::msg::Path>::SharedPtr path_sub_;
-  rclcpp::Subscription<weeder_msgs::msg::WorkMode>::SharedPtr work_mode_sub_;
-  rclcpp::Subscription<weeder_msgs::msg::ObstacleStatus>::SharedPtr obstacle_status_sub_;
-  rclcpp::Subscription<weeder_msgs::msg::CropRowObservation>::SharedPtr crop_row_sub_;
-  rclcpp::Publisher<weeder_msgs::msg::ChassisCmd>::SharedPtr cmd_pub_;
+  rclcpp::Subscription<vehicle_interfaces::msg::Pose>::SharedPtr pose_sub_;
+  rclcpp::Subscription<vehicle_interfaces::msg::Path>::SharedPtr path_sub_;
+  rclcpp::Subscription<vehicle_interfaces::msg::WorkMode>::SharedPtr work_mode_sub_;
+  rclcpp::Subscription<vehicle_interfaces::msg::ObstacleStatus>::SharedPtr obstacle_status_sub_;
+  rclcpp::Subscription<vehicle_interfaces::msg::CropRowObservation>::SharedPtr crop_row_sub_;
+  rclcpp::Publisher<vehicle_interfaces::msg::ChassisCmd>::SharedPtr cmd_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr viz_pub_;
 
 private:

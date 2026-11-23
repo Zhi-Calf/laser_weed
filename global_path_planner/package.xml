@@ -3,7 +3,7 @@
 <package format="3">
   <name>global_path_planner</name>
   <version>0.1.0</version>
-  <description>Bow-shaped coverage path planner for the laser weeder: YAML field polygon + ridge width -> weeder_msgs/Path</description>
+  <description>Bow-shaped coverage path planner for the laser weeder: YAML field polygon + ridge width -> vehicle_interfaces/Path</description>
   <maintainer email="1067401059@qq.com">JunJun</maintainer>
 
   <license>Apache-2.0</license>
@@ -14,7 +14,7 @@
   <depend>rclcpp</depend>
   <depend>geometry_msgs</depend>
   <depend>visualization_msgs</depend>
-  <depend>weeder_msgs</depend>
+  <depend>vehicle_interfaces</depend>
   <depend>spdlog_vendor</depend>
   <!-- find_package(Eigen3) —— 多边形/几何适配 (eigen_boost_adaptor.hpp); rosdep 键 eigen -->
   <depend>eigen</depend>

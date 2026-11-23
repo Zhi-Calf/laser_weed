@@ -6,8 +6,8 @@
 namespace path_tracker {
 
 struct LogConfig {
-  std::string logger_name         = "path_tracker";        // 日志器名称
-  std::string log_file_name       = "path_tracker.log";    // 日志文件名
+  std::string logger_name         = "path_tracker_node";        // 日志器名称
+  std::string log_file_name       = "path_tracker_node.log";    // 日志文件名
   std::string log_dir             = "/opt/agri/logs";      // 日志目录
   std::size_t max_file_size_bytes = 50U * 1024U * 1024U;   // 单文件大小上限
   std::size_t max_file_count      = 10;                    // 保留文件数量

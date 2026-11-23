@@ -20,7 +20,7 @@ def main():
     import rclpy
     from rclpy.qos import qos_profile_sensor_data
     from rclpy.executors import ExternalShutdownException
-    from weeder_msgs.msg import Pose
+    from vehicle_interfaces.msg import Pose
     rclpy.init()
     node = rclpy.create_node('row_nav_calibration_attitude_bridge')
     bridge_id = str(uuid.uuid4())

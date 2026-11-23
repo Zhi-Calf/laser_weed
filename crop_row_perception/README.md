@@ -1,7 +1,7 @@
 # 稻行视觉接入：观察模式 v0.1
 
 相机/回放 `sensor_msgs/Image` → 本包 → 独立 RowNav SDK →
-`/crop_row/observation`（`weeder_msgs/CropRowObservation`）。
+`/crop_row/observation`（`vehicle_interfaces/CropRowObservation`）。
 本包没有底盘指令发布者，不修改工作模式、GNSS 或全局路径。
 可选只读订阅已有 `/gnss_driver/pose`，按图像时间匹配姿态；可只检查静态 BEV 的
 有效范围，也可通过 SDK 0.2 逐帧重算动态 BEV。迁入后 SDK/ROS 测试已重跑通过；
@@ -10,7 +10,7 @@
 
 ### 2026-10-26：已有定位姿态门控验证（动态扩展前）
 
-- 增加独立 `AttitudeGate` 类与有界时间缓存；ROS 适配器只读订阅 `weeder_msgs/Pose`。
+- 增加独立 `AttitudeGate` 类与有界时间缓存；ROS 适配器只读订阅 `vehicle_interfaces/Pose`。
   SDK C ABI、定位驱动、TF 广播和车辆控制均未修改。
 - macOS 上 `test_attitude_gate.cpp` 与原 `test_core.cpp` 经 ASan/UBSan 测试通过。
   覆盖因果时间匹配、过期、无效姿态、roll/pitch 超限、NaN、源时间故障锁定、
@@ -52,7 +52,7 @@ bash scripts/build_crop_row.sh
 source install/crop-row-source/setup.bash
 ```
 
-此脚本只构建 `row_nav_sdk`、`weeder_msgs` 和 `crop_row_perception`，不会启动任何节点。
+此脚本只构建 `row_nav_sdk`、`vehicle_interfaces` 和 `crop_row_perception`，不会启动任何节点。
 SDK 本身不依赖 ROS，可用普通 CMake 独立编译；详见 `../row_nav_sdk/README.md`。
 首次使用需安装 OpenCV 开发包，不只是 Python OpenCV 或运行库。
 动态库依赖由平台提供；运行前检查 SDK 的 `ldd` 没有 `not found`。
@@ -144,7 +144,7 @@ c++ -std=c++17 -pthread -I crop_row_perception/include -I ../rk/include \
 无 SDK 二进制时可仅构建替身测试：
 
 ```bash
-colcon build --base-paths weeder_msgs crop_row_perception \
+colcon build --base-paths vehicle_interfaces crop_row_perception \
   --cmake-args -DBUILD_TESTING=ON -DCROP_ROW_TEST_ONLY=ON \
   -DROW_NAV_HEADER_DIR=/absolute/rk/include
 colcon test --packages-select crop_row_perception --return-code-on-test-failure

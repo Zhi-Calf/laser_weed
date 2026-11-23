@@ -18,19 +18,19 @@ namespace {
 constexpr double kRad2Deg = 57.29577951308232;
 
 /// 日志中使用的节点名称。
-constexpr const char* kNodeName = "path_tracker";
+constexpr const char* kNodeName = "path_tracker_node";
 
 // 节点对外接口话题固定定义，不通过 YAML 配置。
 constexpr const char* kPoseTopic                  = "/gnss_driver/pose";
 constexpr const char* kPathTopic                  = "/global_path_planner/path";
 constexpr const char* kWorkModeTopic              = "/work_mode";
-constexpr const char* kVelocityPlannerStatusTopic = "/velocity_planner/status";
+constexpr const char* kObstacleMonitorStatusTopic = "/obstacle_monitor/status";
 constexpr const char* kCmdTopic                   = "/chassis/cmd";
 constexpr const char* kCropRowTopic               = "/crop_row/observation";
 constexpr const char* kVizTopic                   = "/path_tracker/target_point";
 
 // 只比较会影响路径几何和控制语义的字段，忽略重复发布时变化的 header.stamp。
-bool IsSamePath(const weeder_msgs::msg::Path& lhs, const weeder_msgs::msg::Path& rhs) {
+bool IsSamePath(const vehicle_interfaces::msg::Path& lhs, const vehicle_interfaces::msg::Path& rhs) {
   return lhs.header.frame_id == rhs.header.frame_id && lhs.x == rhs.x && lhs.y == rhs.y && lhs.waypoint_types == rhs.waypoint_types;
 }
 
@@ -56,10 +56,10 @@ PathTrackerNode::PathTrackerNode(const rclcpp::NodeOptions& options) : Node(kNod
     kPoseTopic,
     kPathTopic,
     kWorkModeTopic,
-    kVelocityPlannerStatusTopic,
+    kObstacleMonitorStatusTopic,
     kCropRowTopic,
     kCmdTopic,
-    require_velocity_planner_ ? "开启" : "关闭",
+    require_obstacle_monitor_ ? "开启" : "关闭",
     row_vision_enabled_ ? "开启" : "关闭");
 }
 
@@ -74,8 +74,8 @@ void PathTrackerNode::InitializeLogging() {
   const std::string log_level    = declare_parameter<std::string>("log_level", "info");
 
   LogConfig log_config;
-  log_config.logger_name         = "path_tracker";
-  log_config.log_file_name       = "path_tracker.log";
+  log_config.logger_name         = "path_tracker_node";
+  log_config.log_file_name       = "path_tracker_node.log";
   log_config.log_dir             = log_dir;
   log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb) * 1024U * 1024U;
   log_config.max_file_count      = static_cast<std::size_t>(log_file_count);
@@ -108,8 +108,8 @@ void PathTrackerNode::LoadNodeParameters() {
   pose_timeout_s_                    = declare_parameter<double>("pose_timeout_s", 1.0);
   path_timeout_s_                    = declare_parameter<double>("path_timeout_s", 1.0);
   work_mode_timeout_s_               = declare_parameter<double>("work_mode_timeout_s", 1.0);
-  velocity_planner_status_timeout_s_ = declare_parameter<double>("velocity_planner_status_timeout_s", 1.0);
-  require_velocity_planner_          = declare_parameter<bool>("require_velocity_planner", true);
+  obstacle_monitor_status_timeout_s_ = declare_parameter<double>("obstacle_monitor_status_timeout_s", 1.0);
+  require_obstacle_monitor_          = declare_parameter<bool>("require_obstacle_monitor", true);
   frame_id_                          = declare_parameter<std::string>("frame_id", "odom");
   viz_                               = declare_parameter<bool>("viz", true);
   row_vision_enabled_                = declare_parameter<bool>("row_vision_enabled", false);
@@ -134,8 +134,8 @@ void PathTrackerNode::LoadNodeParameters() {
     pose_timeout_s_,
     path_timeout_s_,
     work_mode_timeout_s_,
-    velocity_planner_status_timeout_s_,
-    require_velocity_planner_ ? "开启" : "关闭");
+    obstacle_monitor_status_timeout_s_,
+    require_obstacle_monitor_ ? "开启" : "关闭");
   SPDLOG_INFO("视觉稻行 LQR: enabled={} topic={} timeout={:.2f}s frame={} viz={}", row_vision_enabled_, kCropRowTopic, crop_row_timeout_s_, frame_id_, viz_);
 }
 
@@ -198,37 +198,37 @@ GlobalPathLocatorConfig PathTrackerNode::LoadGlobalPathLocatorConfig(double whee
 void PathTrackerNode::SetupInterfaces() {
   // gnss_driver 使用 SensorDataQoS（尽力传输，保留最近 5 条）发布位姿。
   // 可靠订阅端无法与该发布端匹配，因此这里使用相同的 QoS。
-  pose_sub_ = create_subscription<weeder_msgs::msg::Pose>(kPoseTopic, rclcpp::SensorDataQoS(), [this](const weeder_msgs::msg::Pose::SharedPtr msg) {
+  pose_sub_ = create_subscription<vehicle_interfaces::msg::Pose>(kPoseTopic, rclcpp::SensorDataQoS(), [this](const vehicle_interfaces::msg::Pose::SharedPtr msg) {
     PoseCallback(msg);
   });
 
   // global_path_planner 使用 transient_local（瞬态本地持久化）发布路径
   // 晚加入的订阅端必须使用相同持久性才能收到最后一条路径。
   const auto path_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
-  path_sub_           = create_subscription<weeder_msgs::msg::Path>(kPathTopic, path_qos, [this](const weeder_msgs::msg::Path::SharedPtr msg) {
+  path_sub_           = create_subscription<vehicle_interfaces::msg::Path>(kPathTopic, path_qos, [this](const vehicle_interfaces::msg::Path::SharedPtr msg) {
     PathCallback(msg);
   });
 
   // work_mode 使用普通订阅即可，无需额外配置 QoS。
-  work_mode_sub_ = create_subscription<weeder_msgs::msg::WorkMode>(kWorkModeTopic, 10, [this](const weeder_msgs::msg::WorkMode::SharedPtr msg) {
+  work_mode_sub_ = create_subscription<vehicle_interfaces::msg::WorkMode>(kWorkModeTopic, 10, [this](const vehicle_interfaces::msg::WorkMode::SharedPtr msg) {
     WorkModeCallback(msg);
   });
 
   // 障碍物数据
   const auto obstacle_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable();
-  obstacle_status_sub_    = create_subscription<weeder_msgs::msg::ObstacleStatus>(kVelocityPlannerStatusTopic, obstacle_qos, [this](const weeder_msgs::msg::ObstacleStatus::SharedPtr msg) {
+  obstacle_status_sub_    = create_subscription<vehicle_interfaces::msg::ObstacleStatus>(kObstacleMonitorStatusTopic, obstacle_qos, [this](const vehicle_interfaces::msg::ObstacleStatus::SharedPtr msg) {
     ObstacleStatusCallback(msg);
   });
 
   if (row_vision_enabled_) {
     const auto crop_row_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile();
-    crop_row_sub_           = create_subscription<weeder_msgs::msg::CropRowObservation>(kCropRowTopic, crop_row_qos, [this](const weeder_msgs::msg::CropRowObservation::SharedPtr msg) {
+    crop_row_sub_           = create_subscription<vehicle_interfaces::msg::CropRowObservation>(kCropRowTopic, crop_row_qos, [this](const vehicle_interfaces::msg::CropRowObservation::SharedPtr msg) {
       CropRowCallback(msg);
     });
   }
 
   // 发布控制指令
-  cmd_pub_ = create_publisher<weeder_msgs::msg::ChassisCmd>(kCmdTopic, 10);
+  cmd_pub_ = create_publisher<vehicle_interfaces::msg::ChassisCmd>(kCmdTopic, 10);
   if (viz_) {
     viz_pub_ = create_publisher<visualization_msgs::msg::Marker>(kVizTopic, 10);
   }
@@ -245,7 +245,7 @@ void PathTrackerNode::SetupInterfaces() {
 //   msg : 定位位姿、速度、卫星数和有效性标志
 // 输出:
 //   robot_state_、位姿有效性和最近更新时间。
-void PathTrackerNode::PoseCallback(const weeder_msgs::msg::Pose::SharedPtr msg) {
+void PathTrackerNode::PoseCallback(const vehicle_interfaces::msg::Pose::SharedPtr msg) {
   last_pose_time_       = now();
   has_pose_             = true;
   pose_valid_           = msg->valid;
@@ -290,7 +290,7 @@ void PathTrackerNode::InitializePathTracking(const std::vector<TrajectoryPoint>&
 //   LQR 轨迹、路径点数和最近路径时间。
 // 失败:
 //   路径形状或剖面无效时撤销当前路径，控制周期输出停车。
-void PathTrackerNode::PathCallback(const weeder_msgs::msg::Path::SharedPtr msg) {
+void PathTrackerNode::PathCallback(const vehicle_interfaces::msg::Path::SharedPtr msg) {
   if (msg->x.size() < 3 || msg->x.size() != msg->y.size() || msg->x.size() != msg->waypoint_types.size()) {
     SPDLOG_WARN(
       "收到的路径无效：x={} y={} waypoint_types={}"
@@ -348,11 +348,11 @@ void PathTrackerNode::PathCallback(const weeder_msgs::msg::Path::SharedPtr msg) 
 //   msg : 当前工作模式和名称
 // 输出:
 //   autonomous_driving_mode_active_ 和最近模式时间。
-void PathTrackerNode::WorkModeCallback(const weeder_msgs::msg::WorkMode::SharedPtr msg) {
+void PathTrackerNode::WorkModeCallback(const vehicle_interfaces::msg::WorkMode::SharedPtr msg) {
   last_work_mode_time_            = now();
   const bool first_mode           = !ever_got_work_mode_;
   ever_got_work_mode_             = true;
-  autonomous_driving_mode_active_ = (msg->mode == weeder_msgs::msg::WorkMode::MODE_UNMANNED);
+  autonomous_driving_mode_active_ = (msg->mode == vehicle_interfaces::msg::WorkMode::MODE_UNMANNED);
 
   // 仅在模式变化时记录日志，避免 1 Hz 重发刷屏。
   // last_mode_ 同时用于变化检测；首条消息时其初值为 0。
@@ -372,7 +372,7 @@ void PathTrackerNode::WorkModeCallback(const weeder_msgs::msg::WorkMode::SharedP
 //   msg : 感知有效性、停车要求和障碍统计
 // 输出:
 //   避停相关成员及最近状态时间。
-void PathTrackerNode::ObstacleStatusCallback(const weeder_msgs::msg::ObstacleStatus::SharedPtr msg) {
+void PathTrackerNode::ObstacleStatusCallback(const vehicle_interfaces::msg::ObstacleStatus::SharedPtr msg) {
   last_obstacle_status_time_ = now();
   has_obstacle_status_       = true;
   obstacle_sensor_valid_     = msg->sensor_valid;
@@ -395,11 +395,11 @@ void PathTrackerNode::ObstacleStatusCallback(const weeder_msgs::msg::ObstacleSta
 //   msg : 稻行中心线观测
 // 输出:
 //   line_reference_、会话序号和最后采集时间；无效观测会撤销缓存有效性
-void PathTrackerNode::CropRowCallback(const weeder_msgs::msg::CropRowObservation::SharedPtr msg) {
+void PathTrackerNode::CropRowCallback(const vehicle_interfaces::msg::CropRowObservation::SharedPtr msg) {
   const rclcpp::Time now_time = now();
   const rclcpp::Time capture_time(msg->header.stamp);
   const double capture_age_s            = (now_time - capture_time).seconds();
-  const bool valid_observation_state    = msg->status == weeder_msgs::msg::CropRowObservation::VALID && msg->has_capture_time && !msg->replay;
+  const bool valid_observation_state    = msg->status == vehicle_interfaces::msg::CropRowObservation::VALID && msg->has_capture_time && !msg->replay;
   const bool valid_observation_identity = !msg->session_id.empty() && msg->sequence != 0;
   const bool valid_tracking_values      = std::isfinite(msg->lateral_error_m) && std::isfinite(msg->heading_error_rad);
   const bool valid_capture_time         = capture_time.nanoseconds() > 0;
@@ -502,7 +502,7 @@ const char* PathTrackerNode::ReferenceSourceName(ReferenceSource source) {
 // 副作用:
 //   发布 /chassis/cmd，并清零速度斜坡和转角速率状态。
 void PathTrackerNode::PublishStop() {
-  weeder_msgs::msg::ChassisCmd zero;
+  vehicle_interfaces::msg::ChassisCmd zero;
   zero.gear            = 0;
   zero.steer_mode      = 0;
   zero.release_brake   = false;
@@ -586,14 +586,14 @@ void PathTrackerNode::ControlTick() {
   }
 
   // ---- 门控 4：点云避停安全门控 ----
-  if (require_velocity_planner_) {
+  if (require_obstacle_monitor_) {
     const double obstacle_status_age_s = has_obstacle_status_ ? (t - last_obstacle_status_time_).seconds() : 0.0;
-    if (!has_obstacle_status_ || obstacle_status_age_s > velocity_planner_status_timeout_s_) {
+    if (!has_obstacle_status_ || obstacle_status_age_s > obstacle_monitor_status_timeout_s_) {
       SPDLOG_WARN(
         "避停状态不可用或超时（{:.2f}s > {:.2f}s），"
         "输出停车",
         obstacle_status_age_s,
-        velocity_planner_status_timeout_s_);
+        obstacle_monitor_status_timeout_s_);
       PublishStop();
       return;
     }
@@ -711,7 +711,7 @@ void PathTrackerNode::ControlTick() {
 
   // 速度与转角在同一帧发布，保证 CAN 桥使用的是同一控制周期内的运动学组合。
   // 转角单位为 rad、左正，与 ADCU_toVCU_01 的符号约定一致。
-  weeder_msgs::msg::ChassisCmd cmd;
+  vehicle_interfaces::msg::ChassisCmd cmd;
   cmd.gear            = 1;
   cmd.steer_mode      = static_cast<uint8_t>(steer_mode);
   cmd.release_brake   = true;

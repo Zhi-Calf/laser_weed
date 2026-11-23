@@ -14,9 +14,9 @@ GNSS 接收机
     ▼
 gnss_localization ──/gnss_driver/pose──► path_tracker
 global_path_planner ──/global_path_planner/path──► path_tracker
-    (weeder_msgs/msg/Path；YAML poly 首个顶点 = ENU 原点)
+    (vehicle_interfaces/msg/Path；YAML poly 首个顶点 = ENU 原点)
 
-path_tracker ──/chassis/cmd──► weeder_base ──CAN──► VCU
+path_tracker ──/chassis/cmd──► chassis_driver ──CAN──► VCU
                 (速度 + 前轮转角)          │
                                            └──/chassis/state
 
@@ -29,21 +29,21 @@ path_tracker ──/chassis/cmd──► weeder_base ──CAN──► VCU
 速腾 E1R
     │ Ethernet / UDP（默认 6699、7788）
     ▼
-rslidar_sdk ──/rslidar_points──► velocity_planner ──/velocity_planner/status──►
+rslidar_sdk ──/rslidar_points──► obstacle_monitor_node ──/obstacle_monitor/status──►
                                   (PointCloud2)       (ObstacleStatus)
                                                                   │
                                                                   ▼
                                                      path_tracker 避停安全门控
 ```
 
-`velocity_planner` 只负责雷达坐标系下的 ROI 判定和故障状态，不发布
+`obstacle_monitor_node` 只负责雷达坐标系下的 ROI 判定和故障状态，不发布
 `/chassis/cmd`；
 `path_tracker` 仍是底盘指令的唯一发布者。
 
 仿真时，`sim_vehicle` 同时替代 `gnss_localization` 和真实底盘，形成闭环：
 
 ```text
-sim_vehicle ──/gnss_driver/pose──► path_tracker
+sim_vehicle_node ──/gnss_driver/pose──► path_tracker
      ▲                                  │
      └──────/chassis/cmd─────────┘
 ```
@@ -55,10 +55,10 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker
 | `gnss_localization` | 读取 RTK GIAVP 数据，投影到 ENU，发布 `Pose`、origin 和 `odom→base_link` TF；提供 NTRIP 与千寻 SDK 两种差分客户端 |
 | `global_path_planner` | 根据 YAML 中的田块边界生成弓字形全覆盖路径 |
 | `path_tracker` | 四轮转向统一 LQR 路径跟踪，输出统一底盘指令 `/chassis/cmd` |
-| `weeder_base` | CAN 协议编解码、SocketCAN 驱动、50Hz 指令发送、10Hz 状态发布、全部底盘/BMS 状态接收 |
-| `weeder_msgs` | 车辆、BMS、GNSS、工作模式、全覆盖路径、点云避停状态等 ROS2 消息 |
-| `weeder_comm_gateway` | 云平台 MQTT 桥接与 APP 局域网 HTTP/HTTPS 路径服务 |
-| `velocity_planner` | 直接在 E1R 点云坐标系中执行前向矩形 ROI 判定并发布避停状态 |
+| `chassis_driver` | CAN 协议编解码、SocketCAN 驱动、50Hz 指令发送、10Hz 状态发布、全部底盘/BMS 状态接收 |
+| `vehicle_interfaces` | 车辆、BMS、GNSS、工作模式、全覆盖路径、点云避停状态等 ROS2 消息 |
+| `comm_gateway` | 云平台 MQTT 桥接与 APP 局域网 HTTP/HTTPS 路径服务 |
+| `velocity_planner` | 速度规划包；当前提供 E1R 点云 ROI 避停监控，后续扩展连续速度规划 |
 | `rslidar_sdk` | 速腾 E1R 激光雷达 ROS 2 驱动；解析 UDP 数据包并发布 `PointCloud2` |
 | `rslidar_msg` | 速腾激光雷达原始 `RslidarPacket` 消息，供驱动录制/回放 packet 使用 |
 | `sim_vehicle` | 无硬件四轮转向仿真：模拟 RTK、四轮转角/轮速、底盘状态和工作模式，并可一键启动完整链路 |
@@ -71,7 +71,7 @@ sim_vehicle ──/gnss_driver/pose──► path_tracker
 
 ## 路径消息
 
-`/global_path_planner/path` 使用自定义消息 `weeder_msgs/msg/Path`，
+`/global_path_planner/path` 使用自定义消息 `vehicle_interfaces/msg/Path`，
 供 `path_tracker` 跟踪：
 
 ```text
@@ -107,7 +107,7 @@ WORK/TURN 路径点，并保留 `~/path_points` 兼容旧订阅。
 | 话题 / 类型 | 内容 | 用途 |
 |---|---|---|
 | `/rslidar_points`<br>`sensor_msgs/msg/PointCloud2` | 已解码的 x、y、z、intensity 点云 | 避停节点的输入 |
-| `/velocity_planner/status`<br>`weeder_msgs/msg/ObstacleStatus` | 感知是否有效、是否停车、ROI 点数与最近距离 | `path_tracker` 避停门控 |
+| `/obstacle_monitor/status`<br>`vehicle_interfaces/msg/ObstacleStatus` | 感知是否有效、是否停车、ROI 点数与最近距离 | `path_tracker` 避停门控 |
 | `/rslidar_packets`<br>`rslidar_msg/msg/RslidarPacket` | 雷达原始 MSOP/DIFOP 数据包 | 可选的数据包录制与回放，不直接用于避停 |
 
 当前构建使用 `POINT_TYPE=XYZI`，因此默认点云字段为
@@ -194,8 +194,8 @@ ROI 内的有效点，不进行 TF 变换。默认 ROI 为前向 `0~2m`、左右
 包络、雷达安装位置和实际刹停距离现场标定。
 
 ```bash
-ros2 launch velocity_planner velocity_planner.launch.py
-ros2 topic echo /velocity_planner/status
+ros2 launch velocity_planner obstacle_monitor.launch.py
+ros2 topic echo /obstacle_monitor/status
 ```
 
 判定规则：
@@ -204,7 +204,7 @@ ros2 topic echo /velocity_planner/status
 - 点云不可用或点云结果超过 `cloud_timeout_s`：
   `sensor_valid=false`、`stop_required=true`
 - 障碍消失后继续保持停车 `stop_hold_s`（默认 `0.3s`）
-- `path_tracker` 在 `require_velocity_planner=true` 时检查状态新鲜度；默认
+- `path_tracker` 在 `require_obstacle_monitor=true` 时检查状态新鲜度；默认
   `0.5s` 内没有新状态即按失效停车
 
 避停节点不直接控制车辆。`path_tracker` 触发门控时输出零速、零转角、
@@ -216,7 +216,7 @@ ros2 topic echo /velocity_planner/status
 
 ```text
 话题：/chassis/cmd
-类型：weeder_msgs/msg/ChassisCmd
+类型：vehicle_interfaces/msg/ChassisCmd
 
 std_msgs/Header header
 
@@ -229,15 +229,15 @@ bool estop
 bool ctrl_mode
 ```
 
-`path_tracker` 每拍发布一次该消息，`weeder_base/chassis_node` 接收后转换为
+`path_tracker` 每拍发布一次该消息，`chassis_driver/chassis_driver_node` 接收后转换为
 `ADCU_toVCU_01`（`0x0C01D01C`），以 20ms（50Hz）周期发送给 VCU。
 
-手动遥控或测试工具也必须发布 `weeder_msgs/msg/ChassisCmd`，不再使用
+手动遥控或测试工具也必须发布 `vehicle_interfaces/msg/ChassisCmd`，不再使用
 `geometry_msgs/Twist` 或单独的转角话题。
 
 ## 底盘状态
 
-`weeder_base` 接收协议第二版修中的全部上行帧：
+`chassis_driver` 接收协议第二版修中的全部上行帧：
 
 - `State_01~11`：底盘主状态、四轮转速、四轮转角、行走/转向电机电参
 - `State_21~22`：BMS SOC、电压、电流（放电为正、充电为负）、容量、循环次数、故障码和电芯电压
@@ -245,7 +245,7 @@ bool ctrl_mode
 统一发布为：
 
 ```text
-/chassis/state  weeder_msgs/msg/ChassisState
+/chassis/state  vehicle_interfaces/msg/ChassisState
 ```
 
 每个状态块带有 `*_valid` 标志，用于区分“值为 0”和“尚未收到该帧”。
@@ -274,7 +274,7 @@ source install/setup.bash
 单独构建底盘通讯：
 
 ```bash
-colcon build --packages-up-to weeder_base
+colcon build --packages-up-to chassis_driver
 ```
 
 单独构建激光雷达驱动（同时构建其消息依赖）：
@@ -292,24 +292,24 @@ colcon build --packages-up-to velocity_planner path_tracker
 ## 仿真
 
 ```bash
-ros2 launch sim_vehicle weeder_sim.launch.py
+ros2 launch sim_vehicle sim.launch.py
 ```
 
 启动内容包括：
 
-- `sim_vehicle`：模拟 RTK、车辆运动学和工作模式
+- `sim_vehicle_node`：模拟 RTK、车辆运动学和工作模式
 - `global_path_planner`：从 YAML 读取田块并自动规划
 - `path_tracker`
-- `sim_orchestrator`：确认路径生成后自动切换 UNMANNED
+- `sim_orchestrator_node`：确认路径生成后自动切换 UNMANNED
 - `rviz2`：预置可视化
 
 无雷达仿真不启动 `velocity_planner`，并通过 launch 显式设置
-`require_velocity_planner=false`，保持原有闭环可运行。
+`require_obstacle_monitor=false`，保持原有闭环可运行。
 
 常用参数：
 
 ```bash
-ros2 launch sim_vehicle weeder_sim.launch.py \
+ros2 launch sim_vehicle sim.launch.py \
   ridge_width:=3.0 target_v:=0.8 rviz:=false
 ```
 
@@ -339,9 +339,9 @@ sudo ip link set can0 up type can bitrate 500000
 ros2 run rslidar_sdk rslidar_sdk_node --ros-args \
   -p config_path:=$PWD/src/laser_weed/rslidar_sdk/config/config.yaml
 
-ros2 launch velocity_planner velocity_planner.launch.py
+ros2 launch velocity_planner obstacle_monitor.launch.py
 
-ros2 launch gnss_localization localization.launch.py
+ros2 launch gnss_localization br100a_driver.launch.py
 # 外置差分方案二选一（接收机自带 4G/RTCM 时不要启动）
 ros2 launch gnss_localization ntrip_client.launch.py
 # 或
@@ -349,7 +349,7 @@ ros2 launch gnss_localization sdk_client.launch.py
 
 ros2 launch global_path_planner planner.launch.py
 ros2 launch path_tracker path_tracker.launch.py
-ros2 launch weeder_base can.launch.py interface:=can0
+ros2 launch chassis_driver can.launch.py interface:=can0
 ```
 
 `sdk_client` 使用随包的千寻 SDK 1.29.5 release 库，当前提供的是
@@ -368,30 +368,30 @@ ros2 topic echo /global_path_planner/path --once \
   --field x --truncate-length 5
 
 # 路径正常后持续发布 UNMANNED
-ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
+ros2 topic pub -r 1 /work_mode vehicle_interfaces/msg/WorkMode \
   "{mode: 1, mode_name: unmanned}"
 ```
 
-`weeder_base` 默认接口是 `vcan0`，实车必须显式设为 `can0` 或实际接口名。
+`chassis_driver` 默认接口是 `vcan0`，实车必须显式设为 `can0` 或实际接口名。
 
 ## 实车配置
 
 | 配置 | 位置 | 说明 |
 |---|---|---|
-| 天线杆臂 `calib_offset_x/y` | `gnss_localization/config/gnss_driver.yaml` | 必须按实车安装位置测量 |
+| 天线杆臂 `calib_offset_x/y` | `gnss_localization/config/br100a_driver.yaml` | 必须按实车安装位置测量 |
 | 串口 | `gnss_localization/config/*.yaml` | 按实际 `/dev/ttyUSB*` 或 `/dev/ttyACM*` 配置 |
 | 差分账号 | `ntrip_client.yaml` / `sdk_client.yaml` | 按设备分别配置；SDK 1.29 还需配置 `sdk_openapi_host/port`、`sdk_oss_host/port` 和 NOSR 坐标框架/历元 |
-| ENU 原点 | `gnss_localization/config/gnss_driver.yaml` | `origin_lat` / `origin_lon` / `origin_alt`，必须等于 `poly` 第一个顶点 |
+| ENU 原点 | `gnss_localization/config/br100a_driver.yaml` | `origin_lat` / `origin_lon` / `origin_alt`，必须等于 `poly` 第一个顶点 |
 | 田块顶点 / 垄宽 / 田边余量 | `global_path_planner/config/global_path_planner.yaml` | `poly` / `ridge_width` / `field_margin`，修改后重启规划器 |
 | `wheelbase` | `path_tracker/config/path_tracker.yaml` | 填真实前后轴距；对称阿克曼的等效轴距由控制器自动取 `L/2` |
 | `work/turn_steer_mode` | `path_tracker` | 默认 WORK=0（单阿克曼）、TURN=1（对称阿克曼） |
 | `cmd_topic` | 两侧配置文件 | 默认 `/chassis/cmd` |
-| `can_interface` | `weeder_base/config/weeder_base.yaml` | 仿真用 `vcan0`，实车用 `can0` |
+| `can_interface` | `chassis_driver/config/chassis_driver_node.yaml` | 仿真用 `vcan0`，实车用 `can0` |
 | 雷达型号 | `rslidar_sdk/config/config.yaml` | E1R 必须使用 `lidar_type: RSE1`，不能保留 `RSM1` |
 | 雷达端口 | 同上 | 默认接收 UDP `6699`（MSOP）和 `7788`（DIFOP） |
 | 雷达时钟 | 同上 | `use_lidar_clock: true` 时需先完成雷达与主机时间同步 |
-| ROI 坐标系 | `velocity_planner/config/velocity_planner.yaml` | 直接使用点云自身坐标系，无需 `base_link↔rslidar` TF |
-| 避停 ROI | `velocity_planner/config/velocity_planner.yaml` | 前向范围、半宽、高度和最少点数 |
+| ROI 坐标系 | `velocity_planner/config/obstacle_monitor_node.yaml` | 直接使用点云自身坐标系，无需 `base_link↔rslidar` TF |
+| 避停 ROI | `velocity_planner/config/obstacle_monitor_node.yaml` | 前向范围、半宽、高度和最少点数 |
 | 避停超时 | 同上 / `path_tracker` | 点云超时默认 `0.5s`，避停状态超时默认 `0.5s` |
 
 ## 安全机制
@@ -407,9 +407,9 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode \
 | 路径未走完 | — |
 | 未偏离跟踪目标过远 | `max_track_error_m` |
 | ROI 内检测到障碍 | `min_obstacle_points` |
-| 避停状态不可用、超时或感知无效 | `require_velocity_planner` / `velocity_planner_status_timeout_s` |
+| 避停状态不可用、超时或感知无效 | `require_obstacle_monitor` / `obstacle_monitor_status_timeout_s` |
 
-`weeder_base` 另有：
+`chassis_driver` 另有：
 
 - 未收到指令或 `/chassis/cmd` 超过 `0.3s` 未更新：N 档、遥控模式、不释放抱闸、车速和转角清零
 - 协议层最终限幅：车速 `0~1400 mm/s`、转角 `±90.0°`
@@ -424,7 +424,7 @@ colcon test
 colcon test-result --verbose
 ```
 
-`weeder_base` 覆盖协议编码、位域、有符号数、范围检查和 BMS 第二版修布局；
+`chassis_driver` 覆盖协议编码、位域、有符号数、范围检查和 BMS 第二版修布局；
 `path_tracker` 覆盖四轮转向运动学、前馈、符号、闭环收敛和协议限幅；
 `global_path_planner` 覆盖弓字形规划、覆盖率、凸性校验、YAML 配置契约、严格线段相交和节点 `/path` 发布契约；
 `gnss_localization` 覆盖 GIAVP 解析、串口组帧和 YAML 参数一致性。
@@ -438,14 +438,14 @@ colcon test-result --verbose
 - `global_path_planner` 仅支持凸多边形田块，不支持田块内障碍物挖空
 - `global_path_planner` 的 `poly` 必须按边界顺序给出且不能自相交；只允许逆序/旋转起点，
   顶点乱序会被拒绝（`is_simple` 校验，状态码 `self_intersecting`）
-- ENU 原点同时配置在 `poly` 第一个顶点和 `gnss_driver.yaml` 的 `origin_*` 中，
+- ENU 原点同时配置在 `poly` 第一个顶点和 GNSS 驱动 YAML 的 `origin_*` 中，
   两处不一致时路径与 GNSS 位姿会产生固定偏移，当前没有运行时一致性校验
 - `sdk_client` 随包的千寻 SDK 1.29.5 release 库仅支持 aarch64；x86 开发机默认只编译源码做 API 检查，不生成可执行文件
 - 千寻 SDK 1.29 默认服务器域名已关闭，`sdk_client.yaml` 中的 OpenAPI/OSS 域名和端口必须显式配置
 - `path_tracker` 仅适用于 `steer_mode=0`（单阿克曼）和 `1`（双阿克曼）
 - 点云避停只做前向矩形几何判定，不进行聚类、障碍分类或路径走廊跟踪；
   默认 ROI 必须按实车重新标定
-- 无雷达仿真通过 `require_velocity_planner=false` 关闭避停门控，不能用于验证避停
+- 无雷达仿真通过 `require_obstacle_monitor=false` 关闭避停门控，不能用于验证避停
 - `rslidar_sdk` 的驱动安装包未单独安装配置文件；部署到其他目录时应通过
   `config_path` 显式传入配置
 - 雷达默认使用自身时钟；接入 E1R 前必须完成时间同步检查
@@ -458,7 +458,7 @@ colcon test-result --verbose
 
 - `gnss_localization`、`global_path_planner` 的部分实现移植自
   组织内部履带拖拉机项目 MegaTrak
-- `weeder_base`、`weeder_msgs` 为激光除草机器人项目自有实现
+- `chassis_driver`、`vehicle_interfaces` 为激光除草机器人项目自有实现
 - `rslidar_sdk` v1.5.20（含 `rs_driver` v1.5.20）和 `rslidar_msg` 来自
   [RoboSense-LiDAR](https://github.com/RoboSense-LiDAR)，使用 BSD-3-Clause 许可证
 - 弓字形覆盖算法部分概念借鉴 [Fields2Cover](https://github.com/Fields2Cover/Fields2Cover)

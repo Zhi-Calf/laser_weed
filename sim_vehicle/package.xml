@@ -23,7 +23,7 @@
   <depend>std_msgs</depend>
   <depend>tf2_msgs</depend>
   <depend>visualization_msgs</depend>
-  <depend>weeder_msgs</depend>
+  <depend>vehicle_interfaces</depend>
 
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch</exec_depend>

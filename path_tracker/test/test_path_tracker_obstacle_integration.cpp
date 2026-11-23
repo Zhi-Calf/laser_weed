@@ -9,23 +9,23 @@
 #include <rclcpp/rclcpp.hpp>
 #include <thread>
 #include <vector>
-#include <weeder_msgs/msg/chassis_cmd.hpp>
-#include <weeder_msgs/msg/crop_row_observation.hpp>
-#include <weeder_msgs/msg/obstacle_status.hpp>
-#include <weeder_msgs/msg/path.hpp>
-#include <weeder_msgs/msg/pose.hpp>
-#include <weeder_msgs/msg/work_mode.hpp>
+#include <vehicle_interfaces/msg/chassis_cmd.hpp>
+#include <vehicle_interfaces/msg/crop_row_observation.hpp>
+#include <vehicle_interfaces/msg/obstacle_status.hpp>
+#include <vehicle_interfaces/msg/path.hpp>
+#include <vehicle_interfaces/msg/pose.hpp>
+#include <vehicle_interfaces/msg/work_mode.hpp>
 
 #include "path_tracker/path_tracker_node.hpp"
 
 namespace {
 
-using weeder_msgs::msg::ChassisCmd;
-using weeder_msgs::msg::CropRowObservation;
-using weeder_msgs::msg::ObstacleStatus;
-using weeder_msgs::msg::Path;
-using weeder_msgs::msg::Pose;
-using weeder_msgs::msg::WorkMode;
+using vehicle_interfaces::msg::ChassisCmd;
+using vehicle_interfaces::msg::CropRowObservation;
+using vehicle_interfaces::msg::ObstacleStatus;
+using vehicle_interfaces::msg::Path;
+using vehicle_interfaces::msg::Pose;
+using vehicle_interfaces::msg::WorkMode;
 
 struct TestPublishers {
   rclcpp::Publisher<Pose>::SharedPtr pose;                 // 定位位姿
@@ -144,8 +144,8 @@ TEST(PathTrackerObstacleIntegration, GatesChassisCommandFromStatus) {
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
-    rclcpp::Parameter("require_velocity_planner", true),
-    rclcpp::Parameter("velocity_planner_status_timeout_s", 1.0),
+    rclcpp::Parameter("require_obstacle_monitor", true),
+    rclcpp::Parameter("obstacle_monitor_status_timeout_s", 1.0),
     rclcpp::Parameter("max_lateral_error_m", 0.3),
     rclcpp::Parameter("speed_ramp_mps2", 10.0),
     rclcpp::Parameter("viz", false),
@@ -166,7 +166,7 @@ TEST(PathTrackerObstacleIntegration, GatesChassisCommandFromStatus) {
   const auto latched_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   publishers.path        = tester->create_publisher<Path>("/global_path_planner/path", latched_qos);
   publishers.mode        = tester->create_publisher<WorkMode>("/work_mode", 10);
-  publishers.obstacle    = tester->create_publisher<ObstacleStatus>("/velocity_planner/status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  publishers.obstacle    = tester->create_publisher<ObstacleStatus>("/obstacle_monitor/status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
 
   const auto pose = MakePose();
   const auto path = MakePath();
@@ -226,7 +226,7 @@ TEST(PathTrackerSegmentIntegration, SwitchesSpeedAndSteerModeByPathType) {
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
-    rclcpp::Parameter("require_velocity_planner", false),
+    rclcpp::Parameter("require_obstacle_monitor", false),
     rclcpp::Parameter("viz", false),
     rclcpp::Parameter("wheelbase", 1.2),
     rclcpp::Parameter("work_speed_m_s", 0.6),
@@ -251,7 +251,7 @@ TEST(PathTrackerSegmentIntegration, SwitchesSpeedAndSteerModeByPathType) {
   const auto latched_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   publishers.path        = tester->create_publisher<Path>("/global_path_planner/path", latched_qos);
   publishers.mode        = tester->create_publisher<WorkMode>("/work_mode", 10);
-  publishers.obstacle    = tester->create_publisher<ObstacleStatus>("/velocity_planner/status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  publishers.obstacle    = tester->create_publisher<ObstacleStatus>("/obstacle_monitor/status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
 
   auto pose       = MakePose();
   pose.x          = 0.8;
@@ -290,7 +290,7 @@ TEST(PathTrackerSegmentIntegration, LoadsChangedPathAndSkipsIdenticalRepublish) 
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
-    rclcpp::Parameter("require_velocity_planner", false),
+    rclcpp::Parameter("require_obstacle_monitor", false),
     rclcpp::Parameter("viz", false),
     rclcpp::Parameter("speed_ramp_mps2", 10.0),
   });
@@ -310,7 +310,7 @@ TEST(PathTrackerSegmentIntegration, LoadsChangedPathAndSkipsIdenticalRepublish) 
   const auto latched_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   publishers.path        = tester->create_publisher<Path>("/global_path_planner/path", latched_qos);
   publishers.mode        = tester->create_publisher<WorkMode>("/work_mode", 10);
-  publishers.obstacle    = tester->create_publisher<ObstacleStatus>("/velocity_planner/status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  publishers.obstacle    = tester->create_publisher<ObstacleStatus>("/obstacle_monitor/status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
 
   auto pose              = MakePose();
   pose.x                 = 1.5;
@@ -390,7 +390,7 @@ TEST(PathTrackerSteerRateIntegration, LimitsSteeringCommandRate) {
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", kControlHz),
-    rclcpp::Parameter("require_velocity_planner", false),
+    rclcpp::Parameter("require_obstacle_monitor", false),
     rclcpp::Parameter("viz", false),
     rclcpp::Parameter("wheelbase", 1.2),
     rclcpp::Parameter("max_lateral_error_m", 0.3),
@@ -411,7 +411,7 @@ TEST(PathTrackerSteerRateIntegration, LimitsSteeringCommandRate) {
   const auto latched_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   publishers.path        = tester->create_publisher<Path>("/global_path_planner/path", latched_qos);
   publishers.mode        = tester->create_publisher<WorkMode>("/work_mode", 10);
-  publishers.obstacle    = tester->create_publisher<ObstacleStatus>("/velocity_planner/status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  publishers.obstacle    = tester->create_publisher<ObstacleStatus>("/obstacle_monitor/status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
 
   auto pose       = MakePose();
   pose.x          = 0.2;
@@ -443,7 +443,7 @@ TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackOnInvalidStatus)
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", kControlHz),
-    rclcpp::Parameter("require_velocity_planner", false),
+    rclcpp::Parameter("require_obstacle_monitor", false),
     rclcpp::Parameter("viz", false),
     rclcpp::Parameter("wheelbase", 1.2),
     rclcpp::Parameter("max_lateral_error_m", 0.3),
@@ -464,7 +464,7 @@ TEST(PathTrackerVisionIntegration, TracksValidVisionAndFallsBackOnInvalidStatus)
   publishers.pose     = tester->create_publisher<Pose>("/gnss_driver/pose", rclcpp::SensorDataQoS());
   publishers.path     = tester->create_publisher<Path>("/global_path_planner/path", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
   publishers.mode     = tester->create_publisher<WorkMode>("/work_mode", 10);
-  publishers.obstacle = tester->create_publisher<ObstacleStatus>("/velocity_planner/status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  publishers.obstacle = tester->create_publisher<ObstacleStatus>("/obstacle_monitor/status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
   publishers.crop     = tester->create_publisher<CropRowObservation>("/crop_row/observation", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
 
   auto pose       = MakePose();
@@ -638,7 +638,7 @@ TEST(PathTrackerVisionIntegration, ReloadedPathStartsFromGlobalReference) {
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
-    rclcpp::Parameter("require_velocity_planner", false),
+    rclcpp::Parameter("require_obstacle_monitor", false),
     rclcpp::Parameter("viz", false),
     rclcpp::Parameter("wheelbase", 1.2),
     rclcpp::Parameter("max_steer_rate_deg_s", 180.0),
@@ -672,7 +672,7 @@ TEST(PathTrackerVisionIntegration, ReloadedPathStartsFromGlobalReference) {
       rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
   publishers.mode = tester->create_publisher<WorkMode>("/work_mode", 10);
   publishers.obstacle = tester->create_publisher<ObstacleStatus>(
-      "/velocity_planner/status",
+      "/obstacle_monitor/status",
       rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
   publishers.crop = tester->create_publisher<CropRowObservation>(
       "/crop_row/observation",
@@ -741,7 +741,7 @@ TEST(PathTrackerVisionIntegration, UsesGlobalPathAndTurnModeInsideWindow) {
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
-    rclcpp::Parameter("require_velocity_planner", false),
+    rclcpp::Parameter("require_obstacle_monitor", false),
     rclcpp::Parameter("viz", false),
     rclcpp::Parameter("wheelbase", 1.2),
     rclcpp::Parameter("row_vision_enabled", true),
@@ -762,7 +762,7 @@ TEST(PathTrackerVisionIntegration, UsesGlobalPathAndTurnModeInsideWindow) {
   publishers.pose     = tester->create_publisher<Pose>("/gnss_driver/pose", rclcpp::SensorDataQoS());
   publishers.path     = tester->create_publisher<Path>("/global_path_planner/path", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
   publishers.mode     = tester->create_publisher<WorkMode>("/work_mode", 10);
-  publishers.obstacle = tester->create_publisher<ObstacleStatus>("/velocity_planner/status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  publishers.obstacle = tester->create_publisher<ObstacleStatus>("/obstacle_monitor/status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
   publishers.crop     = tester->create_publisher<CropRowObservation>("/crop_row/observation", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
 
   auto pose       = MakePose();
@@ -806,7 +806,7 @@ TEST(PathTrackerPathValidationIntegration, IgnoresMalformedWaypointTypes) {
   rclcpp::NodeOptions tracker_options;
   tracker_options.parameter_overrides({
     rclcpp::Parameter("control_hz", 20.0),
-    rclcpp::Parameter("require_velocity_planner", false),
+    rclcpp::Parameter("require_obstacle_monitor", false),
     rclcpp::Parameter("viz", false),
     rclcpp::Parameter("speed_ramp_mps2", 10.0),
   });
@@ -839,7 +839,7 @@ TEST(PathTrackerPathValidationIntegration, IgnoresMalformedWaypointTypes) {
       "/work_mode",
       10);
   publishers.obstacle = tester->create_publisher<ObstacleStatus>(
-      "/velocity_planner/status",
+      "/obstacle_monitor/status",
       rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
 
   auto pose = MakePose();

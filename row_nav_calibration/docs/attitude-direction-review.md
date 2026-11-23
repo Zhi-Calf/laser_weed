@@ -22,7 +22,7 @@
 ## 部署人员接入
 
 ROS 桥接器与页面服务必须运行在同一台主机，使用同一份实时文件。
-桥接器用已加载 ROS 和 weeder_msgs 的系统 Python，页面仍使用自己的 OpenCV Python 环境。
+桥接器用已加载 ROS 和 vehicle_interfaces 的系统 Python，页面仍使用自己的 OpenCV Python 环境。
 先加载 ROS 与本项目安装环境，再启动（以普通 colcon 隔离安装为例）：
 
 ```sh

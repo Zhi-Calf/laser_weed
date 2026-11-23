@@ -1,0 +1,63 @@
+# vehicle_interfaces
+
+激光除草机器人使用的 ROS2 消息定义。
+
+## Messages
+
+| Message | Description |
+|---------|-------------|
+| `ChassisCmd` | 完整底盘指令：档位、转向模式、抱闸、急停、驾驶模式、速度与前轮转角 |
+| `ChassisState` | 激光除草机底盘完整状态：State_01~11 四轮底盘/电机数据与 State_21/22 BMS（电流放电为正、充电为负） |
+| `CalibrationResult` | 标定流程结果、成功标志、说明及 GNSS 标定残差 |
+| `ObstacleStatus` | 点云避停状态：感知有效性、停车请求、ROI 障碍点数和最近距离 |
+| `GnssStatus` | comm_gateway 兼容的 GNSS/RTK 经纬度、航向、速度与定位质量 |
+| `ImplementMode` | PTO 与三点悬挂当前生效的农具模式 |
+| `Path` | 全覆盖路径：`x[]`、`y[]` 与 `waypoint_types[]` 按索引一一对应；`path_tracker` 使用类型字段切换 WORK/TURN 模式和速度 |
+| `CropRowObservation` | 稻行视觉观测：采集时间、会话/序号、有效状态、偏差与耗时；默认可只读观察，也可由 `path_tracker` 的可选视觉 LQR 模式消费 |
+| `Pose` | GNSS/RTK ENU 位姿、roll/pitch/yaw、卫星数、有效性和前向速度 |
+| `WorkMode` | Whole-vehicle work mode (`0`=manual / `1`=unmanned / `2`=calibration), latched so late joiners see the current mode |
+
+当前包含 10 个消息和 1 个服务。
+`CalibrationCommand.srv` 由 comm_gateway 调用；规划器的田块和路径来源仍由
+`global_path_planner/config/global_path_planner.yaml` 配置。
+
+## Consumers
+
+当前工作区中的 `chassis_driver`、`gnss_localization`、
+`global_path_planner`、`path_tracker`、`velocity_planner` 和 `sim_vehicle`
+依赖本包；`comm_gateway` 使用从 `tractor_msgs` 迁移的兼容接口。
+
+## Build
+
+Requires ROS2 Humble.
+
+```bash
+# 在工作区根目录
+colcon build --packages-select vehicle_interfaces
+source install/setup.bash
+```
+
+## Standalone Build
+
+```bash
+colcon build --packages-select vehicle_interfaces
+source install/setup.bash
+
+# Verify messages are available
+ros2 interface list | grep vehicle_interfaces
+ros2 interface show vehicle_interfaces/msg/ChassisState
+```
+
+## Versioning
+
+This package follows [Semantic Versioning](https://semver.org/):
+
+- **MAJOR**: Incompatible message structure changes (field removal, type change)
+- **MINOR**: New message types or new fields (backward-compatible)
+- **PATCH**: Documentation or comment fixes
+
+The version in `package.xml` must match the Git tag before release.
+
+## License
+
+Apache-2.0

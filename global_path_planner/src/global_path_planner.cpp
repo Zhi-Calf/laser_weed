@@ -89,7 +89,7 @@ GlobalPathPlannerNode::GlobalPathPlannerNode(const rclcpp::NodeOptions& options)
 
   loadParameters();
 
-  // poly 的第一个顶点同时作为 ENU 原点，与 gnss_driver.yaml 的 origin_* 保持一致。
+  // poly 的第一个顶点同时作为 ENU 原点，与 GNSS 驱动 YAML 的 origin_* 一致。
   const auto& origin = raw_vertices_.front();
   geo_converter_.Reset(origin[0], origin[1], origin[2]);
   SPDLOG_INFO("ENU 原点 (使用 poly 首个顶点): lat={:.8f} lon={:.8f} alt={:.3f}", origin[0], origin[1], origin[2]);
@@ -104,7 +104,7 @@ GlobalPathPlannerNode::GlobalPathPlannerNode(const rclcpp::NodeOptions& options)
   key_points_pub_            = create_publisher<visualization_msgs::msg::Marker>("~/key_points", 10);
   boundary_points_pub_       = create_publisher<visualization_msgs::msg::Marker>("~/boundary_points", 10);
   inner_boundary_points_pub_ = create_publisher<visualization_msgs::msg::Marker>("~/inner_boundary_points", 10);
-  path_pub_                  = create_publisher<weeder_msgs::msg::Path>("~/path", rclcpp::QoS(1).transient_local());
+  path_pub_                  = create_publisher<vehicle_interfaces::msg::Path>("~/path", rclcpp::QoS(1).transient_local());
 }
 
 // 读取日志配置参数。
@@ -323,7 +323,7 @@ void GlobalPathPlannerNode::timerCallback() {
   inner_boundary_points_pub_->publish(inner_boundary);
 
   // ---- /path: x/y 与段类型分开存放 ----
-  weeder_msgs::msg::Path path_msg;
+  vehicle_interfaces::msg::Path path_msg;
   path_msg.header.frame_id   = "odom";
   path_msg.header.stamp      = stamp;
   const bool have_path_types = (waypoints_.size() == waypoint_types_.size());

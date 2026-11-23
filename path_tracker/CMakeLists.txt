@@ -11,7 +11,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(weeder_msgs REQUIRED)
+find_package(vehicle_interfaces REQUIRED)
 find_package(spdlog_vendor REQUIRED)
 find_package(spdlog REQUIRED)
 
@@ -22,7 +22,7 @@ set(DEPS
   geometry_msgs
   std_msgs
   visualization_msgs
-  weeder_msgs
+  vehicle_interfaces
 )
 
 # ---- 核心库：纯算法，不依赖 ROS 节点 ----
@@ -55,7 +55,7 @@ target_compile_definitions(path_tracker_node_lib PRIVATE
   SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
 )
 
-add_executable(path_tracker_node src/path_tracker_main.cpp)
+add_executable(path_tracker_node apps/path_tracker_main.cpp)
 target_link_libraries(path_tracker_node path_tracker_node_lib)
 ament_target_dependencies(path_tracker_node rclcpp)
 
@@ -89,7 +89,7 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_path_tracker_obstacle_integration
     geometry_msgs
     rclcpp
-    weeder_msgs
+    vehicle_interfaces
   )
   set(path_tracker_integration_result_file
     "${AMENT_TEST_RESULTS_DIR}/${PROJECT_NAME}/test_path_tracker_obstacle_integration.gtest.xml"

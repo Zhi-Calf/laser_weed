@@ -62,9 +62,9 @@ copy_pkg gnss_localization "$MEGATRAK_SRC/sensor_node/gnss_localization"        
 copy_pkg global_path_planner "$MEGATRAK_SRC/navigation_node/global_path_planner" || fail=1
 copy_pkg path_tracker       "$PATH_TRACKER_SRC/path_tracker"                      || fail=1
 
-# weeder_msgs 是本项目自己的接口包，不再从 MegaTrak 的旧消息包拷贝。
-if [[ ! -d "$SRC_DIR/weeder_msgs" ]]; then
-  echo "!! 缺少 weeder_msgs：请先把项目自有的 weeder_msgs 包放入 $SRC_DIR"
+# vehicle_interfaces 是本项目自己的接口包，不再从 MegaTrak 的旧消息包拷贝。
+if [[ ! -d "$SRC_DIR/vehicle_interfaces" ]]; then
+  echo "!! 缺少 vehicle_interfaces：请先把项目自有的 vehicle_interfaces 包放入 $SRC_DIR"
   fail=1
 fi
 
@@ -91,7 +91,7 @@ else
   echo "!! 警告：$MEGATRAK_SRC/scripts 不存在，params_in_yaml 测试可能失败（不影响功能）。"
 fi
 
-echo "== 构建（依赖优先：weeder_msgs -> 其余）=="
+echo "== 构建（依赖优先：vehicle_interfaces -> 其余）=="
 cd "$WS"
 # shellcheck disable=SC1091
 [[ -f /opt/ros/humble/setup.bash ]] && source /opt/ros/humble/setup.bash

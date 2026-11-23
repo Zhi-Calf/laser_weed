@@ -1,4 +1,4 @@
-sim_vehicle:
+sim_vehicle_node:
   ros__parameters:
     # ============================================================
     # spdlog 日志（与其他 ROS 节点保持一致）
@@ -24,7 +24,7 @@ sim_vehicle:
     max_plant_steer_deg: 90.0 # 90 度，对应 pi/2 弧度
     wheel_count: 4            # 当前四轮运动学仅支持 4
 
-sim_orchestrator:
+sim_orchestrator_node:
   ros__parameters:
     # 编排器使用独立日志文件，避免与 sim_vehicle 进程并发写同一文件。
     log_dir: "/opt/agri/logs"

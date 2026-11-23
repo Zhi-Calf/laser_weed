@@ -10,7 +10,7 @@ import unittest
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
-from weeder_msgs.msg import CropRowObservation
+from vehicle_interfaces.msg import CropRowObservation
 
 scripts = Path(__file__).parents[1] / 'scripts'
 sys.path.insert(0, str(scripts))

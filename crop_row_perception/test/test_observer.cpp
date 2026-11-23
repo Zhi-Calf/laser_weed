@@ -1,8 +1,8 @@
 #include "crop_row_perception/observer_node.hpp"
 #include <gtest/gtest.h>
 #include <sensor_msgs/msg/image.hpp>
-#include <weeder_msgs/msg/crop_row_observation.hpp>
-#include <weeder_msgs/msg/pose.hpp>
+#include <vehicle_interfaces/msg/crop_row_observation.hpp>
+#include <vehicle_interfaces/msg/pose.hpp>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-using Observation = weeder_msgs::msg::CropRowObservation;
+using Observation = vehicle_interfaces::msg::CropRowObservation;
 using Image = sensor_msgs::msg::Image;
 using namespace std::chrono_literals;
 extern "C" bool fake_sdk_busy();
@@ -188,21 +188,21 @@ protected:
   bool gateEnabled() const override {return true;}
   void SetUp() override {
     ObserverTest::SetUp();
-    pose_pub = client->create_publisher<weeder_msgs::msg::Pose>(
+    pose_pub = client->create_publisher<vehicle_interfaces::msg::Pose>(
       "/crop_row_test/pose", rclcpp::SensorDataQoS());
     ASSERT_TRUE(wait([this] {return pose_pub->get_subscription_count() == 1;}));
   }
   void poseFor(const Image & image, bool valid = true, double roll = 0,
     int64_t offset_ns = -1000000, const std::string & frame = "odom", double pitch = 0)
   {
-    weeder_msgs::msg::Pose pose;
+    vehicle_interfaces::msg::Pose pose;
     pose.header.stamp = rclcpp::Time(image.header.stamp) +
       rclcpp::Duration(std::chrono::nanoseconds(offset_ns));
     pose.header.frame_id = frame; pose.valid = valid; pose.roll = roll; pose.pitch = pitch;
     pose_pub->publish(pose);
     wait([] {return false;}, 30ms);  // deliver pose before image; no callback ordering assumptions
   }
-  rclcpp::Publisher<weeder_msgs::msg::Pose>::SharedPtr pose_pub;
+  rclcpp::Publisher<vehicle_interfaces::msg::Pose>::SharedPtr pose_pub;
 };
 
 TEST_F(AttitudeObserverTest, NoPoseRejectsAndFreshPoseRecovers) {

@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 #include <visualization_msgs/msg/marker.hpp>
-#include <weeder_msgs/msg/path.hpp>
+#include <vehicle_interfaces/msg/path.hpp>
 
 #include "global_path_planner/bow.hpp"
 
@@ -97,7 +97,7 @@ inline bool parseFirstRowMarginForRidge(double first_row_margin, double ridge_wi
 /// 定时器 (100 ms) 只负责健康判定与重复发布。
 ///
 /// 发布以下话题 (均为节点相对名, 完整名为 /global_path_planner/<topic>):
-///   ~/path                  全局路径 (weeder_msgs/Path, transient_local; x/y + waypoint_types,
+///   ~/path                  全局路径 (vehicle_interfaces/Path, transient_local; x/y + waypoint_types,
 ///                           0=作业 / 1=掉头), 供 path_tracker 跟踪并选择速度与转向模式
 ///   ~/path_points           路径点的 RViz marker
 ///   ~/work_points           WORK(0) 路径点的 RViz marker (绿色)
@@ -125,7 +125,7 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr key_points_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr boundary_points_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr inner_boundary_points_pub_;
-  rclcpp::Publisher<weeder_msgs::msg::Path>::SharedPtr path_pub_;
+  rclcpp::Publisher<vehicle_interfaces::msg::Path>::SharedPtr path_pub_;
 
 private:
   GeographicLib::LocalCartesian geo_converter_;   // 经纬度 <-> ENU 平面 (原点 = /gnss_driver/origin)

@@ -3,9 +3,9 @@
              schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>velocity_planner</name>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <description>
-    Point-cloud velocity planner and obstacle-stop monitor for the laser weeder.
+    Velocity planning package. The current module provides point-cloud obstacle monitoring and stop decisions.
   </description>
   <maintainer email="dev@weeder.local">dev</maintainer>
   <license>Apache-2.0</license>
@@ -15,7 +15,7 @@
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
-  <depend>weeder_msgs</depend>
+  <depend>vehicle_interfaces</depend>
   <depend>spdlog_vendor</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>

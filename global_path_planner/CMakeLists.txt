@@ -23,7 +23,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
-find_package(weeder_msgs REQUIRED)
+find_package(vehicle_interfaces REQUIRED)
 find_package(Eigen3 3.3 REQUIRED)
 find_package(spdlog_vendor REQUIRED)
 find_package(spdlog REQUIRED)
@@ -55,13 +55,13 @@ set(dependencies
   rclcpp
   geometry_msgs
   visualization_msgs
-  weeder_msgs
+  vehicle_interfaces
 )
 
 # ---- Library ----
 # 算法 + 节点实现编进库, 可执行文件只留 main()。
 #   * ${PROJECT_NAME}_lib : 规划内核 (src/bow.cpp) + 节点实现 (src/global_path_planner.cpp);
-#   * ${PROJECT_NAME}_node: 薄可执行文件 (src/global_path_planner_main.cpp)。
+#   * ${PROJECT_NAME}_node: 薄可执行文件 (apps/global_path_planner_main.cpp)。
 # 单测与其它消费者直接链库: 算法只编一遍, 且与真机跑的是同一份目标文件。
 add_library(${PROJECT_NAME}_lib SHARED
   src/bow.cpp
@@ -104,7 +104,7 @@ target_compile_definitions(${PROJECT_NAME}_lib PRIVATE
 
 # ---- Standalone executable (只有 main) ----
 add_executable(${PROJECT_NAME}_node
-  src/global_path_planner_main.cpp
+  apps/global_path_planner_main.cpp
 )
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_lib)
 ament_target_dependencies(${PROJECT_NAME}_node rclcpp)
@@ -229,7 +229,7 @@ if(BUILD_TESTING)
     test_global_path_planner_node
     rclcpp
     visualization_msgs
-    weeder_msgs
+    vehicle_interfaces
   )
 endif()
 

@@ -7,7 +7,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sim_vehicle/sim_orchestrator_node.hpp"
 #include "std_msgs/msg/bool.hpp"
-#include "weeder_msgs/msg/path.hpp"
+#include "vehicle_interfaces/msg/path.hpp"
 
 namespace sim_vehicle {
 namespace {
@@ -36,13 +36,13 @@ TEST(SimOrchestratorNodeTest, PublishesUnmannedAfterPath) {
 
   std::atomic<bool> received_unmanned{false};
   const auto latched_qos   = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
-  auto path_publisher      = helper->create_publisher<weeder_msgs::msg::Path>("/global_path_planner/path", latched_qos);
+  auto path_publisher      = helper->create_publisher<vehicle_interfaces::msg::Path>("/global_path_planner/path", latched_qos);
   auto status_subscription = helper->create_subscription<std_msgs::msg::Bool>("/sim/unmanned", latched_qos, [&received_unmanned](const std_msgs::msg::Bool::SharedPtr message) {
     received_unmanned.store(message->data);
   });
 
   WaitForDiscovery(executor);
-  weeder_msgs::msg::Path path;
+  vehicle_interfaces::msg::Path path;
   path.x              = {0.0, 1.0};
   path.y              = {0.0, 0.0};
   path.waypoint_types = {0, 0};

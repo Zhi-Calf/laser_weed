@@ -19,7 +19,7 @@
 #include "gnss_localization/gga_status_parser.hpp"
 #include "gnss_localization/inspvaa_parser.hpp"
 #include "gnss_localization/serial_port.hpp"
-#include "weeder_msgs/msg/pose.hpp"
+#include "vehicle_interfaces/msg/pose.hpp"
 namespace gnss_localization {
 
 // GIAVP 解算状态常量 (与 giavp_parser.hpp 中 GiavpData::status 语义一致)。
@@ -28,23 +28,21 @@ constexpr int kStatusRtkFixed = 4;   // RTK 固定解
 
 /// 双天线 MEMS 组合导航 (INS/GNSS) 驱动节点。
 ///
-/// 从串口读取 $GIAVP，或 NAV3120 的 INSPVAA + GGA，发布以下话题 (均为节点相对名, 完整名为
-/// /gnss_driver/<topic>):
-///   ~/fix            原始经纬度 (设备 INS 解算, NavSatFix)
-///   ~/pose           修正 ENU 位姿 (weeder_msgs/Pose, 含姿态/卫星数/有效性/速度)
-///   ~/pose_stamped   修正 ENU 位姿 (geometry_msgs/PoseStamped, 供 RViz 显示)
-///   ~/odom_raw       原始里程计 (设备中心 gnss_link + 原始测向航向, 无任何修正), **仅供标定**
-///   ~/imu            IMU 姿态 (含 ENU yaw), sensor_msgs/Imu
-///   ~/vel            车体系速度 (TwistWithCovarianceStamped, x 前 y 左 z 上)
-///   ~/origin     ENU 起点经纬度 (优先取 YAML origin_*, 否则取上电后首次固定解), transient_local +
-///                    1 Hz 低频重发, 供 global_path_planner / local_path_planner
-///                    作规划原点 (保证全链路同原点; path_controller 直接订阅
-///                    ~/pose, 已含同原点的修正 ENU 位姿)。
+/// 从串口读取 BR100A 的 $GIAVP，或 NAV3120 的 INSPVAA + GGA。
+/// 两种硬件共用以下固定话题，运行时节点名不会改变外部接口：
+///   /gnss_driver/fix
+///   /gnss_driver/pose
+///   /gnss_driver/pose_stamped
+///   /gnss_driver/odom_raw
+///   /gnss_driver/imu
+///   /gnss_driver/vel
+///   /gnss_driver/origin
 class GnssDriver : public rclcpp::Node {
 public:
-  // 创建 GNSS 驱动节点并加载参数。
   explicit GnssDriver(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
-  // 停止定时器并关闭串口。
+  explicit GnssDriver(
+      const std::string& node_name,
+      const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
   ~GnssDriver() override;
 
 private:
@@ -101,7 +99,7 @@ private:
 
 private:
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr fix_pub_;
-  rclcpp::Publisher<weeder_msgs::msg::Pose>::SharedPtr pose_pub_;
+  rclcpp::Publisher<vehicle_interfaces::msg::Pose>::SharedPtr pose_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_stamped_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_raw_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;

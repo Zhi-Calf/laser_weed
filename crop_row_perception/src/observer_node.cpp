@@ -3,8 +3,8 @@
 #include "crop_row_perception/attitude_gate.hpp"
 #include <sensor_msgs/msg/image.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
-#include <weeder_msgs/msg/crop_row_observation.hpp>
-#include <weeder_msgs/msg/pose.hpp>
+#include <vehicle_interfaces/msg/crop_row_observation.hpp>
+#include <vehicle_interfaces/msg/pose.hpp>
 #include <chrono>
 #include <limits>
 #include <thread>
@@ -12,7 +12,7 @@
 
 namespace crop_row_perception
 {
-using Observation = weeder_msgs::msg::CropRowObservation;
+using Observation = vehicle_interfaces::msg::CropRowObservation;
 using Image = sensor_msgs::msg::Image;
 class ObserverNode::Impl
 {
@@ -100,9 +100,9 @@ public:
     // Volatile QoS: late subscribers must never inherit a cached VALID result.
     pub_ = node_.create_publisher<Observation>(output, rclcpp::QoS(1).reliable().durability_volatile());
     if (attitude_gate_) {
-      pose_sub_ = node_.create_subscription<weeder_msgs::msg::Pose>(
+      pose_sub_ = node_.create_subscription<vehicle_interfaces::msg::Pose>(
         pose_topic, rclcpp::SensorDataQoS().keep_last(128),
-        [this](weeder_msgs::msg::Pose::ConstSharedPtr pose) {
+        [this](vehicle_interfaces::msg::Pose::ConstSharedPtr pose) {
           const int64_t stamp = static_cast<int64_t>(pose->header.stamp.sec) * 1000000000LL +
             pose->header.stamp.nanosec;
           const bool valid = pose->valid && pose->header.frame_id == pose_frame_ &&
@@ -304,7 +304,7 @@ private:
   Observation last_result_;
   rclcpp::Publisher<Observation>::SharedPtr pub_;
   rclcpp::Subscription<Image>::SharedPtr sub_;
-  rclcpp::Subscription<weeder_msgs::msg::Pose>::SharedPtr pose_sub_;
+  rclcpp::Subscription<vehicle_interfaces::msg::Pose>::SharedPtr pose_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameter_guard_;
 };

@@ -18,7 +18,7 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include "gnss_localization/gnss_driver.hpp"
-#include "weeder_msgs/msg/pose.hpp"
+#include "vehicle_interfaces/msg/pose.hpp"
 
 namespace {
 
@@ -135,16 +135,21 @@ TEST(Nav3120Driver, GgaControlsFixAndSatelliteStatus) {
     "-p", "log_enable_console:=false",
     "-p", "log_dir:=/tmp",
   });
-  auto driver = std::make_shared<gnss_localization::GnssDriver>(options);
+  auto driver = std::make_shared<gnss_localization::GnssDriver>(
+      "nav3120_driver_node", options);
   auto listener = std::make_shared<rclcpp::Node>("nav3120_driver_test_listener");
+  EXPECT_EQ(driver->get_name(), std::string("nav3120_driver_node"));
+  const auto topics = driver->get_topic_names_and_types();
+  EXPECT_NE(topics.find("/gnss_driver/pose"), topics.end());
+  EXPECT_EQ(topics.find("/nav3120_driver_node/pose"), topics.end());
 
   std::mutex pose_mutex;
-  std::vector<weeder_msgs::msg::Pose> poses;
+  std::vector<vehicle_interfaces::msg::Pose> poses;
   std::atomic<std::size_t> pose_count{0};
-  auto subscription = listener->create_subscription<weeder_msgs::msg::Pose>(
+  auto subscription = listener->create_subscription<vehicle_interfaces::msg::Pose>(
     "/gnss_driver/pose",
     rclcpp::SensorDataQoS(),
-    [&](const weeder_msgs::msg::Pose& pose) {
+    [&](const vehicle_interfaces::msg::Pose& pose) {
       std::lock_guard<std::mutex> lock(pose_mutex);
       poses.push_back(pose);
       pose_count.fetch_add(1);

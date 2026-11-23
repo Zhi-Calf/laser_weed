@@ -1,0 +1,66 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/),
+and this project adheres to [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+### Changed
+
+- **BREAKING:** ROS 包名由 `weeder_msgs` 改为 `vehicle_interfaces`。
+  C++ 类型命名空间、Python 导入路径和全部下游依赖同步迁移。
+
+### Added
+
+- 为 `comm_gateway` 迁移原 `tractor_msgs` 的 `GnssStatus`、`CalibrationResult`、
+  `ImplementMode` 消息和 `CalibrationCommand.srv`。新增接口保持原字段和常量编号，
+  便于桥接节点逐步适配。
+- 新增 `ObstacleStatus.msg`，用于点云避停节点向 `path_tracker` 报告感知有效性、
+  停车请求、ROI 障碍点数和最近障碍距离。
+- 新增 `Pose.msg`，直接提供 ENU 位姿、roll/pitch/yaw、卫星数、有效性和
+  车体前向速度。
+
+### Changed
+
+- **BREAKING:** 删除 `GnssStatus.msg`。GNSS 驱动的 `/gnss_driver/status`
+  由 `weeder_msgs/msg/Pose` 的 `/gnss_driver/pose` 取代。
+
+### Removed
+
+- 删除仓库内无调用方的 `CalibrationCommand.srv`、`SetImplementMode.srv`
+  和 `ExecutePath.action`。
+- 删除 `SetPathSource.srv`；`global_path_planner` 改为从 YAML 读取地块顶点、
+  垄宽、田边余量和 PTO 行内分辨率。
+- 删除无节点发布或订阅的 `CalibrationResult.msg`、`FaultReport.msg`、
+  `Heartbeat.msg`、`ImplementCmd.msg`、`ImplementMode.msg`、`NodeHealth.msg`、
+  `RobotStatus.msg` 和 `SystemHealth.msg`。
+
+### Changed
+
+- **BREAKING:** 包名由 `tractor_msgs` 改为 `weeder_msgs`。
+- `ChassisState` 改为激光除草机第二版 CAN 协议定义，并从 `weeder_base` 迁入本包。
+- **破坏性变更：** 用 `CalibrationCommand.srv` 取代 `CalibrationCmd.msg`。
+  标定指令从"向 `/calibration_cmd` 话题发布"改为"调用 `/calibration_manager/command`
+  服务"：响应携带 `accepted` + `state` + `reason`，调用方不必再轮询
+  `/calibration_manager/status` 判断指令是否被受理（被拒的 START 会直接说明原因）。
+  服务端由 `tractor_calibration` 提供；`robot-tool` 的 `tractor_calibration_ui` 必须从
+  发布者改为服务客户端。
+- **BREAKING:** renamed the package `agri_msgs` -> `tractor_msgs`. Downstream
+  code must update `find_package`/`<depend>` entries and the
+  `agri_msgs/msg/...` include paths and interface names to `tractor_msgs`.
+- Split out of the MegaTrak workspace into a standalone repository, consumed
+  there as a git submodule.
+
+## [0.1.0] - 2026-03-03
+
+### Added
+
+- `ChassisCmd.msg` — 车辆运动控制指令（速度 + 前轮转角）
+- `ChassisState.msg` — chassis state feedback from VCU CAN bus (V2 protocol)
+- `CalibrationCmd.msg` — calibration command (type, action, parameters)
+- `CalibrationResult.msg` — calibration result (speed, steering, deadzone, slip)
+- `RobotStatus.msg` — robot status for cloud reporting
+- `TaskState.msg` — task execution state for telemetry
+- Extracted from `robot-core/agri_msgs` into standalone organization-wide package

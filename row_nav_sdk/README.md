@@ -42,7 +42,7 @@ bash scripts/build_crop_row.sh
 source install/crop-row-source/setup.bash
 ```
 
-顺序由依赖图保证：`row_nav_sdk` 和现有 `weeder_msgs` 先完成，随后编译
+顺序由依赖图保证：`row_nav_sdk` 和现有 `vehicle_interfaces` 先完成，随后编译
 `crop_row_perception`。脚本构建及测试，不启动相机、定位、规划或控制节点。
 使用新构建前缀以避开原来预编译 SDK 的 CMake 缓存，不删除旧构建目录。
 `--build-only` 可跳过测试；RK 平台可传 `--with-rknn --rknn-root PATH`。

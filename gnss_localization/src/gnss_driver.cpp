@@ -21,6 +21,13 @@ constexpr double kVerticalAccuracyScale = 2.0;
 constexpr double kVelocityStd           = 0.05;        // m/s (人工标定: 速度精度 < 0.05 m/s 1-sigma)
 constexpr int64_t kGpsEpochUnixSec      = 315964800;   // 1980-01-06 00:00:00 UTC
 constexpr double kSecondsPerWeek        = 604800.0;
+constexpr const char* kFixTopic         = "/gnss_driver/fix";
+constexpr const char* kPoseTopic        = "/gnss_driver/pose";
+constexpr const char* kPoseStampedTopic = "/gnss_driver/pose_stamped";
+constexpr const char* kOdomRawTopic     = "/gnss_driver/odom_raw";
+constexpr const char* kImuTopic         = "/gnss_driver/imu";
+constexpr const char* kVelocityTopic    = "/gnss_driver/vel";
+constexpr const char* kOriginTopic      = "/gnss_driver/origin";
 
 // 标定参数的启动有效性校验。非有限值一律退回 0.0（未标定）并告警，
 // 避免 NaN 让 odom 的位置和航向整体失效。
@@ -43,14 +50,19 @@ double PositiveOr(const char* name, double value, double fallback) {
 
 }   // namespace
 
-GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver", options) {
+GnssDriver::GnssDriver(const rclcpp::NodeOptions& options)
+    : GnssDriver("gnss_driver", options) {}
+
+GnssDriver::GnssDriver(const std::string& node_name,
+                       const rclcpp::NodeOptions& options)
+    : Node(node_name, options) {
   // 日志器先于参数读取: 顺序反了的话, 后面的参数打印进不了滚动文件。
   loadLogParameters();
 
   // 配置 spdlog 滚动文件输出
   LogConfig log_config;
-  log_config.logger_name         = "gnss_localization";
-  log_config.log_file_name       = "gnss_localization.log";
+  log_config.logger_name         = node_name;
+  log_config.log_file_name       = node_name + ".log";
   log_config.log_dir             = log_dir_;
   log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb_) * 1024U * 1024U;
   log_config.max_file_count      = static_cast<std::size_t>(log_file_count_);
@@ -76,13 +88,20 @@ GnssDriver::GnssDriver(const rclcpp::NodeOptions& options) : Node("gnss_driver",
   SPDLOG_INFO("串口已打开: {}", serial_port_path_);
 
   rclcpp::QoS qos_sensor = rclcpp::SensorDataQoS(rclcpp::KeepLast(5));
-  fix_pub_               = create_publisher<sensor_msgs::msg::NavSatFix>("~/fix", qos_sensor);
-  pose_pub_              = create_publisher<weeder_msgs::msg::Pose>("~/pose", qos_sensor);
-  pose_stamped_pub_      = create_publisher<geometry_msgs::msg::PoseStamped>("~/pose_stamped", 10);
-  odom_raw_pub_          = create_publisher<nav_msgs::msg::Odometry>("~/odom_raw", qos_sensor);
-  imu_pub_               = create_publisher<sensor_msgs::msg::Imu>("~/imu", qos_sensor);
-  vel_pub_               = create_publisher<geometry_msgs::msg::TwistWithCovarianceStamped>("~/vel", qos_sensor);
-  origin_llh_pub_        = create_publisher<sensor_msgs::msg::NavSatFix>("~/origin", rclcpp::QoS(1).transient_local());
+  fix_pub_ = create_publisher<sensor_msgs::msg::NavSatFix>(
+      kFixTopic, qos_sensor);
+  pose_pub_ = create_publisher<vehicle_interfaces::msg::Pose>(
+      kPoseTopic, qos_sensor);
+  pose_stamped_pub_ =
+      create_publisher<geometry_msgs::msg::PoseStamped>(kPoseStampedTopic, 10);
+  odom_raw_pub_ = create_publisher<nav_msgs::msg::Odometry>(
+      kOdomRawTopic, qos_sensor);
+  imu_pub_ = create_publisher<sensor_msgs::msg::Imu>(kImuTopic, qos_sensor);
+  vel_pub_ =
+      create_publisher<geometry_msgs::msg::TwistWithCovarianceStamped>(
+          kVelocityTopic, qos_sensor);
+  origin_llh_pub_ = create_publisher<sensor_msgs::msg::NavSatFix>(
+      kOriginTopic, rclcpp::QoS(1).transient_local());
   tf_broadcaster_        = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
   timer_                 = create_wall_timer(std::chrono::milliseconds(10), std::bind(&GnssDriver::timerCallback, this));
 
@@ -603,7 +622,7 @@ void GnssDriver::publishPose(const GiavpData& d) {
 
   // ---- 修正位姿: base_link, 修正航向 ----
   {
-    auto pose            = weeder_msgs::msg::Pose();
+    auto pose            = vehicle_interfaces::msg::Pose();
     pose.header.stamp    = stamp;
     pose.header.frame_id = "odom";
     pose.x               = base_x;

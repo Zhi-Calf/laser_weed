@@ -20,7 +20,7 @@ constexpr std::size_t kMinimumPathPoints = 2;
 // 创建编排节点并启动状态机。
 // 输入:
 //   options : ROS 节点创建选项
-SimOrchestratorNode::SimOrchestratorNode(const rclcpp::NodeOptions& options) : Node("sim_orchestrator", options) {
+SimOrchestratorNode::SimOrchestratorNode(const rclcpp::NodeOptions& options) : Node("sim_orchestrator_node", options) {
   Initialize();
 }
 
@@ -61,8 +61,8 @@ void SimOrchestratorNode::LoadLogParameters() {
 //   文件日志初始化异常时保留 spdlog 默认日志器继续运行。
 void SimOrchestratorNode::SetupLogging() {
   LogConfig log_config;
-  log_config.logger_name         = "sim_orchestrator";
-  log_config.log_file_name       = "sim_orchestrator.log";
+  log_config.logger_name         = "sim_orchestrator_node";
+  log_config.log_file_name       = "sim_orchestrator_node.log";
   log_config.log_dir             = log_dir_;
   log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb_) * 1024U * 1024U;
   log_config.max_file_count      = static_cast<std::size_t>(log_file_count_);
@@ -88,7 +88,7 @@ void SimOrchestratorNode::LoadParameters() {
 //   路径订阅和无人模式发布均使用 transient_local QoS。
 void SimOrchestratorNode::SetupInterfaces() {
   const auto latched_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
-  path_sub_              = create_subscription<weeder_msgs::msg::Path>("/global_path_planner/path", latched_qos, [this](const weeder_msgs::msg::Path::SharedPtr message) {
+  path_sub_              = create_subscription<vehicle_interfaces::msg::Path>("/global_path_planner/path", latched_qos, [this](const vehicle_interfaces::msg::Path::SharedPtr message) {
     OnPath(message);
   });
   unmanned_pub_          = create_publisher<std_msgs::msg::Bool>("/sim/unmanned", latched_qos);
@@ -109,7 +109,7 @@ void SimOrchestratorNode::SetupTimers() {
 //   message : 规划器发布的最新路径
 // 输出:
 //   got_path_points_ : min(x.size(), y.size())
-void SimOrchestratorNode::OnPath(const weeder_msgs::msg::Path::SharedPtr message) {
+void SimOrchestratorNode::OnPath(const vehicle_interfaces::msg::Path::SharedPtr message) {
   got_path_points_ = std::min(message->x.size(), message->y.size());
 }
 

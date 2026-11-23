@@ -1,7 +1,7 @@
 # 双天线 MEMS 惯性-卫星组合导航系统 现场部署指南
 
 双天线 MEMS 惯性-卫星组合导航系统作为 GNSS 定位备选方案。
-驱动节点 `gnss_driver` 解析 `$GIAVP` 语句，发布话题
+BR100A 驱动节点 `br100a_driver_node` 解析 `$GIAVP` 语句，发布话题
 （`/gnss_driver/fix`、`/gnss_driver/pose`、`/gnss_driver/pose_stamped`、
 `/gnss_driver/odom_raw`、
 `/gnss_driver/imu`、`/gnss_driver/vel`、
@@ -17,15 +17,20 @@
 
 ```bash
 # 单独启动定位（杆臂/航向偏角从 YAML 读取）
-ros2 launch gnss_localization localization.launch.py
+ros2 launch gnss_localization br100a_driver.launch.py
+
+# NAV3120 硬件使用另一入口
+ros2 launch gnss_localization nav3120_driver.launch.py
 
 # 全栈（双天线 GNSS 为唯一驱动，无需切换参数）
 ros2 launch tractor_bringup bringup.launch.py
 ```
 
+⚠ BR100A 和 NAV3120 都会发布同一组 `/gnss_driver/*` 话题，同一时刻只能启动一个驱动。
+
 ## NAV3120 INSPVAA + GGA 输入
 
-`gnss_driver` 默认仍解析原设备的 `$GIAVP`。NAV3120 使用
+`br100a_driver_node` 默认解析 BR100A 的 `$GIAVP`。NAV3120 使用
 `input_protocol: inspvaa_gga`，从同一串口同时读取：
 
 - `INSPVAA`：融合经纬高、东北天速度、roll/pitch/yaw、GPS 周/周内秒和 INS 状态；
@@ -38,15 +43,15 @@ GGA 无解或超过 `gga_timeout_sec` 未更新时，节点继续发布融合位
 启动命令：
 
 ```bash
-ros2 launch gnss_localization nav3120_localization.launch.py
+ros2 launch gnss_localization nav3120_driver.launch.py
 ```
 
 默认配置为 `/dev/ttyS9`、115200、10 Hz INSPVAA + GGA。部署前必须按实车修改
 `config/nav3120_driver.yaml` 中的 ENU 原点、杆臂和航向安装偏角。
 
-**ENU 原点（datum）优先取 `gnss_driver.yaml` 的 `origin_lat/origin_lon/origin_alt`**。
+**ENU 原点（datum）优先取对应驱动 YAML 的 `origin_lat/origin_lon/origin_alt`**。
 这三个值必须与 `global_path_planner.yaml` 中 `poly` 的第一个顶点完全一致：
-规划器用该顶点做 ENU 投影，`gnss_driver` 用同一坐标把 RTK 位置投影成
+规划器用该顶点做 ENU 投影，GNSS 驱动用同一坐标把 RTK 位置投影成
 `/gnss_driver/pose`。
 原点通过 `/gnss_driver/origin` 以 `transient_local` 发布，之后按 1 Hz 重发。
 若 `origin_*` 未配置或非法，才回退为上电后首次 RTK 固定解。
@@ -104,7 +109,7 @@ ros2 launch gnss_localization nav3120_localization.launch.py
 - `calib_offset_x`：纵向 (X 向前为正)，出厂初值 ≈ 前方 0.5 m
 - `calib_offset_y`：横向 (Y 向左为正；主机不在纵向中轴线上时非零)
 - 两者是**绝对杆臂**，由 `tractor_calibration` 的原地旋转标定测出后写入
-  `config/gnss_driver.yaml`，重启 `gnss_driver` 后生效。
+  `config/br100a_driver.yaml`，重启驱动后生效。
 - 垂向高度不参与杆臂换算（标定只有 x/y/heading 三个量）：`pose` 的 z 即设备中心高程，
   `base_link -> gnss_link` 静态 TF 也不再发布。
 

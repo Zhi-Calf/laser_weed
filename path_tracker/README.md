@@ -2,7 +2,7 @@
 
 激光除草机器人（四轮转向底盘）的统一 LQR 路径跟踪控制器。
 
-从 MegaTrak 履带拖拉机项目 `control_node/path_controller` 移植而来，**状态方程按阿克曼/四轮转向运动学重新推导**。本包依赖项目统一的 `weeder_msgs` 接口包。
+从 MegaTrak 履带拖拉机项目 `control_node/path_controller` 移植而来，**状态方程按阿克曼/四轮转向运动学重新推导**。本包依赖项目统一的 `vehicle_interfaces` 接口包。
 
 替代早期 Python Stanley 控制器。
 
@@ -70,7 +70,7 @@ MegaTrak 的 `lqr_R_w` 是**角速度代价**，本包的 `lqr_R_steer` 是**转
 ## 2. CAN 指令接口
 
 `path_tracker` 每个控制周期只发布一条 `/chassis/cmd`
-（`weeder_msgs/ChassisCmd`），同时携带：
+（`vehicle_interfaces/ChassisCmd`），同时携带：
 
 | 字段 | 单位 | 约定 |
 |---|---|---|
@@ -83,7 +83,7 @@ MegaTrak 的 `lqr_R_w` 是**角速度代价**，本包的 `lqr_R_steer` 是**转
 | `steer_angle_rad` | rad | 前轮转角，左正右负 |
 
 速度与转角放在同一帧，CAN 桥不会把两个不同时刻计算出的值拼在一起。
-`weeder_base/chassis_node` 订阅该话题并转换为 `ADCU_toVCU_01`。
+`chassis_driver/chassis_driver_node` 订阅该话题并转换为 `ADCU_toVCU_01`。
 
 `steer_mode` 由本控制器随指令一起发送。WORK 段默认使用单阿克曼，
 TURN 段默认使用前后轮反向的对称阿克曼；切换模式时同步把 LQR 的
@@ -92,10 +92,10 @@ TURN 段默认使用前后轮反向的对称阿克曼；切换模式时同步把
 ### 2.4 符号约定（已追踪源码核对）
 
 CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左正右负**
-（`weeder_base/protocol/can_protocol.hpp` 第二版修 Byte3~4）。本控制器输出弧度、左正——
+（`chassis_driver/protocol/can_protocol.hpp` 第二版修 Byte3~4）。本控制器输出弧度、左正——
 **符号同向，不需要取反**，只做 `弧度 → 度 → ×10` 换算。
 
-字段名已确认：`weeder_base::protocol::AdcuCommand01` 的字段为
+字段名已确认：`chassis_driver::protocol::AdcuCommand01` 的字段为
 `gear`/`steer_mode`/`estop`/`speed_raw`/`steer_angle`/`alive_counter`。
 
 ---
@@ -104,12 +104,12 @@ CAN 协议 `ADCU_toVCU_01` 的转向角是 `int16_t`、**0.1° 分辨率、左�
 
 | 方向 | 话题 | 类型 | 上游 |
 |---|---|---|---|
-| 订阅 | `/gnss_driver/pose` | `weeder_msgs/Pose` | `gnss_localization`（SensorDataQoS） |
-| 订阅 | `/global_path_planner/path` | `weeder_msgs/Path` | `global_path_planner`（transient_local） |
-| 订阅 | `/work_mode` | `weeder_msgs/WorkMode` | 模式管理方/APP（普通订阅） |
-| 订阅 | `/velocity_planner/status` | `weeder_msgs/ObstacleStatus` | `velocity_planner`（reliable） |
-| 订阅（可选） | `/crop_row/observation` | `weeder_msgs/CropRowObservation` | `crop_row_perception`（reliable/volatile） |
-| 发布 | `/chassis/cmd` | `weeder_msgs/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
+| 订阅 | `/gnss_driver/pose` | `vehicle_interfaces/Pose` | `gnss_localization`（SensorDataQoS） |
+| 订阅 | `/global_path_planner/path` | `vehicle_interfaces/Path` | `global_path_planner`（transient_local） |
+| 订阅 | `/work_mode` | `vehicle_interfaces/WorkMode` | 模式管理方/APP（普通订阅） |
+| 订阅 | `/obstacle_monitor/status` | `vehicle_interfaces/ObstacleStatus` | `obstacle_monitor_node`（reliable） |
+| 订阅（可选） | `/crop_row/observation` | `vehicle_interfaces/CropRowObservation` | `crop_row_perception`（reliable/volatile） |
+| 发布 | `/chassis/cmd` | `vehicle_interfaces/ChassisCmd` | → CAN 桥（速度 + 前轮转角） |
 | 发布 | `/path_tracker/target_point` | `visualization_msgs/Marker` | RViz |
 
 上述话题名固定定义在 `path_tracker_node.cpp` 中，不再通过 YAML 参数配置。
@@ -192,7 +192,7 @@ WORK 模式下把位姿参考点换算到后轴中心，只在中心锚点前后
 节点使用与 `global_path_planner` 相同的 spdlog 滚动文件配置，默认写入：
 
 ```text
-/opt/agri/logs/path_tracker.log
+/opt/agri/logs/path_tracker_node.log
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -210,12 +210,12 @@ WORK 模式下把位姿参考点换算到后轴中心，只在中心锚点前后
 
 ### 工作模式门控（/work_mode）
 
-统一用 MegaTrak 的系统级 `/work_mode` 总线（`weeder_msgs/WorkMode`），不再用私有 arm 话题——由模式管理方或 APP 统一发布。只有 `MODE_UNMANNED(1)` 才接管底盘；手动(0)/标定(2)/信号超时都停车。
+统一用 MegaTrak 的系统级 `/work_mode` 总线（`vehicle_interfaces/WorkMode`），不再用私有 arm 话题——由模式管理方或 APP 统一发布。只有 `MODE_UNMANNED(1)` 才接管底盘；手动(0)/标定(2)/信号超时都停车。
 
 发布端必须**持续**发（≥ 1/`work_mode_timeout_s` Hz），发一次会在超时后停车：
 
 ```bash
-ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: unmanned}"
+ros2 topic pub -r 1 /work_mode vehicle_interfaces/msg/WorkMode "{mode: 1, mode_name: unmanned}"
 ```
 
 安全门控失败时只在节点日志中告警并输出停车，不再发布心跳消息。
@@ -235,22 +235,22 @@ ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: un
 | **偏离目标距离** | `max_track_error_m` | 1.0 |
 | **横向误差超限** | `max_lateral_error_m` | 0.3 |
 | ROI 内检测到障碍 | `min_obstacle_points` | 3 |
-| **避停状态不可用/超时/感知无效** | `require_velocity_planner` / `velocity_planner_status_timeout_s` | true / 1.0 |
+| **避停状态不可用/超时/感知无效** | `require_obstacle_monitor` / `obstacle_monitor_status_timeout_s` | true / 1.0 |
 
 门控按顺序判定：工作模式 → RTK 位姿（存在/新鲜/`valid=true`）→ 路径（存在/新鲜）→ **点云避停** → **偏离目标距离** → **横向误差超限**。`gnss_driver` 仅在 RTK 固定解时把 `Pose.valid` 置为 true，浮点/RTD/单点解都会输出停车。
 
 ### 点云避停门控
 
-`require_velocity_planner` 默认 `true`。启用后，以下任一情况都输出零速、零转角和
+`require_obstacle_monitor` 默认 `true`。启用后，以下任一情况都输出零速、零转角和
 `estop=true`：
 
-- 从未收到 `/velocity_planner/status`
-- 最近状态超过 `velocity_planner_status_timeout_s`（默认 1.0s）
+- 从未收到 `/obstacle_monitor/status`
+- 最近状态超过 `obstacle_monitor_status_timeout_s`（默认 1.0s）
 - `sensor_valid=false`
 - `stop_required=true`
 
-无雷达仿真必须显式设置 `require_velocity_planner=false` 或同时启动
-`velocity_planner`。实车启动顺序应先启动雷达驱动和 `velocity_planner`，
+无雷达仿真必须显式设置 `require_obstacle_monitor=false` 或同时启动
+`obstacle_monitor_node`。实车启动顺序应先启动雷达驱动和 `obstacle_monitor_node`，
 再启动 `path_tracker`。
 
 ### ⚠️ 偏离距离门为什么是必需的（2026-10-15 仿真实测发现）
@@ -268,7 +268,7 @@ LQR 的状态量只有 `[横向误差, 航向误差]`，**没有沿路径方向�
 
 ## 5. 构建与运行
 
-**依赖前置**：本包依赖 `weeder_msgs`（WorkMode、ChassisCmd、Path、
+**依赖前置**：本包依赖 `vehicle_interfaces`（WorkMode、ChassisCmd、Path、
 ObstacleStatus）。
 
 > ⚠️ **前提：`MegaTrak-main` 整棵树不能放在 `~/ros2_ws/src/` 里面。**
@@ -283,7 +283,7 @@ ObstacleStatus）。
 #    若它现在在 ~/ros2_ws/src/MegaTrak-main，先移出来：
 #      mv ~/ros2_ws/src/MegaTrak-main ~/MegaTrak-main
 
-# 1) 把依赖包放进工作区（weeder_msgs 已由本项目提供）
+# 1) 把依赖包放进工作区（vehicle_interfaces 已由本项目提供）
 cp -r path_tracker ~/ros2_ws/src/
 
 # 2) 先建依赖包，再建本包（colcon 会按拓扑顺序自动处理，但首次建议显式建依赖）
@@ -301,7 +301,7 @@ ros2 launch path_tracker path_tracker.launch.py
 
 纯算法层（`discrete_points_math.cpp` + `global_path_locator.cpp` + `lqr.cpp`，编成
 `path_tracker_lib`）零 ROS 依赖，但**测试可执行文件依赖 rclcpp/gtest，
-且 `path_tracker_node` 依赖 weeder_msgs**，所以整个包必须在完整 ROS2
+且 `path_tracker_node` 依赖 vehicle_interfaces**，所以整个包必须在完整 ROS2
 环境里 `colcon build`，不能脱离 ROS 单独编译。
 
 ---
@@ -336,17 +336,17 @@ MegaTrak 的 `docs/FTC_TUNING_PLAYBOOK.md` 里 Stanley 段的 `k_e`/`k_s`
 
 ## 7. 整包移植进度（gnss_localization / global_path_planner）
 
-`weeder_msgs` 已作为本项目自有接口包放入工作区（当前保留 6 个实际使用的 msg，
+`vehicle_interfaces` 已作为本项目自有接口包放入工作区（当前保留 6 个实际使用的 msg，
 只依赖标准消息库）。按"整包原样移植"方案，接下来把这几个包整体拷进除草机工作区，只做配置适配、不改源码：
 
 | 包 | 位置 | 移植动作 |
 |---|---|---|
-| `weeder_msgs` | 消息定义 | 项目自有，`colcon build` 生成接口 |
+| `vehicle_interfaces` | 消息定义 | 项目自有，`colcon build` 生成接口 |
 | `gnss_localization` | `sensor_node/` | 原样拷，改 config |
 | `global_path_planner` | `navigation_node/` | 原样拷，改 config |
 | `path_tracker` | 本包 | 替代 path_controller，已统一到 WorkMode |
 
-**GNSS 必改配置**（`gnss_driver.yaml` / `ntrip_client.yaml` / `sdk_client.yaml`）：
+**GNSS 必改配置**（`br100a_driver.yaml` / `nav3120_driver.yaml` / `ntrip_client.yaml` / `sdk_client.yaml`）：
 
 - `serial_port`：履带车是 `/dev/ttyUSB0`(driver)、`/dev/ttyUSB1`(差分)，按除草机实际接线改
 - `calib_offset_x/y/heading`：**杆臂是履带车的物理安装参数（出厂 x=0.5m），除草机天线位置不同，必须重新标定**——填错会让 `/gnss_driver/pose` 整体偏移，下游全部跟错

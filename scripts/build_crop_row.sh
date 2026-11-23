@@ -25,7 +25,7 @@ cmake_args=(-DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
   -DRK_NAV_BUILD_TESTS=ON "-DRK_NAV_WITH_RKNN=$with_rknn" -DCMAKE_INSTALL_LIBDIR=lib)
 if [[ -n "$rknn_root" ]]; then cmake_args+=("-DRKNN_ROOT=$rknn_root"); fi
 colcon --log-base "$repo_dir/log/crop-row-source" build \
-  --base-paths "$repo_dir/row_nav_sdk" "$repo_dir/weeder_msgs" "$repo_dir/crop_row_perception" "$repo_dir/row_nav_calibration" \
+  --base-paths "$repo_dir/row_nav_sdk" "$repo_dir/vehicle_interfaces" "$repo_dir/crop_row_perception" "$repo_dir/row_nav_calibration" \
   --build-base "$build_dir" --install-base "$install_dir" \
   --packages-up-to crop_row_perception row_nav_calibration --cmake-args "${cmake_args[@]}"
 if [[ "$build_only" == 0 ]]; then

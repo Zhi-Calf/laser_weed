@@ -3,7 +3,7 @@
 <package format="3">
   <name>gnss_localization</name>
   <version>1.0.0</version>
-  <description>Dual-antenna INS/GNSS localization driver + NTRIP client</description>
+  <description>BR100A and NAV3120 GNSS/INS localization drivers with NTRIP and Qianxun RTK correction clients</description>
   <maintainer email="nianxing@aginno.com.cn">nianxing</maintainer>
   <license>Apache-2.0</license>
 
@@ -16,7 +16,7 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
-  <depend>weeder_msgs</depend>
+  <depend>vehicle_interfaces</depend>
   <depend>geographiclib</depend>
   <depend>spdlog_vendor</depend>
   <depend>eigen</depend>

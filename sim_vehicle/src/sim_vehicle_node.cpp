@@ -32,7 +32,7 @@ double ClampNonNegative(double value) {
 // 创建仿真车辆节点并完成初始化。
 // 输入:
 //   options : ROS 节点创建选项
-SimVehicleNode::SimVehicleNode(const rclcpp::NodeOptions& options) : Node("sim_vehicle", options) {
+SimVehicleNode::SimVehicleNode(const rclcpp::NodeOptions& options) : Node("sim_vehicle_node", options) {
   Initialize();
 }
 
@@ -88,8 +88,8 @@ void SimVehicleNode::LoadLogParameters() {
 //   文件日志初始化异常时保留 spdlog 默认日志器继续运行。
 void SimVehicleNode::SetupLogging() {
   LogConfig log_config;
-  log_config.logger_name         = "sim_vehicle";
-  log_config.log_file_name       = "sim_vehicle.log";
+  log_config.logger_name         = "sim_vehicle_node";
+  log_config.log_file_name       = "sim_vehicle_node.log";
   log_config.log_dir             = log_dir_;
   log_config.max_file_size_bytes = static_cast<std::size_t>(log_file_size_mb_) * 1024U * 1024U;
   log_config.max_file_count      = static_cast<std::size_t>(log_file_count_);
@@ -157,7 +157,7 @@ void SimVehicleNode::LoadPoseParameters() {
 // 副作用:
 //   建立底盘指令、模式、路径输入，以及位姿、TF 和底盘状态输出。
 void SimVehicleNode::SetupInterfaces() {
-  chassis_cmd_sub_ = create_subscription<weeder_msgs::msg::ChassisCmd>(cmd_topic_, 10, [this](const weeder_msgs::msg::ChassisCmd::SharedPtr message) {
+  chassis_cmd_sub_ = create_subscription<vehicle_interfaces::msg::ChassisCmd>(cmd_topic_, 10, [this](const vehicle_interfaces::msg::ChassisCmd::SharedPtr message) {
     OnChassisCmd(message);
   });
   unmanned_sub_    = create_subscription<std_msgs::msg::Bool>("/sim/unmanned", 10, [this](const std_msgs::msg::Bool::SharedPtr message) {
@@ -165,16 +165,16 @@ void SimVehicleNode::SetupInterfaces() {
   });
 
   const auto latched_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
-  path_sub_              = create_subscription<weeder_msgs::msg::Path>("/global_path_planner/path", latched_qos, [this](const weeder_msgs::msg::Path::SharedPtr message) {
+  path_sub_              = create_subscription<vehicle_interfaces::msg::Path>("/global_path_planner/path", latched_qos, [this](const vehicle_interfaces::msg::Path::SharedPtr message) {
     OnPath(message);
   });
 
-  pose_pub_          = create_publisher<weeder_msgs::msg::Pose>("/gnss_driver/pose", rclcpp::SensorDataQoS());
+  pose_pub_          = create_publisher<vehicle_interfaces::msg::Pose>("/gnss_driver/pose", rclcpp::SensorDataQoS());
   pose_stamped_pub_  = create_publisher<geometry_msgs::msg::PoseStamped>("/gnss_driver/pose_stamped", rclcpp::SensorDataQoS());
-  work_mode_pub_     = create_publisher<weeder_msgs::msg::WorkMode>("/work_mode", latched_qos);
+  work_mode_pub_     = create_publisher<vehicle_interfaces::msg::WorkMode>("/work_mode", latched_qos);
   tf_pub_            = create_publisher<tf2_msgs::msg::TFMessage>("/tf", 10);
-  marker_pub_        = create_publisher<visualization_msgs::msg::MarkerArray>("/sim_vehicle/marker_array", 10);
-  chassis_state_pub_ = create_publisher<weeder_msgs::msg::ChassisState>("/chassis/state", 10);
+  marker_pub_        = create_publisher<visualization_msgs::msg::MarkerArray>("/sim_vehicle_node/marker_array", 10);
+  chassis_state_pub_ = create_publisher<vehicle_interfaces::msg::ChassisState>("/chassis/state", 10);
 }
 
 // 创建仿真、底盘反馈和慢速话题定时器。
@@ -200,7 +200,7 @@ void SimVehicleNode::SetupTimers() {
 //   speed_cmd_m_s_ / steer_cmd_rad_ / steer_mode_：供下一仿真周期使用。
 // 失败:
 //   急停、非前进档、未释放抱闸、控制模式关闭或非有限值均输出零运动。
-void SimVehicleNode::OnChassisCmd(const weeder_msgs::msg::ChassisCmd::SharedPtr message) {
+void SimVehicleNode::OnChassisCmd(const vehicle_interfaces::msg::ChassisCmd::SharedPtr message) {
   last_cmd_time_     = now();
   cmd_gear_          = message->gear;
   cmd_release_brake_ = message->release_brake;
@@ -265,7 +265,7 @@ void SimVehicleNode::OnUnmanned(const std_msgs::msg::Bool::SharedPtr message) {
 //   message : 至少包含两个有效点且 x/y 等长的路径
 // 副作用:
 //   设置初始位姿和航向，并且只执行一次。
-void SimVehicleNode::OnPath(const weeder_msgs::msg::Path::SharedPtr message) {
+void SimVehicleNode::OnPath(const vehicle_interfaces::msg::Path::SharedPtr message) {
   if (aligned_ || !align_to_path_start_ || message->x.size() < 2 || message->x.size() != message->y.size()) {
     return;
   }
@@ -320,7 +320,7 @@ void SimVehicleNode::Tick() {
 // 输出:
 //   /gnss_driver/pose 和 /gnss_driver/pose_stamped。
 void SimVehicleNode::PublishPose() {
-  weeder_msgs::msg::Pose pose;
+  vehicle_interfaces::msg::Pose pose;
   pose.header.stamp    = now();
   pose.header.frame_id = "odom";
   pose.x               = x_m_;
@@ -367,7 +367,7 @@ void SimVehicleNode::PublishTf() {
 
 // 发布车体和四轮可视化。
 // 输出:
-//   /sim_vehicle/marker_array，包含车体和车轮 Marker。
+//   /sim_vehicle_node/marker_array，包含车体和车轮 Marker。
 void SimVehicleNode::PublishMarker() {
   visualization_msgs::msg::MarkerArray markers;
   AppendBodyMarkers(markers);
@@ -441,7 +441,7 @@ void SimVehicleNode::AppendWheelMarkers(visualization_msgs::msg::MarkerArray& ma
 // 输出:
 //   /chassis/state 类型化底盘状态。
 void SimVehicleNode::PublishChassisState() {
-  weeder_msgs::msg::ChassisState state;
+  vehicle_interfaces::msg::ChassisState state;
   state.header.stamp    = now();
   state.header.frame_id = "base_link";
   state.state01_valid   = true;
@@ -470,13 +470,13 @@ void SimVehicleNode::PublishChassisState() {
 //   /work_mode。
 void SimVehicleNode::PublishSlowTopics() {
   const rclcpp::Time stamp = now();
-  weeder_msgs::msg::WorkMode mode;
+  vehicle_interfaces::msg::WorkMode mode;
   mode.header.stamp = stamp;
   if (unmanned_) {
-    mode.mode      = weeder_msgs::msg::WorkMode::MODE_UNMANNED;
+    mode.mode      = vehicle_interfaces::msg::WorkMode::MODE_UNMANNED;
     mode.mode_name = "unmanned";
   } else {
-    mode.mode      = weeder_msgs::msg::WorkMode::MODE_MANUAL;
+    mode.mode      = vehicle_interfaces::msg::WorkMode::MODE_MANUAL;
     mode.mode_name = "manual";
   }
   work_mode_pub_->publish(mode);
@@ -499,7 +499,7 @@ visualization_msgs::msg::Marker SimVehicleNode::CreateMarker(int32_t marker_id, 
   visualization_msgs::msg::Marker marker;
   marker.header.frame_id = "odom";
   marker.header.stamp    = now();
-  marker.ns              = "sim_vehicle";
+  marker.ns              = "sim_vehicle_node";
   marker.id              = marker_id;
   marker.type            = marker_type;
   marker.action          = visualization_msgs::msg::Marker::ADD;

@@ -1,4 +1,4 @@
-"""Run after sourcing ROS 2 and the built weeder_msgs workspace; no hardware required."""
+"""Run after sourcing ROS 2 and the built vehicle_interfaces workspace; no hardware required."""
 import json
 from pathlib import Path
 import subprocess
@@ -9,7 +9,7 @@ import time
 
 def main():
     import rclpy
-    from weeder_msgs.msg import Pose
+    from vehicle_interfaces.msg import Pose
     package = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(package))
     from tools.field_assistant.config import AssistantConfig

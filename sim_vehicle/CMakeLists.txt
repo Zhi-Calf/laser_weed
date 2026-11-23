@@ -17,7 +17,7 @@ find_package(spdlog REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(tf2_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
-find_package(weeder_msgs REQUIRED)
+find_package(vehicle_interfaces REQUIRED)
 
 set(dependencies
   geometry_msgs
@@ -25,7 +25,7 @@ set(dependencies
   std_msgs
   tf2_msgs
   visualization_msgs
-  weeder_msgs
+  vehicle_interfaces
 )
 
 add_library(sim_vehicle_kinematics STATIC
@@ -81,17 +81,17 @@ target_compile_definitions(sim_orchestrator_node_lib PRIVATE
   SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
 )
 
-add_executable(sim_vehicle
-  src/sim_vehicle_main.cpp
+add_executable(sim_vehicle_node
+  apps/sim_vehicle_node_main.cpp
 )
-target_link_libraries(sim_vehicle
+target_link_libraries(sim_vehicle_node
   sim_vehicle_node_lib
 )
 
-add_executable(sim_orchestrator
-  src/sim_orchestrator_main.cpp
+add_executable(sim_orchestrator_node
+  apps/sim_orchestrator_node_main.cpp
 )
-target_link_libraries(sim_orchestrator
+target_link_libraries(sim_orchestrator_node
   sim_orchestrator_node_lib
 )
 
@@ -104,7 +104,7 @@ install(TARGETS
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
-install(TARGETS sim_vehicle sim_orchestrator
+install(TARGETS sim_vehicle_node sim_orchestrator_node
   DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY include/
@@ -131,7 +131,7 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_orchestrator
     rclcpp
     std_msgs
-    weeder_msgs
+    vehicle_interfaces
   )
 endif()
 

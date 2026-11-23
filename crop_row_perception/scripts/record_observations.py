@@ -7,7 +7,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import ExternalShutdownException
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from weeder_msgs.msg import CropRowObservation
+from vehicle_interfaces.msg import CropRowObservation
 
 from observation_contract import ObservationAudit, json_safe
 

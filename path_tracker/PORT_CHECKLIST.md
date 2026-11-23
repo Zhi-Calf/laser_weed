@@ -1,7 +1,7 @@
 # 移植配置清单（PORT_CHECKLIST）
 
 > **历史说明：** 当前 CAN 接口已统一为 `/chassis/cmd`
-> （`weeder_msgs/ChassisCmd`，同时携带速度与转角）。不再需要
+> （`vehicle_interfaces/ChassisCmd`，同时携带速度与转角）。不再需要
 > `/cmd_vel` + `/weeder/steer_cmd` 的双话题方案或历史底盘替换补丁。
 
 整包移植**不改源码，只改配置**。下面每一项都是除草机与履带拖拉机不一样、必须动的地方。
@@ -24,7 +24,7 @@
 **你选的是"两个都移，稍后再定"**——A、B 的节点都拷进来了，实车确认硬件后：
 - 选 A：只配 `ntrip_client.yaml`，只起 `ntrip_client_node`
 - 选 B：只配 `sdk_client.yaml`，只起 `sdk_client_node`
-- 选 C：两个 client 都不起，只跑 `gnss_driver_node`
+- 选 C：两个 client 都不起，只跑 `br100a_driver_node` 或 `nav3120_driver_node`
 
 ⚠️ **账号不能共用**：履带车的 NTRIP/千寻账号绑定的是履带车那台设备，除草机是新设备，
 必须重新申请。`ntrip_client.yaml` / `sdk_client.yaml` 里这些字段拷过来是空的，本来就要你填。
@@ -33,7 +33,7 @@
 
 ## 1. gnss_localization（RTK 定位）
 
-文件：`~/ros2_ws/src/gnss_localization/config/gnss_driver.yaml`
+文件：`~/ros2_ws/src/gnss_localization/config/br100a_driver.yaml`
 
 | 参数 | 履带车原值 | 除草机要改成 | 级别 |
 |---|---|---|---|
@@ -116,9 +116,9 @@ x86_64 开发机默认只编译 `sdk_client` 源码做 API 检查，不生成可
 
 ---
 
-## 4. CAN 桥（weeder_base/chassis_node.cpp）
+## 4. CAN 桥（chassis_driver/chassis_driver_node.cpp）
 
-底盘已统一使用 `/chassis/cmd`（`weeder_msgs/ChassisCmd`）接收速度和转角，
+底盘已统一使用 `/chassis/cmd`（`vehicle_interfaces/ChassisCmd`）接收速度和转角，
 不再需要 `/weeder/steer_cmd` 或 `/cmd_vel` 的历史兼容补丁。
 
 控制指令中的 `speed_m_s`、`steer_angle_rad`、`steer_mode` 和使能字段
@@ -191,7 +191,7 @@ colcon test --packages-select path_tracker
 colcon test-result --verbose
 
 # 起 GNSS（方案 A 举例）
-ros2 launch gnss_localization localization.launch.py
+ros2 launch gnss_localization br100a_driver.launch.py
 ros2 launch gnss_localization ntrip_client.launch.py
 
 # 看定位对不对（有 fix、pose 不跳）
@@ -201,7 +201,7 @@ ros2 topic echo /gnss_driver/pose --once
 ros2 launch global_path_planner planner.launch.py
 
 # 发无人模式（持续 1Hz，否则超时停车）
-ros2 topic pub -r 1 /work_mode weeder_msgs/msg/WorkMode "{mode: 1, mode_name: unmanned}"
+ros2 topic pub -r 1 /work_mode vehicle_interfaces/msg/WorkMode "{mode: 1, mode_name: unmanned}"
 
 # 规划器从 YAML 自动读取田块并发布 /global_path_planner/path
 ros2 topic echo /global_path_planner/path --once

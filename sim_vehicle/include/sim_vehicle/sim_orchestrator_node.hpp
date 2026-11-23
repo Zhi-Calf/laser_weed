@@ -7,7 +7,7 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
-#include "weeder_msgs/msg/path.hpp"
+#include "vehicle_interfaces/msg/path.hpp"
 
 namespace sim_vehicle {
 
@@ -32,7 +32,7 @@ private:
   void SetupTimers();
 
 private:
-  void OnPath(const weeder_msgs::msg::Path::SharedPtr message);
+  void OnPath(const vehicle_interfaces::msg::Path::SharedPtr message);
   void Tick();
   void HandleWaitPath(double elapsed_s);
   void HandleGoUnmanned();
@@ -54,7 +54,7 @@ private:
   std::size_t got_path_points_ = 0;                                  // 最近路径的有效点数
 
 private:
-  rclcpp::Subscription<weeder_msgs::msg::Path>::SharedPtr path_sub_;   // 全局路径订阅
+  rclcpp::Subscription<vehicle_interfaces::msg::Path>::SharedPtr path_sub_;   // 全局路径订阅
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr unmanned_pub_;     // 无人模式切换发布
 
 private:

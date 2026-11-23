@@ -1,4 +1,4 @@
-path_tracker:
+path_tracker_node:
   ros__parameters:
     # 所有参数仅在节点启动时读取，运行中修改不会重新配置控制器。
 
@@ -103,8 +103,8 @@ path_tracker:
 
     # 实车默认启用点云避停门控。避停状态缺失、超时或无效时均停车；
     # 无雷达仿真需在 launch 中显式关闭。
-    require_velocity_planner: true
-    velocity_planner_status_timeout_s: 1.0
+    require_obstacle_monitor: true
+    obstacle_monitor_status_timeout_s: 1.0
 
     # ============================================================
     # RViz 可视化

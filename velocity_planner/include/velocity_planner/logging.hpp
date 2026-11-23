@@ -7,8 +7,8 @@
 namespace velocity_planner {
 
 struct LogConfig {
-  std::string logger_name         = "velocity_planner";       // 日志器名称
-  std::string log_file_name       = "velocity_planner.log";   // 日志文件名
+  std::string logger_name         = "obstacle_monitor_node";       // 日志器名称
+  std::string log_file_name       = "obstacle_monitor_node.log";   // 日志文件名
   std::string log_dir             = "/opt/agri/logs";         // 日志目录
   std::size_t max_file_size_bytes = 50U * 1024U * 1024U;      // 单文件大小上限
   std::size_t max_file_count      = 10;                       // 保留文件数量

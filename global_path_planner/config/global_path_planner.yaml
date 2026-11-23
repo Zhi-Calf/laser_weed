@@ -12,8 +12,8 @@ global_path_planner:
     # 地块顶点，扁平数组，每 3 个数为一个顶点：lat, lon, alt（WGS84）。
     # 顶点必须按田块边界顺序给出（逆序或旋转起点都可以），相邻边不能交叉；
     # 自相交/乱序输入会被拒绝（状态码 self_intersecting，故障码 10409）。
-    # 第一个顶点同时作为 ENU 原点，必须与 gnss_localization/config/gnss_driver.yaml
-    # 中的 origin_lat / origin_lon / origin_alt 保持一致。
+    # 第一个顶点同时作为 ENU 原点，必须与 GNSS 驱动 YAML 的
+    # origin_lat / origin_lon / origin_alt 保持一致。
     # 默认值对应仿真田块（以 34.62N, 112.45E 为中心的 50m x 30m 矩形），实车必须按现场修改。
     poly: [34.6198653, 112.4497271, 100.0,
            34.6198653, 112.4502729, 100.0,

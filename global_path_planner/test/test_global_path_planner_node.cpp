@@ -17,7 +17,7 @@
 
 #include "global_path_planner/bow.hpp"
 #include "global_path_planner/global_path_planner.hpp"
-#include "weeder_msgs/msg/path.hpp"
+#include "vehicle_interfaces/msg/path.hpp"
 
 namespace {
 
@@ -87,10 +87,10 @@ TEST_F(GlobalPathPlannerNodeTest, PublishesPathWithMatchingTypesAndFrame) {
   auto planner_node = std::make_shared<global_path_planner::GlobalPathPlannerNode>(options);
   auto listener     = std::make_shared<rclcpp::Node>("global_path_planner_node_test_listener");
 
-  weeder_msgs::msg::Path::SharedPtr received;
+  vehicle_interfaces::msg::Path::SharedPtr received;
   visualization_msgs::msg::Marker::SharedPtr work_points;
   visualization_msgs::msg::Marker::SharedPtr turn_points;
-  auto subscription      = listener->create_subscription<weeder_msgs::msg::Path>("/global_path_planner/path", rclcpp::QoS(1).transient_local(), [&received](weeder_msgs::msg::Path::SharedPtr msg) {
+  auto subscription      = listener->create_subscription<vehicle_interfaces::msg::Path>("/global_path_planner/path", rclcpp::QoS(1).transient_local(), [&received](vehicle_interfaces::msg::Path::SharedPtr msg) {
     received = std::move(msg);
   });
   auto work_subscription = listener->create_subscription<visualization_msgs::msg::Marker>("/global_path_planner/work_points", 10, [&work_points](visualization_msgs::msg::Marker::SharedPtr msg) {

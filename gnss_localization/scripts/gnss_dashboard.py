@@ -5,7 +5,7 @@
   /gnss_driver/fix        sensor_msgs/NavSatFix
   /gnss_driver/imu        sensor_msgs/Imu                        (ENU yaw)
   /gnss_driver/vel        geometry_msgs/TwistWithCovarianceStamped
-  /gnss_driver/pose       weeder_msgs/Pose
+  /gnss_driver/pose       vehicle_interfaces/Pose
   /odometry/global nav_msgs/Odometry
 
 用法:
@@ -30,8 +30,8 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Imu, NavSatFix
 
 try:
-    from weeder_msgs.msg import Pose
-except ImportError:  # 未 source weeder_msgs 时降级运行
+    from vehicle_interfaces.msg import Pose
+except ImportError:  # 未 source vehicle_interfaces 时降级运行
     Pose = None
 
 # ---------------------------------------------------------------- ANSI
@@ -282,7 +282,7 @@ class GnssDashboard(Node):
         L = [BOLD + "▍解算状态" + RESET]
         pose = self.pose
         if pose is None:
-            hint = "未收到 /gnss_driver/pose" if Pose else "weeder_msgs 未 source"
+            hint = "未收到 /gnss_driver/pose" if Pose else "vehicle_interfaces 未 source"
             L.append(f"  {GREY}{hint}{RESET}")
         else:
             name = "RTK FIXED" if pose.valid else "INVALID / NOT RTK FIXED"
