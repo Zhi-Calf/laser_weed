@@ -1,0 +1,21 @@
+# 标定指令。
+#
+# 响应只表示指令是否被受理；标定过程结果由 CalibrationResult 发布。
+
+uint8 calibration_type
+uint8 CALIB_GNSS_FULL = 0   # GNSS 全流程标定
+
+uint8 action
+uint8 ACTION_START  = 0
+uint8 ACTION_CANCEL = 1
+uint8 ACTION_SAVE   = 3
+
+---
+
+bool accepted               # true 表示指令已受理，不表示标定已成功
+
+uint8 state
+uint8 STATE_IDLE    = 0
+uint8 STATE_RUNNING = 1
+
+string reason               # 拒绝原因或受理后执行的说明

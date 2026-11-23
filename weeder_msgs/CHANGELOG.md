@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- 为 `app_bridge` 迁移原 `tractor_msgs` 的 `GnssStatus`、`CalibrationResult`、
+  `ImplementMode` 消息和 `CalibrationCommand.srv`。新增接口保持原字段和常量编号，
+  便于桥接节点逐步适配。
 - 新增 `ObstacleStatus.msg`，用于点云避停节点向 `path_tracker` 报告感知有效性、
   停车请求、ROI 障碍点数和最近障碍距离。
 - 新增 `Pose.msg`，直接提供 ENU 位姿、roll/pitch/yaw、卫星数、有效性和
